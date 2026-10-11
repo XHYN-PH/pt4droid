@@ -1,106 +1,192 @@
-# P.T. for Android (experimental)
+<p align="center">
+  <img src="docs/images/pt4droid-logo.png" alt="P.T. logo" width="200">
+</p>
 
-An unofficial Android build of **[LoreanXavier's native PC port of P.T.](https://github.com/LoreanXavier/pt-pc)**, for
-Snapdragon handhelds and phones. It runs the same native code as the PC port, not an emulator, and reads everything from
-your own copy of the game.
+<h1 align="center">pt4droid</h1>
 
-**All of the real work is LoreanXavier's.** They rebuilt P.T. in C++ and wrote the Vulkan renderer. This fork only adds the
-Android layer: the APK, the Snapdragon driver setup, storage, screen rotation and handheld tuning. If you enjoy this,
-please support the original project ([Patreon](https://patreon.com/loreanxavier)). Their original README is in
-[README_UPSTREAM.md](README_UPSTREAM.md).
+<p align="center">
+  <strong>P.T. for Android</strong><br>
+  Maintained by <a href="https://github.com/XHYN-PH">XHYN-PH</a>
+</p>
 
-> This is an early test build, developed and tested on **one device**, an AYN Thor Max. Expect rough edges and save
-> often. It contains **no game files**, and nothing here helps you get them.
+<p align="center">
+  <a href="https://github.com/XHYN-PH/pt4droid/releases">Download APK</a>
+  &nbsp;·&nbsp;
+  <a href="#getting-started">Getting started</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/XHYN-PH/pt4droid/issues">Report an issue</a>
+</p>
 
-## Will it run on my device?
+---
 
-| | |
+**pt4droid** is an unofficial Android fork of [LoreanXavier's native P.T. PC port](https://github.com/LoreanXavier/pt-pc), built on [StoneColdOS's Android port](https://github.com/StoneColdOS/pt-pc). It runs native C++ code with a Vulkan renderer.
+
+This fork adds customizable touch controls, an Android settings menu, individual graphics options, custom Vulkan driver imports, display refresh-rate selection and further mobile performance work.
+
+> **Current test build: 0.2.1-test.3.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
+
+## Features
+
+| Feature | What you can change |
 | --- | --- |
-| **GPU** | Qualcomm **Adreno 6xx or 7xx** (Snapdragon). Tested on the Adreno 740 (Snapdragon 8 Gen 2) only. |
-| **Android** | 10 or newer, 64-bit |
-| **Not supported** | Mali, Immortalis, Samsung Xclipse, PowerVR, Google Tensor, MediaTek. The game needs a texture format those GPUs lack. |
-| **Controller** | A built-in or connected gamepad, or the on-screen touch controls. |
+| **Customizable touch controls** | Button positions, sizes, mappings, visibility and opacity, plus stick preferences and saved layouts. |
+| **Button-free looking** | Swipe on the right side of the screen, or choose a visible or hidden look joystick. |
+| **Look sensitivity** | Adjust swipe and joystick sensitivity from **0.25× to 3.00×**. |
+| **Graphics settings** | Choose a preset or adjust individual game settings from the launcher or during play. |
+| **Vulkan drivers** | Automatic selection, bundled Mesa Turnip, the system driver or a compatible imported driver ZIP. |
+| **Display refresh rate** | Request the highest supported rate automatically, or choose a rate reported by your device. |
+| **Save management** | Delete game save slots without clearing the app's data. |
+| **Optional logging** | App diagnostics are **Off by default** and can be enabled when reporting a problem. |
 
-On the AYN Thor it runs at about 60 fps in the start room and roughly 25 to 35 fps in the heavier later loops.
+The launcher uses a dark theme with serif text and red highlights. Gamepad, keyboard and mouse input are also available; the touch overlay lets physical mouse input pass through.
 
-## What you need
+## Device requirements
 
-Your own copy of P.T. (**CUSA01127**, the US release; the European and Japanese releases should work too) as one of:
+| Requirement | Details |
+| --- | --- |
+| **Android** | Android 10 or newer. |
+| **Architecture** | ARM64; a 64-bit Android installation is required. |
+| **Graphics** | The selected driver must provide Vulkan 1.3 and the engine's required features and texture formats. |
+| **Storage** | Allow at least about 1.4 GB for extracted game files, plus space for your source package and setup files. |
 
-- **a fake PKG (`.pkg`) made from your dump.** The app takes the game files out of it by itself. If it came zipped
-  (`.rar`, `.zip`, `.7z`), unpack it first with a file manager such as ZArchiver.
-- **the three files from a dump folder:** `chunk1.psarc`, `texture.qar` and `pathid_list_ps4.bin`.
+Automatic driver selection uses bundled Turnip on **Adreno 6xx/7xx** and the **system driver** on other GPUs, including Adreno 8xx. Imported Turnip drivers must support your specific Adreno GPU and Android version.
 
-A store (PlayStation Store) PKG will not work: it is encrypted for the console that owns it, and this app does not touch that.
+Other GPUs, including Mali, remain experimental and may lack required compressed-texture support. Selecting a system driver does not add missing hardware or renderer features.
 
-## Installing
+## Getting started
 
-1. Download the latest `PT-Android-*.apk` from [Releases](../../releases) and install it.
-2. Start P.T. and choose **Choose your P.T. .pkg**, then pick your package in Android's file picker. Setting up takes a
-   minute or two and needs about 1.4 GB free. Afterwards you can let the app delete the `.pkg` to get that space back.
-3. That's it: from then on the game starts straight away.
+1. Download the `pt4droid-*.apk` from [Releases](https://github.com/XHYN-PH/pt4droid/releases) and install it.
+2. Open **pt4droid** and choose **Choose your P.T. .pkg**.
+3. Select a fake PKG made from your own game dump and wait for extraction to finish.
+4. Open **Settings** to configure controls, graphics and drivers, then start the game.
 
-If you have the three extracted files instead, choose **I already have the extracted files**, copy them into your Download
-folder (loose or in a `CUSA01127` folder), and allow **All files access** when asked.
+If your package is inside a `.zip`, `.rar` or `.7z` archive, extract it with a file manager before choosing it.
+
+Alternatively, choose **I already have the extracted files** and supply:
+
+- `chunk1.psarc`
+- `texture.qar`
+- `pathid_list_ps4.bin`
+
+Place these in your Download folder, either loose or inside a `CUSA01127` folder, and allow **All files access** when requested. The US release, **CUSA01127**, is the reference game data. Compatibility with other regions needs testing.
+
+Encrypted PlayStation Store packages are not supported.
+
+**Updating an existing test installation:** install over the previous P.T. Test/pt4droid build when Android accepts the matching package and signing certificate. This release uses `com.ptport.app.test`. Keeping the existing installation retains its game files, saves and settings.
 
 ## Controls
 
-**Touch controls:** without a controller, on-screen controls show up: drag on the left half to walk, on the right half to
-look, and the buttons for Use, Zoom, Back, Pause and Name (the voice part). They also appear whenever you touch the screen,
-and fade out after a few seconds without a touch or as soon as a controller is used. To turn them off for good:
-**Display > Touch controls > Off**.
+Use **Settings → Touch controls** to select **Auto**, **Always show** or **Off**.
 
-**Controller:** The Xbox-layout controls of the PS4 original. Near the end the game asks you to say a name: say it out loud and the game
-hears it through the microphone, or **hold both triggers** instead.
+| Look mode | Behavior |
+| --- | --- |
+| **Swipe to look • no button** | Drag on the right side to look around without a visible look stick. |
+| **Visible joystick** | A visible look stick controls turning. |
+| **Hidden joystick** | An invisible stick keeps turning while held away from its touch origin. |
 
-The app asks for the microphone once, before the first start. The speech recognizer (whisper.cpp) runs on the device and
-only listens in that last part; nothing is recorded or sent anywhere, and the app has no internet permission. You can test
-the microphone in the game's settings.
+Adjust **Look sensitivity** in Settings. To rearrange buttons, start the game and open **Android settings → Customize touch layout**. Save the layout when finished, or cancel to restore it.
 
-## When something goes wrong
+A built-in, USB or Bluetooth gamepad can also be used. Allow the nearby-device permission when requested for Bluetooth controllers.
 
-The app writes its log to **Download/PT-logs**: `pt.log`, plus `pt-crash.txt` after a crash. Attach those when you report
-a problem, with your device and chip. From a computer, `adb pull /storage/emulated/0/Download/PT-logs` grabs them.
+The ending's voice input uses on-device speech recognition. If recognition does not work, **hold both controller triggers**, or use the touch **Name** control. The app does not require an internet connection.
 
-Two optional files in that folder for tinkering:
+## Graphics and performance
 
-- `render_scale.txt`: the render size against the screen, `0.667` by default. `0.5` is faster, `1` is sharpest.
-- `driver.txt`: `turnip` (default, the bundled Mesa Turnip driver), `system` (your device's own driver), or the file name
-  of another driver's `.so` placed in the same folder.
+Open **Game graphics** from the launcher or Android settings during play.
 
-## Dual-screen handhelds
+Available options include:
 
-On an AYN Thor (or a similar handheld with a second screen) the bottom screen shows the hallway's clock, frozen at 23:59,
-with the loop you're on, and the radio and other subtitle lines as they play (the whole broadcast, even the lines the
-main screen skips on repeat loops, with *static* marking where the voice drops out). Change it in the game's settings under
-**Display > Second screen**: clock and subtitles, clock only, dim clock, or off.
+- Frame limit, VSync and letterbox.
+- Texture detail, anisotropic filtering and shadow resolution.
+- Ambient occlusion and local reflections.
+- Bloom, depth of field, motion blur, lens distortion and flare ghosts.
+- Film grain and clarity.
+- Ray-traced effects and ray quality **when supported by the active Vulkan device**.
 
-## Known issues
+**Settings** also provides scene render scale and an optimized mobile bloom option.
 
-- The speech recognizer is new on Android: if it doesn't hear you, hold both triggers.
-- The PC extras that need a desktop (upscalers, ray tracing, VR, enhanced textures, loop previews) are off.
-- A phone hooked up to a TV or monitor (USB-C to HDMI, or some casting setups) counts as a second screen, so the clock
-  may show up on the TV while the game stays on the phone. Turn it off under **Display > Second screen > Off**.
+| Preset | Behavior |
+| --- | --- |
+| **Custom** | Keep your individual game graphics choices. |
+| **Maximum performance** | Reduce texture detail, shadows and effects, turn VSync off, remove the gameplay frame cap and limit scene render scale to 50%. |
+| **Balanced** | Apply the balanced graphics profile with a gameplay cap of up to 60 FPS. |
+| **Original (PS4)** | Restore the game's Original graphics preset. Render scale, frame cap and touch settings are configured separately. |
 
-## Building
+For a starting performance configuration, use **Maximum performance**, keep **Optimized mobile bloom** enabled and leave logs Off. Increase render scale or effects gradually if your device has room.
 
-Every push to the `android-port` branch builds the APK on GitHub Actions (`.github/workflows/android.yml`). Locally:
-`tools/android/build_native.sh` with `ANDROID_NDK_HOME` set, then `./gradlew assembleRelease` in `android/`. More detail
-in [docs/android.md](docs/android.md).
+Renderer changes reduce repeated Vulkan state updates, unnecessary touch-input updates, screenshot copies and diagnostic work. **These changes are not a measured FPS guarantee.** Compare the same scene, camera position and settings after warmup when testing.
+
+### High-refresh displays
+
+Open **Settings → Display refresh rate** and choose **Highest supported • automatic**, or a rate such as **120 Hz** when your device reports it. Set the gameplay frame limit separately in **Game graphics**.
+
+A 120 Hz screen does not guarantee 120 rendered FPS. Menus and paused gameplay remain capped at 60 rendered FPS, and Android may lower the display rate for battery, temperature or vendor policy.
+
+### Custom Vulkan drivers
+
+1. Open **Settings → Vulkan drivers → Import driver ZIP**.
+2. Choose a compatible AdrenoTools-style ZIP containing `meta.json` and its ARM64 driver library.
+3. Wait for the import result. A successful import selects the driver.
+4. **Fully close and reopen the game** to load it.
+
+To switch drivers later, open **Vulkan drivers**, choose the driver and press **Select**. If an import times out, copy the ZIP to local Downloads and try again. Import progress can be cancelled.
+
+Driver compatibility depends on the GPU, Android version and driver build. If a custom driver causes problems, switch back to **Automatic** or **System Vulkan driver** and restart.
+
+## Starting a new save
+
+Close the game, then choose **Delete saves** on the launcher and confirm.
+
+This deletes the **two game save slots**. Game files, settings, touch layouts, drivers, caches and Extras unlocks are retained.
+
+## Logs and bug reports
+
+**Enable logs** is Off by default. To report a problem:
+
+1. Turn it on in **Settings**, press **Apply**, and reproduce the problem.
+2. Attach the new reports from **Download/PT-logs-test**, or the app-data fallback if that folder is unavailable.
+3. Include your device, Android version, GPU, APK version, selected driver, graphics settings and steps to reproduce.
+
+Driver-import diagnostics use `driver-import.log` in the app's data folder. Older reports are retained when you turn logging off. Android's own crash reporting and vendor diagnostics are outside the app's logging switch.
+
+[Open an issue](https://github.com/XHYN-PH/pt4droid/issues) with these details.
+
+## Limitations
+
+- This is an experimental build; individual devices, drivers and scenes can still have issues.
+- Ray-traced options require supported Vulkan ray queries. Unsupported options are disabled.
+- HDR, VR, desktop upscalers, enhanced texture generation and frame generation are unavailable in this Android build.
+- Speech recognition may need the controller-trigger or touch-button fallback.
+- On dual-screen handhelds, the extra display can show the clock and subtitles. A connected TV may be treated as that display; change **Display → Second screen** if needed.
+
+See [the test.3 update details](docs/android-test3-update.md) for the fixes, verification and remaining device-testing limits.
+
+## Building from source
+
+The test-release build uses **JDK 17**, **Android SDK 35**, **NDK r27 or newer**, **CMake 3.28+**, **Ninja** and **glslc**.
+
+Configure your Android SDK and `ANDROID_NDK_HOME`, then set `PT_KEYSTORE` to your persistent signing key and `PT_STORE_PASSWORD` to its password. From the repository root, run:
+
+```bash
+bash tools/android/build_test_release.sh
+```
+
+Keep the signing key for compatible future updates. Use a higher `PT_VERSION_CODE` for each new release; `PT_VERSION` sets its version name. Both can be supplied as environment variables.
+
+The inherited GitHub Actions workflow targets the upstream Android branch/tag conventions; a push to `pt4droid` alone does not enable an automatic release. Build locally or adapt [the workflow](.github/workflows/android.yml) for your fork.
 
 ## Credits
 
-- [P.T. PC port](https://github.com/LoreanXavier/pt-pc) by LoreanXavier: the game itself, as native C++ and Vulkan.
-- [Mesa Turnip](https://docs.mesa3d.org/drivers/freedreno.html), the open-source Adreno Vulkan driver, in the
-  [KIMCHI AdrenoTools build](https://github.com/K11MCH1/AdrenoToolsDrivers).
-- [libadrenotools](https://github.com/bylaws/libadrenotools) by bylaws, which loads that driver in an app.
-- [SDL3](https://github.com/libsdl-org/SDL) for the Android activity, input and audio.
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) with OpenAI's Whisper base.en model (MIT) and the Silero VAD
-  (MIT), which hear the name at the end.
-- [Special Elite](https://fonts.google.com/specimen/Special+Elite) by Astigmatic (Apache-2.0), the typewriter face of the
-  icon and the second screen.
-- [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid), whose GTA IV port showed the way for Turnip on
-  Android handhelds.
+- **[XHYN-PH](https://github.com/XHYN-PH)** — pt4droid fork maintainer.
+- **[LoreanXavier](https://github.com/LoreanXavier/pt-pc)** — original native P.T. PC port and Vulkan renderer. [Support the original project](https://patreon.com/loreanxavier).
+- **[StoneColdOS](https://github.com/StoneColdOS/pt-pc)** — original Android port and handheld integration.
+- **[Mesa Turnip](https://docs.mesa3d.org/drivers/freedreno.html)** and **[KIMCHI's AdrenoTools drivers](https://github.com/K11MCH1/AdrenoToolsDrivers)** — bundled Adreno Vulkan driver.
+- **[libadrenotools](https://github.com/bylaws/libadrenotools)** — custom driver loading.
+- **[SDL3](https://github.com/libsdl-org/SDL)** — Android integration, input and audio.
+- **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)**, OpenAI Whisper and Silero VAD — on-device voice recognition.
+- **[Special Elite](https://fonts.google.com/specimen/Special+Elite)** by Astigmatic — second-screen typeface.
+- **[LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid)** — reference for the original Android driver integration.
 
-P.T. is the work of Kojima Productions and is owned by Konami. This project is not affiliated with, endorsed by or
-connected to either of them, or to LoreanXavier. The port's own code is under the MIT license (see LICENSE).
+The original PC project README is preserved in [README_UPSTREAM.md](README_UPSTREAM.md). Dependency notices remain in the source and APK.
+
+The port code is licensed under [MIT](LICENSE). P.T. and its artwork belong to their respective rights holders, including Konami and Kojima Productions. This project is unofficial and is not affiliated with or endorsed by them.
