@@ -1389,7 +1389,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
     // This method is called by SDLControllerManager's API 26 Generic Motion Handler.
     public static View getContentView() {
-        return mLayout;
+        return mSurface != null ? mSurface : mLayout;
     }
 
     static class ShowTextInputTask implements Runnable {

@@ -1,6 +1,7 @@
 package com.ptport.app;
 
 import android.os.Bundle;
+import android.content.Intent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.ViewGroup;
@@ -17,6 +18,21 @@ public class PTActivity extends SDLActivity {
     private SecondScreen secondScreen;
     private TouchControls touchControls;
     private static PTActivity current;
+    private MobileSettings mobileSettings;
+    static native float nativeGetRenderScale();
+    static native void nativeSetRenderScale(float value);
+    static native void nativeSetPerformanceProfile(int value);
+    static native void nativeSetBloomPassLimit(int value);
+    static boolean gameRunning() {return current!=null;}
+    public static int getTouchControlsMode() {return current==null?0:current.getSharedPreferences("touch_layout_v1",0).getInt("overlay_mode",0);}
+    public static void setTouchControlsMode(int mode) {final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{a.getSharedPreferences("touch_layout_v1",0).edit().putInt("overlay_mode",mode).apply();if(a.touchControls!=null)a.touchControls.setMode(mode);});}
+    public static void openMobileSettings() {final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.mobileSettings!=null)a.mobileSettings.show();});}
+    @Override protected void onActivityResult(int request,int result,Intent data){if(mobileSettings!=null && mobileSettings.activityResult(request,result,data))return;super.onActivityResult(request,result,data);}
+    @Override protected void onResume(){super.onResume();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();}
+    @Override protected void onPause(){if(touchControls!=null)touchControls.releaseAll();super.onPause();}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
+    @Override protected void onDestroy(){if(touchControls!=null)touchControls.releaseAll();if(mobileSettings!=null)mobileSettings.detach();if(current==this)current=null;super.onDestroy();}
+
 
     // from the game (src/engine/platform/android.cpp SetTouchControlsEnabled): the setting, any thread
     @SuppressWarnings("unused")
@@ -73,12 +89,15 @@ public class PTActivity extends SDLActivity {
         secondScreen = new SecondScreen(this);
         // the on-screen controls over the game (TouchControls.java)
         touchControls = new TouchControls(this);
+        touchControls.setMode(getTouchControlsMode());
+        mobileSettings = new MobileSettings(this,touchControls);
         addContentView(touchControls, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
     // a real controller in use puts the touch controls away (a touch brings them back); the event goes on to the game
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if(touchControls!=null && (event.getKeyCode()==KeyEvent.KEYCODE_BACK || event.getKeyCode()==KeyEvent.KEYCODE_ESCAPE) && touchControls.cancelEditor(event)) return true;
         if (touchControls != null && TouchControls.isController(event.getSource())) touchControls.controllerUsed();
         return super.dispatchKeyEvent(event);
     }
@@ -128,7 +147,7 @@ public class PTActivity extends SDLActivity {
     private void installJavaCrashLog() {
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
-            File dir = new File("/storage/emulated/0/Download/PT-logs");
+            File dir = new File("/storage/emulated/0/Download/PT-logs-test");
             if (!dir.isDirectory() && !dir.mkdirs()) {
                 dir = getExternalFilesDir(null);
             }

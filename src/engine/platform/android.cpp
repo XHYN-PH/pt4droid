@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -57,7 +58,7 @@ std::string ReadTextFile(const std::filesystem::path& path) {
 
 // getApplicationInfo().nativeLibraryDir: where the APK's libraries were unpacked (useLegacyPackaging), and so where
 // libadrenotools' hook libraries and the bundled Turnip driver are
-std::string NativeLibraryDir() {
+std::string ApplicationInfoString(const char* field_name) {
     auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
     auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
     if (!env || !activity) return {};
@@ -67,7 +68,7 @@ std::string NativeLibraryDir() {
     jobject info = get_info ? env->CallObjectMethod(activity, get_info) : nullptr;
     if (info) {
         jclass info_class = env->GetObjectClass(info);
-        jfieldID field = env->GetFieldID(info_class, "nativeLibraryDir", "Ljava/lang/String;");
+        jfieldID field = env->GetFieldID(info_class, field_name, "Ljava/lang/String;");
         auto dir = field ? static_cast<jstring>(env->GetObjectField(info, field)) : nullptr;
         if (dir) {
             const char* chars = env->GetStringUTFChars(dir, nullptr);
@@ -113,7 +114,7 @@ bool HasAllFilesAccess() {
 std::filesystem::path LogDir() {
     static const std::filesystem::path dir = [] {
         std::error_code ec;
-        const std::filesystem::path shared = "/storage/emulated/0/Download/PT-logs";
+        const std::filesystem::path shared = ApplicationInfoString("packageName").ends_with(".test") ? "/storage/emulated/0/Download/PT-logs-test" : "/storage/emulated/0/Download/PT-logs";
         std::filesystem::create_directories(shared, ec);
         const std::filesystem::path probe = shared / ".write-test";
         if (FILE* f = std::fopen(probe.c_str(), "w")) {
@@ -128,19 +129,6 @@ std::filesystem::path LogDir() {
     return dir;
 }
 
-float RenderScale() {
-    float scale = 0.667f;
-    std::ifstream in(LogDir() / "render_scale.txt");
-    std::string line;
-    if (std::getline(in, line)) {
-        line = Trim(line);
-        char* end = nullptr;
-        const float value = std::strtof(line.c_str(), &end);
-        if (end != line.c_str()) scale = std::clamp(value, 0.25f, 1.0f);
-    }
-    LogInfo("android: render scale {:.3f}", scale);
-    return scale;
-}
 
 namespace {
 
@@ -301,7 +289,7 @@ namespace {
 
 // driver.txt: in Download/PT-logs (reachable with a file manager), else in the app's own folder
 std::string DriverChoice() {
-    for (const std::filesystem::path& file : {LogDir() / "driver.txt", DataDir() / "driver.txt"}) {
+    for (const std::filesystem::path& file : {std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "driver.txt", LogDir() / "driver.txt", DataDir() / "driver.txt"}) {
         std::ifstream in(file);
         std::string line;
         if (std::getline(in, line) && !Trim(line).empty()) {
@@ -321,7 +309,7 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
         name = "system driver (driver.txt)";
         return nullptr;
     }
-    const std::string lib_dir = NativeLibraryDir();
+    const std::string lib_dir = ApplicationInfoString("nativeLibraryDir");
     if (lib_dir.empty()) {
         LogWarn("android: nativeLibraryDir unknown, using the system driver");
         name = "system driver (no library folder)";
@@ -331,22 +319,22 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     std::string driver_dir = hook_dir;
     std::string driver_file = "libvulkan_turnip.so";
     std::string label = "Mesa Turnip (bundled)";
-    if (lower != "turnip") {
-        /* another driver: a .so (the one inside an AdrenoTools driver zip) named in driver.txt and put next to it. A library
-           cannot be loaded from shared storage, so it is copied into the app's private folder first. */
-        const std::filesystem::path source = LogDir() / choice;
-        const std::filesystem::path private_dir = std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "drivers";
+    if (lower.starts_with("imported/")) {
         std::error_code ec;
-        std::filesystem::create_directories(private_dir, ec);
-        const std::filesystem::path target = private_dir / source.filename();
-        if (!std::filesystem::is_regular_file(source, ec) ||
-            !std::filesystem::copy_file(source, target, std::filesystem::copy_options::overwrite_existing, ec)) {
-            LogWarn("android: driver {} not found or not copied ({}), using the bundled Turnip", source.string(), ec.message());
-        } else {
-            driver_dir = private_dir.string() + "/";
-            driver_file = source.filename().string();
-            label = "custom driver " + driver_file;
-        }
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "drivers", ec);
+        const auto target = std::filesystem::weakly_canonical(root / choice.substr(9), ec);
+        const auto relative = target.lexically_relative(root);
+        if (!ec && !relative.empty() && *relative.begin() != ".." && std::filesystem::is_regular_file(target,ec)) {
+            driver_dir = target.parent_path().string() + "/"; driver_file=target.filename().string(); label="imported " + driver_file;
+        } else LogWarn("android: imported driver unavailable; using bundled Turnip");
+    } else if (lower != "turnip") {
+        const auto source = LogDir() / choice;
+        const auto private_dir = std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "drivers";
+        std::error_code ec; std::filesystem::create_directories(private_dir,ec);
+        const auto target = private_dir / source.filename();
+        if (std::filesystem::is_regular_file(source,ec) && std::filesystem::copy_file(source,target,std::filesystem::copy_options::overwrite_existing,ec)) {
+            driver_dir=private_dir.string()+"/";driver_file=target.filename().string();label="custom "+driver_file;
+        } else LogWarn("android: legacy driver unavailable; using bundled Turnip");
     }
     const char* cache = SDL_GetAndroidCachePath();
     void* handle = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, cache, hook_dir.c_str(), driver_dir.c_str(),
@@ -405,7 +393,6 @@ void NoteControllerEvent(const SDL_Event& event) {
     if (SDL_IsJoystickVirtual(which)) return;
     g_touch_visible = false;
     LogInfo("android: controller {} used, touch controls put away", which);
-    LogInfo("android: controller {} used, touch controls put away", which);
     CallActivityStatic("controllerUsed", "()V", [](JNIEnv* env, jclass cls, jmethodID m) { env->CallStaticVoidMethod(cls, m); });
 }
 
@@ -446,6 +433,7 @@ void PumpTouchControls() {
 extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_TouchControls_nativeState(JNIEnv*, jclass, jfloat lx, jfloat ly, jfloat rx,
                                                                                  jfloat ry, jint buttons) {
     auto to16 = [](float v) {
+        if (!std::isfinite(v)) v=0.0f;
         return static_cast<uint64_t>(static_cast<uint16_t>(static_cast<int16_t>(std::clamp(v, -1.0f, 1.0f) * 32767.0f)));
     };
     pt::android::g_touch_axes.store(to16(lx) | (to16(ly) << 16) | (to16(rx) << 32) | (to16(ry) << 48), std::memory_order_relaxed);

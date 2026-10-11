@@ -1,3 +1,4 @@
+#include "engine/platform/android.h"
 #include "engine/render/renderer.h"
 
 #include <SDL3/SDL.h>
@@ -182,6 +183,7 @@ bool Renderer::CreateTargets(uint32_t width, uint32_t height) {
         return false;
     }
     output_ready_ = false;
+    final_ready_ = false;
     if (!settings_.headless) {
         const VkFormat format = ctx_.swapchain.format;
         const bool capture = format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_R8G8B8A8_UNORM ||
@@ -373,11 +375,17 @@ void Renderer::SetVsync(bool enabled) {
     LogInfo("display: VSync {} (applied at next frame)", enabled ? "on" : "off");
 }
 
-void Renderer::Resize(uint32_t, uint32_t) {
+void Renderer::Resize(uint32_t width, uint32_t height) {
+#ifdef __ANDROID__
+    if (ctx_.MatchesWindowSize(width, height)) return;
+#endif
     swapchain_dirty_ = true;
 }
 
 bool Renderer::BeginFrame(bool present) {
+#ifdef __ANDROID__
+    if (android::ConsumeRenderScaleChange()) swapchain_dirty_ = true;
+#endif
     Frame& frame = frames_[frame_index_];
     ctx_.CheckDeviceLost(vkWaitForFences(ctx_.device, 1, &frame.in_flight, VK_TRUE, UINT64_MAX), "frame fence wait");
     // a frame generation switch (DLSS-G's swapchain and plugin) happens here, between frames: the previous frame is presented,
@@ -421,9 +429,9 @@ bool Renderer::BeginFrame(bool present) {
             }
             DestroyTargets();
             if (render_extent_.width > 0 && render_extent_.height > 0) {
-                CreateTargets(render_extent_.width, render_extent_.height);
+                if (!CreateTargets(render_extent_.width, render_extent_.height)) return false;
             } else {
-                CreateTargets(ctx_.swapchain.extent.width, ctx_.swapchain.extent.height);
+                if (!CreateTargets(ctx_.swapchain.extent.width, ctx_.swapchain.extent.height)) return false;
             }
             if (imgui_ready_) {
                 ImGui_ImplVulkan_SetMinImageCount(ctx_.swapchain.min_image_count);
@@ -435,6 +443,7 @@ bool Renderer::BeginFrame(bool present) {
         if (acquire == VK_NOT_READY || acquire == VK_TIMEOUT) {
             return false;
         }
+        if (acquire == VK_ERROR_SURFACE_LOST_KHR) ctx_.InvalidateSurface();
         if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
             if (keep_current_swapchain) {
                 FatalError("DLSS Frame Generation could not safely change the swapchain, and the retained swapchain is no longer usable. Restart P.T. and try again.",
@@ -444,7 +453,7 @@ bool Renderer::BeginFrame(bool present) {
             return false;
         }
         if (acquire == VK_SUBOPTIMAL_KHR) {
-            swapchain_dirty_ = true;
+            swapchain_dirty_ = ctx_.SuboptimalNeedsRecreate();
         }
     }
     vkResetFences(ctx_.device, 1, &frame.in_flight);
@@ -599,7 +608,14 @@ void Renderer::EndFrame(bool draw_ui) {
         }
         vkCmdEndRendering(cmd);
     }
-    if (presenting_ && output_.image && !fitted) {
+    final_ready_ = true;
+#ifdef __ANDROID__
+    output_ready_ = false;
+    const bool capture_each_frame = !window_;
+#else
+    const bool capture_each_frame = true;
+#endif
+    if (capture_each_frame && presenting_ && output_.image && !fitted) {
         vk::ImageBarrier(cmd, target_image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                          VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -617,7 +633,7 @@ void Renderer::EndFrame(bool draw_ui) {
         vk::ImageBarrier(cmd, target_image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                          VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0, ctx_.PresentLayout());
         output_ready_ = true;
-    } else if (presenting_ && output_.image && fitted) {
+    } else if (capture_each_frame && presenting_ && output_.image && fitted) {
         vk::ImageBarrier(cmd, output_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -676,7 +692,8 @@ void Renderer::EndFrame(bool draw_ui) {
         const VkResult result = ctx_.QueuePresent(present);
         streamline::SetMarker(streamline::Marker::PresentEnd);
         ctx_.CheckDeviceLost(result, "present");
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_SURFACE_LOST_KHR) {
+        if (result == VK_ERROR_SURFACE_LOST_KHR) ctx_.InvalidateSurface();
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_ERROR_SURFACE_LOST_KHR || (result == VK_SUBOPTIMAL_KHR && ctx_.SuboptimalNeedsRecreate())) {
             swapchain_dirty_ = true;
         }
     }
@@ -684,6 +701,25 @@ void Renderer::EndFrame(bool draw_ui) {
 }
 
 bool Renderer::SaveScreenshot(const std::filesystem::path& path, glm::vec4 crop) {
+#ifdef __ANDROID__
+    if (window_ && output_.image && final_ready_ && !output_ready_) {
+        vkDeviceWaitIdle(ctx_.device);
+        ctx_.Submit([&](VkCommandBuffer cmd) {
+            vk::ImageBarrier(cmd, output_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            color.imageView=output_.view; color.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE; color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO}; info.renderArea={{0,0},{output_.extent.width,output_.extent.height}};
+            info.layerCount=1; info.colorAttachmentCount=1; info.pColorAttachments=&color;
+            vkCmdBeginRendering(cmd,&info); Composite(cmd,final_set_,1.0f,info.renderArea.extent,output_.format); vkCmdEndRendering(cmd);
+            vk::ImageBarrier(cmd,output_.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                VK_ACCESS_2_TRANSFER_READ_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        });
+        output_ready_=true;
+    }
+#endif
     if (!output_.image || !output_ready_) {
         LogError("screenshot {} not written: {}", path.string(), output_.image ? "no frame rendered yet" : "no capture image");
         return false;

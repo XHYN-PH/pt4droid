@@ -8,7 +8,8 @@ android {
     namespace = "com.ptport.app"
     compileSdkVersion 35
     defaultConfig {
-        applicationId "com.ptport.app"
+        applicationId project.findProperty("ptApplicationId") ?: "com.ptport.app.test"
+        manifestPlaceholders = [ptAppLabel: project.findProperty("ptAppLabel") ?: "P.T. Test"]
         minSdkVersion 29
         targetSdkVersion 35
         versionCode((project.findProperty('ptVersionCode') ?: '1') as int)
@@ -17,11 +18,18 @@ android {
             abiFilters 'arm64-v8a'
         }
     }
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('PT_KEYSTORE') ?: 'missing-release-key.jks')
+            storePassword System.getenv('PT_STORE_PASSWORD')
+            keyAlias System.getenv('PT_KEY_ALIAS') ?: 'pt-test'
+            keyPassword System.getenv('PT_KEY_PASSWORD') ?: System.getenv('PT_STORE_PASSWORD')
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
-            // signed with the debug key so the APK installs without a keystore of its own
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
     }
     sourceSets.main {

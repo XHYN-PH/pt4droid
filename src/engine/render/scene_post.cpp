@@ -1,3 +1,5 @@
+#include "engine/platform/android.h"
+#include "engine/render/mobile_bloom.h"
 #include <imgui.h>
 
 #include <algorithm>
@@ -84,13 +86,13 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         // Native Fxaa precedes POSTFILTER. Encode before filtering so its bilinear taps see gamma colour,
         // then decode back into the port's HDR target before bloom and tonemap.
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-        BeginPass(cmd, output_extent_, {{&hdr_copy_, false, {}}});
+        BeginPass(cmd, output_extent_, {{&hdr_copy_, false, {}, true}});
         gpu::PassPush aa;
         aa.ids = glm::uvec4(gpu::kImgHdr, 1, 0, post_view_);
         Fullscreen(cmd, fxaa_, aa);
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-        BeginPass(cmd, output_extent_, {{&hdr_, false, {}}});
+        BeginPass(cmd, output_extent_, {{&hdr_, false, {}, true}});
         aa.ids = glm::uvec4(gpu::kImgHdrCopy, 2, 0, post_view_);
         Fullscreen(cmd, fxaa_, aa);
         vkCmdEndRendering(cmd);
@@ -100,7 +102,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     const bool bloom = toggles.bloom && lighting.valid && std::abs(exposure.bloom_size) >= 1.0e-5f;
     if (bloom) {
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&bloom_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-        BeginPass(cmd, bloom_[0].Extent(), {{&bloom_[0], false, {}}});
+        BeginPass(cmd, bloom_[0].Extent(), {{&bloom_[0], false, {}, true}});
         push.f0 = BloomPolynomial(exposure.bloom_extraction);
         push.f1 = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
         Fullscreen(cmd, bright_, push);
@@ -108,7 +110,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         static const uint32_t kSlots[3] = {gpu::kImgBloomA, gpu::kImgBloomB, gpu::kImgBloomSum};
         auto blur = [&](int src, int dst, VkPipeline pipeline, const glm::vec4& f0, bool clear) {
             UseTargets(cmd, {{&bloom_[src], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&bloom_[dst], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-            BeginPass(cmd, bloom_[dst].Extent(), {{&bloom_[dst], clear, {}}});
+            BeginPass(cmd, bloom_[dst].Extent(), {{&bloom_[dst], clear, {}, pipeline != bloom_add_}});
             push.ids.x = kSlots[src];
             push.f0 = f0;
             Fullscreen(cmd, pipeline, push);
@@ -120,7 +122,11 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
             blur(0, 1, gaussian_, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), false);
             blur(1, 2, gaussian_, glm::vec4(0.0f, 1.0f, 0.0f, 0.0f), false);
         } else {
-            const int passes = std::clamp(static_cast<int>(std::floor(size * 10.0f)), 1, 64);
+            const int requested = std::clamp(static_cast<int>(std::floor(size * 10.0f)), 1, 64);
+            int passes = requested;
+#ifdef __ANDROID__
+            if (int limit = android::BloomPassLimit(); limit > 0) passes = std::min(passes, limit);
+#endif
             // Each iteration blurs A into B and B back into A, then adds A to the sum. The second blur and the add are one draw
             // with two targets (kawase_sum.frag): 2 passes an iteration instead of 3, 41 instead of 61 at the default size 2.0.
             // Each pass is a full barrier on a 480x270 target, so the chain's cost is mostly the pass count, not the pixels.
@@ -128,20 +134,21 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
             static const bool separate_add = std::getenv("PT_BLOOM_SEPARATE_ADD") != nullptr;
             const glm::vec4 saved_f1 = push.f1;
             for (int i = 0; i < passes; ++i) {
-                const glm::vec4 kawase(static_cast<float>(i) + 0.5f, i == 0 ? weight : 1.0f, 1.0f, 0.0f);
+                const auto step = MobileBloomStep(requested,passes,i);
+                const glm::vec4 kawase(step.radius, i == 0 ? weight : 1.0f, 1.0f, 0.0f);
                 blur(0, 1, kawase_, kawase, false);
                 if (separate_add) {
                     blur(1, 0, kawase_, kawase, false);
-                    blur(0, 2, bloom_add_, glm::vec4(0.0f, weight / static_cast<float>(passes), 0.0f, 0.0f), i == 0);
+                    blur(0, 2, bloom_add_, glm::vec4(0.0f, weight * step.fraction, 0.0f, 0.0f), i == 0);
                     continue;
                 }
                 UseTargets(cmd, {{&bloom_[1], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                  {&bloom_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                  {&bloom_[2], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-                BeginPass(cmd, bloom_[0].Extent(), {{&bloom_[0], false, {}}, {&bloom_[2], i == 0, {}}});
+                BeginPass(cmd, bloom_[0].Extent(), {{&bloom_[0], false, {}, true}, {&bloom_[2], i == 0, {}}});
                 push.ids.x = kSlots[1];
                 push.f0 = kawase;
-                push.f1 = glm::vec4(weight / static_cast<float>(passes), 0.0f, 0.0f, 0.0f);
+                push.f1 = glm::vec4(weight * step.fraction, 0.0f, 0.0f, 0.0f);
                 Fullscreen(cmd, kawase_sum_, push);
                 vkCmdEndRendering(cmd);
             }
@@ -165,7 +172,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
 
     int current = 0;
     UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&ldr_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-    BeginPass(cmd, output_extent_, {{&ldr_[0], false, {}}});
+    BeginPass(cmd, output_extent_, {{&ldr_[0], false, {}, true}});
     push.ids.x = 0;
     const float lut_blend = std::clamp(screen.lut_blend, 0.0f, 1.0f);
     push.f0 = glm::vec4(bloom ? 1.0f : 0.0f, lut_blend, lighting.valid ? 1.0f : renderer_->exposure, 0.0f);
@@ -186,7 +193,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     auto run = [&](VkPipeline pipeline, const gpu::PassPush& p) {
         RenderTarget& dst = ldr_[1 - current];
         UseTargets(cmd, {{&ldr_[current], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&dst, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-        BeginPass(cmd, output_extent_, {{&dst, false, {}}});
+        BeginPass(cmd, output_extent_, {{&dst, false, {}, true}});
         Fullscreen(cmd, pipeline, p);
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
@@ -246,7 +253,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     output.image = renderer_->SceneColor();
     output.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
-    BeginPass(cmd, output_extent_, {{&output, false, {}}});
+    BeginPass(cmd, output_extent_, {{&output, false, {}, true}});
     push.ids = glm::uvec4(ldr_index(current), 0, 0, post_view_);
     const bool grain = toggles.film_grain && screen.film_grain && lighting.valid;
     const bool distortion = toggles.distortion && screen.screen_distortion && lighting.valid;
@@ -284,7 +291,7 @@ SceneFilterContext SceneRenderer::FilterContext(VkCommandBuffer cmd, uint32_t la
 
 void SceneRenderer::PostPass(VkCommandBuffer cmd, RenderTarget& target, VkPipeline pipeline, const gpu::PassPush& push) {
     UseTargets(cmd, {{&target, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-    BeginPass(cmd, target.Extent(), {{&target, false, {}}});
+    BeginPass(cmd, target.Extent(), {{&target, false, {}, true}});
     Fullscreen(cmd, pipeline, push);
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&target, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
@@ -447,7 +454,7 @@ void SceneRenderer::RecordDebug(VkCommandBuffer cmd) {
     output.image = renderer_->SceneColor();
     output.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-    BeginPass(cmd, output_extent_, {{&output, false, {}}});
+    BeginPass(cmd, output_extent_, {{&output, false, {}, true}});
     gpu::PassPush push;
     push.ids = glm::uvec4(static_cast<uint32_t>(debug_view), post_view_, 0, 0);
     push.f0 = glm::vec4(4.0f, 1.0f, 0.0f, 0.0f);

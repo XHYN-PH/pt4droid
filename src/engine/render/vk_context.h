@@ -62,6 +62,10 @@ class Context {
 public:
     bool Init(SDL_Window* window, bool validation, bool want_hdr = false);
     void Shutdown();
+    void SavePipelineCache();
+    bool SuboptimalNeedsRecreate();
+    bool MatchesWindowSize(uint32_t width, uint32_t height) const;
+    void InvalidateSurface();
 
     bool CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool want_hdr = false);
     void DestroySwapchain();
@@ -126,6 +130,11 @@ public:
 
 private:
     VkCommandPool upload_pool_ = VK_NULL_HANDLE;
+    VkCommandBuffer upload_cmd_ = VK_NULL_HANDLE;
+    VkFence upload_fence_ = VK_NULL_HANDLE;
+    VkSurfaceCapabilitiesKHR surface_caps_{};
+    VkExtent2D window_extent_{};
+    bool suboptimal_logged_ = false;
     SwapchainHooks* swapchain_owner_ = nullptr;
     // Android: the window and the native window the surface was made for. Android hands the app a new native window after
     // it comes back from the background; the surface is then made again (CreateSwapchain)

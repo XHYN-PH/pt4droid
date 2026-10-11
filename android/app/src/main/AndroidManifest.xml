@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
-    <application android:label="@string/app_name"
+    <application android:label="${ptAppLabel}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:isGame="true"
@@ -28,7 +28,7 @@
 
         <!-- the first screen: starts the game when its files are in place, otherwise sets them up from the player's .pkg -->
         <activity android:name=".SetupActivity"
-            android:label="@string/app_name"
+            android:label="${ptAppLabel}"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation"
@@ -40,7 +40,7 @@
         </activity>
 
         <activity android:name=".PTActivity"
-            android:label="@string/app_name"
+            android:label="${ptAppLabel}"
             android:alwaysRetainTaskState="true"
             android:launchMode="singleInstance"
             android:screenOrientation="landscape"
@@ -55,7 +55,7 @@
         <activity android:name=".SecondScreenActivity"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
             android:excludeFromRecents="true"
-            android:taskAffinity="com.ptport.app.secondscreen"
+            android:taskAffinity="${applicationId}.secondscreen"
             android:resizeableActivity="true"
             android:exported="false" />
     </application>

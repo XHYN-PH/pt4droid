@@ -46,6 +46,7 @@ public class SetupActivity extends Activity {
     private volatile boolean cancelled;
     private long lastUiUpdate;
     private boolean waitingForAccess;
+    private MobileSettings mobileSettings;
 
     private native String nativeExtract(int fd, String destination);
 
@@ -53,10 +54,7 @@ public class SetupActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        if (gameInstalled() && !shouldAskMicrophone()) {
-            launchGame();
-            return;
-        }
+        mobileSettings = new MobileSettings(this,null);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(8, 8, 9));
         ScrollView scroll = new ScrollView(this);
@@ -71,7 +69,7 @@ public class SetupActivity extends Activity {
         root.addView(scroll, lp);
         setContentView(root);
         if (gameInstalled()) {
-            showMicrophone();
+            showReady();
             return;
         }
         System.loadLibrary("ptsetup");
@@ -81,6 +79,7 @@ public class SetupActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if(mobileSettings!=null)mobileSettings.resumeImport();
         // back from Android's permission screen: the files in Download are readable now
         if (waitingForAccess && gameInstalled()) {
             waitingForAccess = false;
@@ -90,6 +89,8 @@ public class SetupActivity extends Activity {
 
     // ---- screens
 
+    @Override protected void onDestroy(){if(mobileSettings!=null)mobileSettings.detach();super.onDestroy();}
+    private void showReady(){panel.removeAllViews();title("P.T. Test");button("Start P.T.",v->startGame());button("Android settings",v->mobileSettings.show());button("Delete saves",v->mobileSettings.deleteSaves());button("Quit",v->finish());}
     private void showWelcome() {
         panel.removeAllViews();
         title("P.T.");
@@ -214,6 +215,7 @@ public class SetupActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if(mobileSettings!=null && mobileSettings.activityResult(requestCode,resultCode,data))return;
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != PICK_PKG || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         extract(data.getData());

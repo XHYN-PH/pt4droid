@@ -24,6 +24,14 @@ std::filesystem::path LogDir();
 
 /* The scene's render size against the screen: 0.667 unless LogDir()/render_scale.txt holds another (0.25 to 1). */
 float RenderScale();
+void SetRenderScale(float value);
+bool ConsumeRenderScaleChange();
+int ConsumePerformanceProfile();
+int BloomPassLimit();
+void ConsumeLookDelta(float& dx, float& dy);
+void SetTouchControlsMode(int mode);
+int TouchControlsMode(int fallback);
+void OpenMobileSettings();
 
 /* The second screen of a dual-screen handheld (AYN Thor and others; android/.../SecondScreen.java): the loop the player is on
    and the subtitle line playing now (empty for none), sent on only when one of them changes. Does nothing without one. */

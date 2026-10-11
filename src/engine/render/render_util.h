@@ -28,6 +28,7 @@ struct ColorOutput {
     RenderTarget* target = nullptr;
     bool clear = false;
     VkClearColorValue clear_value{};
+    bool discard = false;
 };
 
 void BeginPass(VkCommandBuffer cmd, VkExtent2D extent, std::initializer_list<ColorOutput> colors, RenderTarget* depth = nullptr,

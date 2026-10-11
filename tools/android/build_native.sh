@@ -20,6 +20,7 @@ TURNIP_SHA256="e634db0f929e2205e95511c769071817d0390180ec72c8e690bc76375e813715"
 cmake -G Ninja -S "$ROOT" -B "$BUILD" \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a \
+  -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
   -DANDROID_PLATFORM=android-29 \
   -DANDROID_STL=c++_static \
   -DCMAKE_BUILD_TYPE=Release \
@@ -35,7 +36,7 @@ mkdir -p "$LIBS" "$APP/assets/shaders" "$APP/assets/fonts" "$APP/assets/voice/li
 
 cp "$BUILD/libmain.so" "$LIBS/"
 for lib in libSDL3.so libptsetup.so libmain_hook.so libfile_redirect_hook.so libgsl_alloc_hook.so libhook_impl.so; do
-  found="$(find "$BUILD" -name "$lib" -type f | head -n1)"
+  found="$(find "$BUILD" -ignore_readdir_race -name "$lib" -type f -print -quit)"
   if [ -z "$found" ]; then
     echo "missing $lib in $BUILD" >&2
     exit 1
@@ -63,6 +64,8 @@ driver="$(unzip -p "$TURNIP_ZIP" meta.json | python3 -c 'import json,sys; print(
 # the package manager only unpacks lib*.so; the game asks libadrenotools for this name (src/engine/platform/android.cpp)
 unzip -p "$TURNIP_ZIP" "$driver" > "$LIBS/libvulkan_turnip.so"
 
+mkdir -p "$APP/assets/notices"
+cp "$ROOT"/assets/notices/* "$APP/assets/notices/"
 cp "$BUILD"/shaders/*.spv "$APP/assets/shaders/"
 cp "$ROOT"/assets/fonts/*.ttf "$ROOT"/assets/fonts/OFL-*.txt "$APP/assets/fonts/"
 cp "$BUILD/voice/ggml-base.en-q5_1.bin" "$BUILD/voice/ggml-silero-v6.2.0.bin" "$APP/assets/voice/"
@@ -71,7 +74,7 @@ cp "$BUILD"/voice/licenses/* "$APP/assets/voice/licenses/"
   cd "$APP/assets"
   {
     echo "# $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local) $(date -u +%Y%m%dT%H%M%SZ)"
-    find shaders fonts voice -type f | sort
+    find shaders fonts voice notices -type f | sort
   } > pt_assets.txt
 )
 echo "native build laid out in $APP"

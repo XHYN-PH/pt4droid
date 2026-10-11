@@ -549,10 +549,8 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     return true;
 }
 
-void Context::Shutdown() {
-    if (device) {
-        vkDeviceWaitIdle(device);
-        if (pipeline_cache) {
+void Context::SavePipelineCache() {
+    if (!device || !pipeline_cache) return;
             if (!pipeline_cache_dir.empty()) {
                 std::vector<uint8_t> data;
                 VkResult result;
@@ -582,6 +580,13 @@ void Context::Shutdown() {
                     LogWarn("vulkan: could not read pipeline cache ({})", vk::ResultName(result));
                 }
             }
+}
+
+void Context::Shutdown() {
+    if (device) {
+        vkDeviceWaitIdle(device);
+        if (pipeline_cache) {
+            SavePipelineCache();
             const PipelineCreationStats stats = PipelineStats(device);
             LogInfo("vulkan: pipeline creation took {:.2f} s ({} graphics, {} compute)", stats.duration_ns / 1.0e9,
                     stats.graphics_count, stats.compute_count);
@@ -590,6 +595,9 @@ void Context::Shutdown() {
             pipeline_cache = VK_NULL_HANDLE;
         }
         DestroySwapchain();
+        if (upload_fence_) vkDestroyFence(device, upload_fence_, nullptr);
+        upload_fence_ = VK_NULL_HANDLE;
+        upload_cmd_ = VK_NULL_HANDLE;
         if (upload_pool_) {
             vkDestroyCommandPool(device, upload_pool_, nullptr);
         }
@@ -668,7 +676,10 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
     swapchain_refused = false;
     vsync = vsync && !force_vsync_off;
     VkSurfaceCapabilitiesKHR caps;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical, surface, &caps);
+    if (!Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical, surface, &caps), "surface capabilities")) return false;
+    surface_caps_ = caps;
+    window_extent_ = {width, height};
+    suboptimal_logged_ = false;
     uint32_t format_count = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(physical, surface, &format_count, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(format_count);
@@ -720,7 +731,7 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
         } else if (caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) {
             logical = {extent.height, extent.width};
         }
-        static const float scale = android::RenderScale();
+        const float scale = android::RenderScale();
         const VkExtent2D scaled{std::max(2u, static_cast<uint32_t>(logical.width * scale) & ~1u),
                                 std::max(2u, static_cast<uint32_t>(logical.height * scale) & ~1u)};
         extent.width = std::clamp(scaled.width, caps.minImageExtent.width, caps.maxImageExtent.width);
@@ -740,7 +751,11 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
     info.imageColorSpace = chosen.colorSpace;
     info.imageExtent = extent;
     info.imageArrayLayers = 1;
+#ifdef __ANDROID__
+    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+#else
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+#endif
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 #ifdef __ANDROID__
     info.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
@@ -748,7 +763,7 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
 #else
     info.preTransform = caps.currentTransform;
 #endif
-    info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR : static_cast<VkCompositeAlphaFlagBitsKHR>(caps.supportedCompositeAlpha & (~caps.supportedCompositeAlpha + 1));
     info.presentMode = present_mode;
     info.clipped = VK_TRUE;
     info.oldSwapchain = swapchain.handle;
@@ -953,29 +968,51 @@ void Context::DestroyBuffer(Buffer& buffer) {
 }
 
 void Context::Submit(const std::function<void(VkCommandBuffer)>& record) {
-    VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    alloc.commandPool = upload_pool_;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(device, &alloc, &cmd);
+    if (!upload_cmd_) {
+        VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        alloc.commandPool = upload_pool_; alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount = 1;
+        if (!Check(vkAllocateCommandBuffers(device, &alloc, &upload_cmd_), "upload command")) return;
+        VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if (!Check(vkCreateFence(device, &f, nullptr, &upload_fence_), "upload fence")) {
+            vkFreeCommandBuffers(device, upload_pool_, 1, &upload_cmd_); upload_cmd_ = VK_NULL_HANDLE; return;
+        }
+    }
+    vkResetFences(device, 1, &upload_fence_); vkResetCommandBuffer(upload_cmd_, 0);
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-    VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
-    cmd_info.commandBuffer = cmd;
-    VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    submit.commandBufferInfoCount = 1;
-    submit.pCommandBufferInfos = &cmd_info;
-    VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    VkFence fence;
-    vkCreateFence(device, &fence_info, nullptr, &fence);
-    CheckDeviceLost(vkQueueSubmit2(queue, 1, &submit, fence), "one-time submit");
-    CheckDeviceLost(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX), "one-time submit wait");
-    vkDestroyFence(device, fence, nullptr);
-    vkFreeCommandBuffers(device, upload_pool_, 1, &cmd);
+    if (!Check(vkBeginCommandBuffer(upload_cmd_, &begin), "upload begin")) return;
+    record(upload_cmd_);
+    if (!Check(vkEndCommandBuffer(upload_cmd_), "upload end")) return;
+    VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO}; cmd_info.commandBuffer = upload_cmd_;
+    VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2}; submit.commandBufferInfoCount = 1; submit.pCommandBufferInfos = &cmd_info;
+    CheckDeviceLost(vkQueueSubmit2(queue, 1, &submit, upload_fence_), "one-time submit");
+    CheckDeviceLost(vkWaitForFences(device, 1, &upload_fence_, VK_TRUE, UINT64_MAX), "one-time submit wait");
+}
+
+bool Context::MatchesWindowSize(uint32_t width, uint32_t height) const {
+    return window_extent_.width == width && window_extent_.height == height;
+}
+void Context::InvalidateSurface() { android_native_window_ = nullptr; }
+bool Context::SuboptimalNeedsRecreate() {
+#ifdef __ANDROID__
+    if (!window_ || !surface) return true;
+    auto props = SDL_GetWindowProperties(window_);
+    void* native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr);
+    int w=0,h=0; SDL_GetWindowSizeInPixels(window_, &w, &h);
+    if (native != android_native_window_ || w <= 0 || h <= 0 || !MatchesWindowSize(w,h)) return true;
+    VkSurfaceCapabilitiesKHR caps{};
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical, surface, &caps) != VK_SUCCESS) return true;
+    if (caps.currentExtent.width != surface_caps_.currentExtent.width || caps.currentExtent.height != surface_caps_.currentExtent.height ||
+        caps.currentTransform != surface_caps_.currentTransform || caps.supportedTransforms != surface_caps_.supportedTransforms ||
+        caps.minImageExtent.width != surface_caps_.minImageExtent.width || caps.minImageExtent.height != surface_caps_.minImageExtent.height ||
+        caps.maxImageExtent.width != surface_caps_.maxImageExtent.width || caps.maxImageExtent.height != surface_caps_.maxImageExtent.height ||
+        caps.minImageCount != surface_caps_.minImageCount || caps.maxImageCount != surface_caps_.maxImageCount ||
+        caps.supportedCompositeAlpha != surface_caps_.supportedCompositeAlpha || caps.supportedUsageFlags != surface_caps_.supportedUsageFlags) return true;
+    if (!suboptimal_logged_) { LogInfo("vulkan: stable Android SUBOPTIMAL retained"); suboptimal_logged_ = true; }
+    return false;
+#else
+    return true;
+#endif
 }
 
 bool Context::Upload(Buffer& dst, const void* data, VkDeviceSize size) {

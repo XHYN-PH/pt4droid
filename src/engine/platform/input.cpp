@@ -1,3 +1,4 @@
+#include "engine/platform/android.h"
 #include "engine/platform/input.h"
 
 #include <SDL3/SDL.h>
@@ -703,8 +704,12 @@ InputState InputDevice::Poll(bool keyboard_free, MouseUse mouse, bool pads_free)
     const bool house_key = mouse == MouseUse::Menu && held(KeyAction::MenuHouse);
     state.house_pressed = house_key && !previous_house_key_;
     previous_house_key_ = house_key;
+    float touch_dx=0.0f,touch_dy=0.0f;
+#ifdef __ANDROID__
+    android::ConsumeLookDelta(touch_dx,touch_dy);
+#endif
     if (mouse == MouseUse::Look) {
-        state.mouse_look = glm::vec2(mouse_dx_, mouse_dy_) * settings.mouse_sensitivity;
+        state.mouse_look = glm::vec2(mouse_dx_+touch_dx, mouse_dy_+touch_dy) * settings.mouse_sensitivity;
     }
     if (mouse != last_mouse_use_) {
         last_mouse_use_ = mouse;

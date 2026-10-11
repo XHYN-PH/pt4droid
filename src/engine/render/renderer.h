@@ -118,6 +118,7 @@ private:
     bool swapchain_dirty_ = false;
     bool imgui_ready_ = false;
     bool output_ready_ = false;
+    bool final_ready_ = false;
     float brightness_override_ = 0.0f;
 
     vk::Image scene_color_;

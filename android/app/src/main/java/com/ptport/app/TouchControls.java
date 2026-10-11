@@ -1,294 +1,811 @@
 package com.ptport.app;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.SharedPreferences;
+import android.content.res.Resources;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.LinearLayout;
+import android.widget.Spinner;
+import android.widget.SpinnerAdapter;
+import java.util.HashSet;
+import java.util.function.IntConsumer;
 
-/* On-screen controls for players without a controller, laid over the game. They reach the game as a virtual gamepad
-   (src/engine/platform/android.cpp PumpTouchControls), so the game reads them like any other pad.
-
-   Left half: a floating stick to walk (it appears where the thumb lands). Right half: a floating stick to look. Buttons on
-   the right: Use (A), Zoom (right stick click, P.T.'s zoom), Back (B); at the top, Pause (Start) and Name (both triggers,
-   the voice part without the microphone). The overlay shows on a touch and fades out when a real controller is used. */
+/* loaded from: classes.dex */
 public class TouchControls extends View {
-    private static final int A = 1, B = 2, START = 4, ZOOM = 8, NAME = 16;
+    private static final int[] ACTION_BITS = {1, 8, 2, 4, 16};
+    private static final String[] ACTION_NAMES = {"Use", "Zoom", "Back", "Pause", "Name"};
+    private static final long HIDE_AFTER_MS = 5000;
+    private final Control[] controls;
+    private float deadZone;
+    private float dragDx;
+    private float dragDy;
+    private int editPointer;
+    private boolean editing;
+    private final Paint fill;
+    private boolean floating;
+    private final Runnable hideIdle;
+    private int insetBottom;
+    private int insetLeft;
+    private int insetRight;
+    private int insetTop;
+    private final Paint label;
+    private int lastButtons;
+    private float lastLx;
+    private float lastLy;
+    private float lastRx;
+    private float lastRy;
+    private final Stick look;
+    private int mode;
+    private final Stick move;
+    private float opacity;
+    private final SharedPreferences prefs;
+    private final Paint ring;
+    private final RectF safe;
+    private int selected;
+    private float sensitivity;
+    private int lookStyle = 1;
+    private float lookLastX, lookLastY;
+    private static native void nativeLookDelta(float dx, float dy);
+    private static native void nativeClearLook();
+    private final RectF settingsHit;
+    private boolean shown;
+    private final RectF[] toolbar;
+    private int toolbarPressed;
 
-    private static native void nativeState(float lx, float ly, float rx, float ry, int buttons);
-    // tells the game whether the overlay is up, so that it puts it away when a real controller is used (NoteControllerEvent)
-    private static native void nativeVisible(boolean visible);
+    static boolean isController(int i) {
+        return (i & 1025) == 1025 || (i & 16777232) == 16777232;
+    }
 
-    private static final class Button {
-        final int bit;
-        final String label;
+    private static native void nativeState(float f, float f2, float f3, float f4, int i);
+
+    private static native void nativeVisible(boolean z);
+
+    /* JADX INFO: Access modifiers changed from: private */
+    static final class Control {
+        int action;
+        float nx;
+        float ny;
         final RectF area = new RectF();
-        int pointer = -1;
+        final HashSet<Integer> fingers = new HashSet<>();
+        float size = 1.0f;
+        boolean visible = true;
 
-        Button(int bit, String label) {
-            this.bit = bit;
-            this.label = label;
+        Control(int i) {
+            this.action = i;
         }
     }
 
     private static final class Stick {
-        int pointer = -1;
-        float originX, originY, x, y;
+        float originX;
+        float originY;
+        int pointer;
+        float x;
+        float y;
 
-        float valueX(float radius) {
-            return pointer < 0 ? 0f : clamp((x - originX) / radius);
+        private Stick() {
+            this.pointer = -1;
         }
+    }
 
-        float valueY(float radius) {
-            return pointer < 0 ? 0f : clamp((y - originY) / radius);
+    /* renamed from: lambda$new$0$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m28lambda$new$0$comptportappTouchControls() {
+        if (this.mode != 0 || this.editing || anyFingerDown()) {
+            return;
         }
-    }
-
-    private final Button[] buttons = {
-        new Button(A, "Use"), new Button(ZOOM, "Zoom"), new Button(B, "Back"), new Button(START, "Pause"), new Button(NAME, "Name"),
-    };
-    private final Stick move = new Stick();
-    private final Stick look = new Stick();
-    private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private boolean shown;
-    // the setting (display.touch_controls): off keeps the overlay away
-    private boolean allowed = true;
-    // put away after this long without a finger on the screen
-    private static final long HIDE_AFTER_MS = 5000;
-    private final Runnable hideIdle = () -> {
-        if (!anyFingerDown()) hide();
-    };
-    private int lastButtons = -1;
-    private float lastLx, lastLy, lastRx, lastRy;
-
-    public TouchControls(Context context) {
-        super(context);
-        ring.setStyle(Paint.Style.STROKE);
-        ring.setColor(Color.argb(110, 234, 241, 255));
-        fill.setColor(Color.argb(60, 234, 241, 255));
-        label.setColor(Color.argb(170, 234, 241, 255));
-        label.setTextAlign(Paint.Align.CENTER);
-        Typeface typewriter = null;
-        try {
-            typewriter = context.getResources().getFont(R.font.special_elite);
-        } catch (Throwable ignored) {
-        }
-        label.setTypeface(typewriter != null ? typewriter : Typeface.MONOSPACE);
-        // shown at the start only when no controller is connected (a handheld's own pad counts)
-        setShown(!controllerConnected());
-        if (shown) postDelayed(hideIdle, HIDE_AFTER_MS * 2);
-    }
-
-    private void setShown(boolean value) {
-        shown = value;
-        try {
-            nativeVisible(value);
-        } catch (UnsatisfiedLinkError ignored) {
-            // the game library is not loaded yet
-        }
-        postInvalidate();
-    }
-
-    private float dp(float value) {
-        return value * getResources().getDisplayMetrics().density;
-    }
-
-    private float stickRadius() {
-        return dp(56);
-    }
-
-    @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        float size = dp(64), gap = dp(14), margin = dp(28);
-        // Use bottom right, Zoom left of it, Back above Use
-        float right = w - margin, bottom = h - margin;
-        buttons[0].area.set(right - size, bottom - size, right, bottom);
-        buttons[1].area.set(right - 2 * size - gap, bottom - size * 0.75f, right - size - gap, bottom + size * 0.25f);
-        buttons[2].area.set(right - size, bottom - 2 * size - gap, right, bottom - size - gap);
-        float small = dp(48), top = dp(20);
-        buttons[3].area.set(w - margin - small * 1.6f, top, w - margin, top + small * 0.8f);
-        buttons[4].area.set(w - margin - small * 3.4f, top, w - margin - small * 1.8f, top + small * 0.8f);
-    }
-
-    void setAllowed(boolean value) {
-        allowed = value;
-        setVisibility(value ? VISIBLE : GONE);
-        if (!value) hide();
-    }
-
-    private boolean anyFingerDown() {
-        if (move.pointer >= 0 || look.pointer >= 0) return true;
-        for (Button b : buttons) {
-            if (b.pointer >= 0) return true;
-        }
-        return false;
-    }
-
-    private void hide() {
-        removeCallbacks(hideIdle);
-        if (!shown) return;
         setShown(false);
-        move.pointer = look.pointer = -1;
-        for (Button b : buttons) b.pointer = -1;
-        send();
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        if (!allowed) return false;
-        removeCallbacks(hideIdle);
-        if (!shown) setShown(true);
-        final int action = event.getActionMasked();
-        final int index = event.getActionIndex();
-        switch (action) {
-        case MotionEvent.ACTION_DOWN:
-        case MotionEvent.ACTION_POINTER_DOWN:
-            press(event.getPointerId(index), event.getX(index), event.getY(index));
-            break;
-        case MotionEvent.ACTION_MOVE:
-            for (int i = 0; i < event.getPointerCount(); i++) {
-                int id = event.getPointerId(i);
-                if (move.pointer == id) {
-                    move.x = event.getX(i);
-                    move.y = event.getY(i);
-                } else if (look.pointer == id) {
-                    look.x = event.getX(i);
-                    look.y = event.getY(i);
-                }
+    public TouchControls(Context context) throws Resources.NotFoundException {
+        super(context);
+        this.controls = new Control[]{new Control(0), new Control(1), new Control(2), new Control(3), new Control(4), new Control(-1), new Control(-1)};
+        this.move = new Stick();
+        this.look = new Stick();
+        this.safe = new RectF();
+        this.settingsHit = new RectF();
+        this.toolbar = new RectF[]{new RectF(), new RectF(), new RectF(), new RectF()};
+        Paint paint = new Paint(1);
+        this.ring = paint;
+        this.fill = new Paint(1);
+        Paint paint2 = new Paint(1);
+        this.label = paint2;
+        this.opacity = 0.7f;
+        this.sensitivity = 1.0f;
+        this.deadZone = 0.05f;
+        this.floating = true;
+        this.selected = -1;
+        this.editPointer = -1;
+        this.toolbarPressed = -1;
+        this.lastButtons = -1;
+        this.hideIdle = new Runnable() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda0
+            @Override // java.lang.Runnable
+            public final void run() {
+                TouchControls.this.m28lambda$new$0$comptportappTouchControls();
             }
-            break;
-        case MotionEvent.ACTION_UP:
-        case MotionEvent.ACTION_POINTER_UP:
-            release(event.getPointerId(index));
-            break;
-        case MotionEvent.ACTION_CANCEL:
-            move.pointer = look.pointer = -1;
-            for (Button b : buttons) b.pointer = -1;
-            break;
-        default:
-            break;
+        };
+        setFocusable(false);
+        this.prefs = context.getSharedPreferences("touch_layout_v1", 0);
+        paint.setStyle(Paint.Style.STROKE);
+        paint2.setTextAlign(Paint.Align.CENTER);
+        Typeface font = Typeface.MONOSPACE;
+        try {
+            font = context.getResources().getFont(R.font.special_elite);
+        } catch (Exception unused) {
         }
-        send();
-        invalidate();
-        if (!anyFingerDown()) postDelayed(hideIdle, HIDE_AFTER_MS);
-        return true;
+        this.label.setTypeface(font);
+        load();
+        setShown(!controllerConnected());
+        postDelayed(this.hideIdle, 10000L);
     }
 
-    private void press(int id, float x, float y) {
-        for (Button b : buttons) {
-            RectF hit = new RectF(b.area);
-            hit.inset(-dp(8), -dp(8));
-            if (hit.contains(x, y)) {
-                b.pointer = id;
+    private float dp(float f) {
+        return f * getResources().getDisplayMetrics().density;
+    }
+
+    private static float clamp(float f, float f2, float f3) {
+        return Float.isFinite(f) ? Math.max(f2, Math.min(f3, f)) : f2;
+    }
+
+    private float radius(int i) {
+        return dp(56.0f) * this.controls[i].size;
+    }
+
+    private void defaults() {
+        float[] fArr = {0.92f, 0.8f, 0.92f, 0.93f, 0.81f, 0.18f, 0.62f};
+        float[] fArr2 = {0.82f, 0.85f, 0.61f, 0.09f, 0.09f, 0.68f, 0.68f};
+        int i = 0;
+        while (true) {
+            Control[] controlArr = this.controls;
+            if (i < controlArr.length) {
+                controlArr[i].nx = fArr[i];
+                this.controls[i].ny = fArr2[i];
+                this.controls[i].size = 1.0f;
+                this.controls[i].visible = true;
+                this.controls[i].action = i < 5 ? i : -1;
+                i++;
+            } else {
+                this.opacity = 0.7f;
+                this.sensitivity = 1.0f;
+                this.deadZone = 0.05f;
+                this.floating = true;
                 return;
             }
         }
-        Stick stick = x < getWidth() / 2f ? move : look;
-        if (stick.pointer >= 0) return;
-        stick.pointer = id;
-        stick.originX = stick.x = x;
-        stick.originY = stick.y = y;
     }
 
-    private void release(int id) {
-        if (move.pointer == id) move.pointer = -1;
-        if (look.pointer == id) look.pointer = -1;
-        for (Button b : buttons) {
-            if (b.pointer == id) b.pointer = -1;
+    private void load() {
+        defaults();
+        lookStyle=Math.max(0, Math.min(2,prefs.getInt("look_style",1)));
+        int i = 0;
+        while (true) {
+            Control[] controlArr = this.controls;
+            if (i < controlArr.length) {
+                Control control = controlArr[i];
+                String str = "control." + i + ".";
+                control.nx = clamp(this.prefs.getFloat(str + "x", control.nx), 0.0f, 1.0f);
+                control.ny = clamp(this.prefs.getFloat(str + "y", control.ny), 0.0f, 1.0f);
+                control.size = clamp(this.prefs.getFloat(str + "size", 1.0f), 0.65f, 1.75f);
+                control.visible = this.prefs.getBoolean(str + "visible", true);
+                if (i < 5) {
+                    control.action = Math.max(0, Math.min(4, this.prefs.getInt(str + "action", i)));
+                }
+                i++;
+            } else {
+                this.opacity = clamp(this.prefs.getFloat("opacity", this.opacity), 0.15f, 1.0f);
+                this.sensitivity = clamp(this.prefs.getFloat("sensitivity", this.sensitivity), 0.25f, 2.0f);
+                this.deadZone = clamp(this.prefs.getFloat("dead_zone", this.deadZone), 0.0f, 0.3f);
+                this.floating = this.prefs.getBoolean("floating", true);
+                layout();
+                return;
+            }
         }
     }
 
-    private void send() {
-        float r = stickRadius();
-        int held = 0;
-        for (Button b : buttons) {
-            if (b.pointer >= 0) held |= b.bit;
-        }
-        float lx = move.valueX(r), ly = move.valueY(r), rx = look.valueX(r), ry = look.valueY(r);
-        if (held == lastButtons && lx == lastLx && ly == lastLy && rx == lastRx && ry == lastRy) return;
-        lastButtons = held;
-        lastLx = lx;
-        lastLy = ly;
-        lastRx = rx;
-        lastRy = ry;
-        try {
-            nativeState(lx, ly, rx, ry, held);
-        } catch (UnsatisfiedLinkError ignored) {
-            // the game library is not loaded yet
+    private void save() {
+        SharedPreferences.Editor editorEdit = this.prefs.edit();
+        int i = 0;
+        while (true) {
+            Control[] controlArr = this.controls;
+            if (i < controlArr.length) {
+                Control control = controlArr[i];
+                String str = "control." + i + ".";
+                editorEdit.putFloat(str + "x", control.nx).putFloat(str + "y", control.ny).putFloat(str + "size", control.size).putBoolean(str + "visible", control.visible).putInt(str + "action", control.action);
+                i++;
+            } else {
+                editorEdit.putFloat("opacity", this.opacity).putFloat("sensitivity", this.sensitivity).putFloat("dead_zone", this.deadZone).putBoolean("floating", this.floating).apply();
+                return;
+            }
         }
     }
 
-    // a real controller in use: the overlay steps aside until the screen is touched again
+    @Override // android.view.View
+    public WindowInsets onApplyWindowInsets(WindowInsets windowInsets) {
+        this.insetLeft = windowInsets.getSystemWindowInsetLeft();
+        this.insetTop = windowInsets.getSystemWindowInsetTop();
+        this.insetRight = windowInsets.getSystemWindowInsetRight();
+        this.insetBottom = windowInsets.getSystemWindowInsetBottom();
+        if (windowInsets.getDisplayCutout() != null) {
+            this.insetLeft = Math.max(this.insetLeft, windowInsets.getDisplayCutout().getSafeInsetLeft());
+            this.insetTop = Math.max(this.insetTop, windowInsets.getDisplayCutout().getSafeInsetTop());
+            this.insetRight = Math.max(this.insetRight, windowInsets.getDisplayCutout().getSafeInsetRight());
+            this.insetBottom = Math.max(this.insetBottom, windowInsets.getDisplayCutout().getSafeInsetBottom());
+        }
+        layout();
+        return windowInsets;
+    }
+
+    @Override // android.view.View
+    protected void onSizeChanged(int i, int i2, int i3, int i4) {
+        releaseAll();
+        layout();
+    }
+
+    private void layout() {
+        if (getWidth() == 0 || getHeight() == 0) {
+            return;
+        }
+        this.safe.set(this.insetLeft + dp(10.0f), this.insetTop + dp(10.0f), (getWidth() - this.insetRight) - dp(10.0f), (getHeight() - this.insetBottom) - dp(10.0f));
+        if (this.safe.width() <= 0.0f || this.safe.height() <= 0.0f) {
+            this.safe.set(0.0f, 0.0f, getWidth(), getHeight());
+        }
+        int i = 0;
+        while (true) {
+            Control[] controlArr = this.controls;
+            if (i >= controlArr.length) {
+                break;
+            }
+            Control control = controlArr[i];
+            float f = 112.0f;
+            float fDp = dp(i < 3 ? 64.0f : i < 5 ? 76.0f : 112.0f) * control.size;
+            if (i < 3) {
+                f = 64.0f;
+            } else if (i < 5) {
+                f = 40.0f;
+            }
+            float fDp2 = dp(f) * control.size;
+            float f2 = fDp / 2.0f;
+            float fClamp = clamp(this.safe.left + (control.nx * this.safe.width()), this.safe.left + f2, this.safe.right - f2);
+            float f3 = fDp2 / 2.0f;
+            float fClamp2 = clamp(this.safe.top + (control.ny * this.safe.height()), this.safe.top + f3, this.safe.bottom - f3);
+            control.area.set(fClamp - f2, fClamp2 - f3, fClamp + f2, fClamp2 + f3);
+            i++;
+        }
+        this.settingsHit.set(this.safe.left, this.safe.top, this.safe.left + dp(90.0f), this.safe.top + dp(36.0f));
+        float fMin = Math.min(dp(104.0f), this.safe.width() / 5.0f);
+        for (int i2 = 0; i2 < 4; i2++) {
+            float f4 = i2;
+            this.toolbar[i2].set(this.safe.left + ((dp(6.0f) + fMin) * f4), this.safe.top, this.safe.left + (f4 * (dp(6.0f) + fMin)) + fMin, this.safe.top + dp(38.0f));
+        }
+        invalidate();
+    }
+
+    void setMode(int i) {
+        this.mode = Math.max(0, Math.min(2, i));
+        releaseAll();
+        setVisibility((this.mode != 1 || this.editing) ? 0 : 8);
+        int i2 = this.mode;
+        if (i2 == 1) {
+            setShown(false);
+        } else if (i2 == 2) {
+            setShown(true);
+        }
+    }
+
+    void setAllowed(boolean z) {
+        setMode(!z ? 1 : 0);
+    }
+
+    /* JADX WARN: Removed duplicated region for block: B:7:0x000a  */
+    /*
+        Code decompiled incorrectly, please refer to instructions dump.
+    */
+    private void setShown(boolean value) {
+        shown=value;
+        try { nativeVisible(value && !editing && mode!=1); } catch (UnsatisfiedLinkError ignored) {}
+        postInvalidate();
+    }
+    void reloadPreferences() { releaseAll(); load(); layout(); invalidate(); }
+
+    void releaseAll() {
+        removeCallbacks(this.hideIdle);
+        try { nativeClearLook(); } catch (UnsatisfiedLinkError ignored) {}
+        Stick stick = this.move;
+        this.look.pointer = -1;
+        stick.pointer = -1;
+        for (Control control : this.controls) {
+            control.fingers.clear();
+        }
+        send();
+        invalidate();
+    }
+
     void controllerUsed() {
-        hide();
+        releaseAll();
+        if (this.mode == 2 || this.editing) {
+            return;
+        }
+        setShown(false);
     }
 
-    static boolean isController(int source) {
-        return (source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
-                || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+    void focusReturned() {
+        removeCallbacks(this.hideIdle);
+        if (this.mode == 0 && this.shown && !this.editing) {
+            postDelayed(this.hideIdle, HIDE_AFTER_MS);
+        }
     }
 
-    private static boolean controllerConnected() {
-        for (int id : InputDevice.getDeviceIds()) {
-            InputDevice device = InputDevice.getDevice(id);
-            if (device != null && !device.isVirtual() && isController(device.getSources())) return true;
+    @Override // android.view.View
+    protected void onDetachedFromWindow() {
+        releaseAll();
+        super.onDetachedFromWindow();
+    }
+
+    @Override // android.view.View
+    protected void onWindowVisibilityChanged(int i) {
+        super.onWindowVisibilityChanged(i);
+        if (this.controls == null || i == 0) {
+            return;
+        }
+        releaseAll();
+    }
+
+    private boolean anyFingerDown() {
+        if (this.move.pointer >= 0 || this.look.pointer >= 0) {
+            return true;
+        }
+        for (Control control : this.controls) {
+            if (!control.fingers.isEmpty()) {
+                return true;
+            }
         }
         return false;
     }
 
-    @Override
-    protected void onDraw(Canvas canvas) {
-        if (!shown) return;
-        float r = stickRadius();
-        ring.setStrokeWidth(dp(2));
-        drawStick(canvas, move, r, getWidth() * 0.18f, getHeight() * 0.68f, "MOVE");
-        drawStick(canvas, look, r, getWidth() * 0.62f, getHeight() * 0.68f, "LOOK");
-        for (Button b : buttons) {
-            boolean down = b.pointer >= 0;
-            float cx = b.area.centerX(), cy = b.area.centerY();
-            boolean round = b.bit == A || b.bit == B || b.bit == ZOOM;
-            if (round) {
-                float radius = b.area.width() / 2f;
-                if (down) canvas.drawCircle(cx, cy, radius, fill);
-                canvas.drawCircle(cx, cy, radius, ring);
-            } else {
-                if (down) canvas.drawRoundRect(b.area, dp(10), dp(10), fill);
-                canvas.drawRoundRect(b.area, dp(10), dp(10), ring);
+    static boolean isFingerEvent(MotionEvent motionEvent) {
+        return motionEvent.isFromSource(4098) && !motionEvent.isFromSource(8194) && motionEvent.getToolType(motionEvent.getActionIndex()) == 1;
+    }
+
+    /* JADX WARN: Removed duplicated region for block: B:46:0x008b  */
+    /* JADX WARN: Removed duplicated region for block: B:47:0x0093  */
+    @Override // android.view.View
+    /*
+        Code decompiled incorrectly, please refer to instructions dump.
+    */
+    public boolean onTouchEvent(MotionEvent event) {
+        int action=event.getActionMasked(), index=event.getActionIndex();
+        if(action==MotionEvent.ACTION_CANCEL && anyFingerDown()) { releaseAll(); return true; }
+        if(!isFingerEvent(event) || (mode==1 && !editing))return false;
+        if(editing)return editEvent(event);
+        removeCallbacks(hideIdle);if(!shown)setShown(true);
+        if(action==MotionEvent.ACTION_DOWN && settingsHit.contains(event.getX(),event.getY())) {
+            releaseAll();PTActivity.openMobileSettings();return true;
+        }
+        if(action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
+            press(event.getPointerId(index),event.getX(index),event.getY(index));
+        } else if(action==MotionEvent.ACTION_MOVE) {
+            for(int i=0;i<event.getPointerCount();i++) {
+                int id=event.getPointerId(i);
+                if(move.pointer==id) {move.x=event.getX(i);move.y=event.getY(i);}
+                if(look.pointer==id)updateLook(event.getX(i),event.getY(i));
             }
-            label.setTextSize(round ? dp(15) : dp(13));
-            canvas.drawText(b.label, cx, cy - (label.descent() + label.ascent()) / 2f, label);
+        } else if(action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP) {
+            int id=event.getPointerId(index);
+            if(look.pointer==id)updateLook(event.getX(index),event.getY(index));
+            release(id);
+        } else if(action==MotionEvent.ACTION_CANCEL)releaseAll();
+        send();invalidate();
+        if(mode==0 && !anyFingerDown())postDelayed(hideIdle,HIDE_AFTER_MS);
+        return true;
+    }
+    private void updateLook(float x,float y) {
+        if(lookStyle==1) {
+            float factor=720.0f/Math.max(1.0f,safe.height())*sensitivity;
+            try {nativeLookDelta((x-lookLastX)*factor,(y-lookLastY)*factor);}catch(UnsatisfiedLinkError ignored){}
+            lookLastX=x;lookLastY=y;
+        }
+        look.x=x;look.y=y;
+    }
+    private void press(int id,float x,float y) {
+        for(int i=0;i<5;i++) {
+            Control c=controls[i];
+            if(c.visible && x>=c.area.left-dp(6) && x<=c.area.right+dp(6) && y>=c.area.top-dp(6) && y<=c.area.bottom+dp(6)) {
+                c.fingers.add(id);return;
+            }
+        }
+        int slot;
+        boolean invisibleLook=lookStyle!=0 && x>=safe.centerX() && safe.contains(x,y);
+        if(invisibleLook)slot=6;
+        else if(floating)slot=x<safe.centerX()?5:6;
+        else if(controls[5].visible && controls[5].area.contains(x,y))slot=5;
+        else if(controls[6].visible && controls[6].area.contains(x,y))slot=6;
+        else return;
+        Control c=controls[slot];Stick stick=slot==5?move:look;
+        if((!c.visible && !invisibleLook) || stick.pointer>=0)return;
+        if(floating || invisibleLook || c.area.contains(x,y)) {
+            stick.pointer=id;stick.originX=floating||invisibleLook?x:c.area.centerX();
+            stick.originY=floating||invisibleLook?y:c.area.centerY();stick.x=x;stick.y=y;
+            if(slot==6){lookLastX=x;lookLastY=y;}
         }
     }
 
-    // a resting hint where the stick usually is; the live stick where the thumb went down
-    private void drawStick(Canvas canvas, Stick stick, float r, float hintX, float hintY, String name) {
+    private void release(int i) {
+        if (this.move.pointer == i) {
+            this.move.pointer = -1;
+        }
+        if (this.look.pointer == i) {
+            this.look.pointer = -1;
+        }
+        for (Control control : this.controls) {
+            control.fingers.remove(Integer.valueOf(i));
+        }
+    }
+
+    private float[] axes(Stick stick, int i) {
         if (stick.pointer < 0) {
-            ring.setAlpha(50);
-            canvas.drawCircle(hintX, hintY, r, ring);
-            label.setTextSize(dp(12));
-            label.setAlpha(80);
-            canvas.drawText(name, hintX, hintY - (label.descent() + label.ascent()) / 2f, label);
-            label.setAlpha(170);
-            ring.setAlpha(110);
+            return new float[]{0.0f, 0.0f};
+        }
+        float fRadius = (stick.x - stick.originX) / radius(i);
+        float fRadius2 = (stick.y - stick.originY) / radius(i);
+        float fHypot = (float) Math.hypot(fRadius, fRadius2);
+        if (fHypot <= this.deadZone) {
+            return new float[]{0.0f, 0.0f};
+        }
+        float fMin = Math.min(1.0f, fHypot);
+        float f = this.deadZone;
+        float fMin2 = (fMin - f) / (1.0f - f);
+        if (i == 6) {
+            fMin2 = Math.min(1.0f, fMin2 * this.sensitivity);
+        }
+        return new float[]{(fRadius / fHypot) * fMin2, (fRadius2 / fHypot) * fMin2};
+    }
+
+    private void send() {
+        if (this.controls == null) {
             return;
         }
-        canvas.drawCircle(stick.originX, stick.originY, r, ring);
-        float dx = stick.x - stick.originX, dy = stick.y - stick.originY;
-        float length = (float) Math.hypot(dx, dy);
-        if (length > r) {
-            dx = dx / length * r;
-            dy = dy / length * r;
+        int i = 0;
+        for (int i2 = 0; i2 < 5; i2++) {
+            if (!this.controls[i2].fingers.isEmpty()) {
+                i |= ACTION_BITS[this.controls[i2].action];
+            }
         }
-        canvas.drawCircle(stick.originX + dx, stick.originY + dy, r * 0.42f, fill);
+        float[] fArrAxes = axes(this.move, 5);
+        float[] fArrAxes2 = lookStyle==1 ? new float[]{0,0} : axes(this.look, 6);
+        int i3 = this.lastButtons;
+        if (i3 < 0 && i == 0 && fArrAxes[0] == 0.0f && fArrAxes[1] == 0.0f && fArrAxes2[0] == 0.0f && fArrAxes2[1] == 0.0f) {
+            return;
+        }
+        if (i == i3 && fArrAxes[0] == this.lastLx && fArrAxes[1] == this.lastLy && fArrAxes2[0] == this.lastRx && fArrAxes2[1] == this.lastRy) {
+            return;
+        }
+        try {
+            nativeState(fArrAxes[0], fArrAxes[1], fArrAxes2[0], fArrAxes2[1], i);
+            this.lastButtons = i;
+            this.lastLx = fArrAxes[0];
+            this.lastLy = fArrAxes[1];
+            this.lastRx = fArrAxes2[0];
+            this.lastRy = fArrAxes2[1];
+        } catch (UnsatisfiedLinkError unused) {
+        }
     }
 
-    private static float clamp(float v) {
-        return Math.max(-1f, Math.min(1f, v));
+    void beginEdit() {
+        releaseAll();
+        this.editing = true;
+        this.selected = -1;
+        this.editPointer = -1;
+        setVisibility(0);
+        setShown(true);
+        layout();
+    }
+
+    boolean cancelEditor(KeyEvent keyEvent) {
+        if (!this.editing) {
+            return false;
+        }
+        if (keyEvent.getAction() == 1) {
+            finishEdit(false);
+        }
+        return true;
+    }
+
+    private void finishEdit(boolean z) {
+        if (z) {
+            save();
+        } else {
+            load();
+        }
+        this.editing = false;
+        this.editPointer = -1;
+        setMode(this.mode);
+        setShown(this.mode != 1);
+        if (this.mode == 0) {
+            postDelayed(this.hideIdle, HIDE_AFTER_MS);
+        }
+    }
+
+    private boolean editEvent(MotionEvent motionEvent) {
+        int actionMasked = motionEvent.getActionMasked();
+        int actionIndex = motionEvent.getActionIndex();
+        int i = 0;
+        if (actionMasked == 0) {
+            this.editPointer = motionEvent.getPointerId(0);
+            this.toolbarPressed = -1;
+            int i2 = 0;
+            while (true) {
+                RectF[] rectFArr = this.toolbar;
+                if (i2 >= rectFArr.length) {
+                    this.selected = -1;
+                    while (true) {
+                        Control[] controlArr = this.controls;
+                        if (i >= controlArr.length) {
+                            break;
+                        }
+                        if (controlArr[i].area.contains(motionEvent.getX(), motionEvent.getY())) {
+                            this.selected = i;
+                            break;
+                        }
+                        i++;
+                    }
+                    int i3 = this.selected;
+                    if (i3 >= 0) {
+                        this.dragDx = this.controls[i3].area.centerX() - motionEvent.getX();
+                        this.dragDy = this.controls[this.selected].area.centerY() - motionEvent.getY();
+                    }
+                } else {
+                    if (rectFArr[i2].contains(motionEvent.getX(), motionEvent.getY())) {
+                        this.toolbarPressed = i2;
+                        return true;
+                    }
+                    i2++;
+                }
+            }
+        } else if (actionMasked == 2 && this.toolbarPressed < 0 && this.selected >= 0) {
+            int iFindPointerIndex = motionEvent.findPointerIndex(this.editPointer);
+            if (iFindPointerIndex >= 0) {
+                this.controls[this.selected].nx = clamp(((motionEvent.getX(iFindPointerIndex) + this.dragDx) - this.safe.left) / this.safe.width(), 0.0f, 1.0f);
+                this.controls[this.selected].ny = clamp(((motionEvent.getY(iFindPointerIndex) + this.dragDy) - this.safe.top) / this.safe.height(), 0.0f, 1.0f);
+                layout();
+            }
+        } else if ((actionMasked == 1 || actionMasked == 6) && motionEvent.getPointerId(actionIndex) == this.editPointer) {
+            int i4 = this.toolbarPressed;
+            if (i4 >= 0 && this.toolbar[i4].contains(motionEvent.getX(actionIndex), motionEvent.getY(actionIndex))) {
+                int i5 = this.toolbarPressed;
+                if (i5 == 0) {
+                    finishEdit(true);
+                } else if (i5 == 1) {
+                    finishEdit(false);
+                } else if (i5 == 2) {
+                    showEditorOptions();
+                } else {
+                    defaults();
+                    layout();
+                }
+            }
+            this.editPointer = -1;
+            this.toolbarPressed = -1;
+        } else if (actionMasked == 3) {
+            this.editPointer = -1;
+            this.toolbarPressed = -1;
+        }
+        invalidate();
+        return true;
+    }
+
+    private void showEditorOptions() {
+        LinearLayout linearLayoutColumn = MobileSettings.column(getContext());
+        int i = this.selected;
+        if (i >= 0) {
+            final Control control = this.controls[i];
+            MobileSettings.slider(linearLayoutColumn, "Control size", Math.round((control.size - 0.65f) * 100.0f), 110, new IntConsumer() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda1
+                @Override // java.util.function.IntConsumer
+                public final void accept(int i2) {
+                    TouchControls.this.m29lambda$showEditorOptions$1$comptportappTouchControls(control, i2);
+                }
+            });
+            CheckBox checkBox = new CheckBox(getContext());
+            checkBox.setText("Show this control");
+            checkBox.setChecked(control.visible);
+            checkBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda2
+                @Override // android.widget.CompoundButton.OnCheckedChangeListener
+                public final void onCheckedChanged(CompoundButton compoundButton, boolean z) {
+                    TouchControls.this.m30lambda$showEditorOptions$2$comptportappTouchControls(control, compoundButton, z);
+                }
+            });
+            linearLayoutColumn.addView(checkBox);
+            if (this.selected < 5) {
+                Spinner spinner = new Spinner(getContext());
+                spinner.setAdapter((SpinnerAdapter) new ArrayAdapter(getContext(), android.R.layout.simple_spinner_dropdown_item, ACTION_NAMES));
+                spinner.setSelection(control.action);
+                linearLayoutColumn.addView(spinner);
+                spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() { // from class: com.ptport.app.TouchControls.1
+                    @Override // android.widget.AdapterView.OnItemSelectedListener
+                    public void onNothingSelected(AdapterView<?> adapterView) {
+                    }
+
+                    @Override // android.widget.AdapterView.OnItemSelectedListener
+                    public void onItemSelected(AdapterView<?> adapterView, View view, int i2, long j) {
+                        control.action = i2;
+                        TouchControls.this.invalidate();
+                    }
+                });
+            }
+        }
+        MobileSettings.slider(linearLayoutColumn, "Opacity", Math.round(this.opacity * 100.0f) - 15, 85, new IntConsumer() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda3
+            @Override // java.util.function.IntConsumer
+            public final void accept(int i2) {
+                TouchControls.this.m31lambda$showEditorOptions$3$comptportappTouchControls(i2);
+            }
+        });
+        MobileSettings.slider(linearLayoutColumn, "Look sensitivity", Math.round((this.sensitivity - 0.25f) * 100.0f), 175, new IntConsumer() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda4
+            @Override // java.util.function.IntConsumer
+            public final void accept(int i2) {
+                TouchControls.this.m32lambda$showEditorOptions$4$comptportappTouchControls(i2);
+            }
+        });
+        MobileSettings.slider(linearLayoutColumn, "Stick dead zone", Math.round(this.deadZone * 100.0f), 30, new IntConsumer() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda5
+            @Override // java.util.function.IntConsumer
+            public final void accept(int i2) {
+                TouchControls.this.m33lambda$showEditorOptions$5$comptportappTouchControls(i2);
+            }
+        });
+        CheckBox checkBox2 = new CheckBox(getContext());
+        checkBox2.setText("Floating sticks (start where you touch)");
+        checkBox2.setChecked(this.floating);
+        checkBox2.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda6
+            @Override // android.widget.CompoundButton.OnCheckedChangeListener
+            public final void onCheckedChanged(CompoundButton compoundButton, boolean z) {
+                TouchControls.this.m34lambda$showEditorOptions$6$comptportappTouchControls(compoundButton, z);
+            }
+        });
+        linearLayoutColumn.addView(checkBox2);
+        new AlertDialog.Builder(getContext()).setTitle(this.selected < 0 ? "Touch preferences" : "Selected control").setView(MobileSettings.scroll(linearLayoutColumn)).setPositiveButton("Done", (DialogInterface.OnClickListener) null).show();
+    }
+
+    /* renamed from: lambda$showEditorOptions$1$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m29lambda$showEditorOptions$1$comptportappTouchControls(Control control, int i) {
+        control.size = (i / 100.0f) + 0.65f;
+        layout();
+    }
+
+    /* renamed from: lambda$showEditorOptions$2$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m30lambda$showEditorOptions$2$comptportappTouchControls(Control control, CompoundButton compoundButton, boolean z) {
+        control.visible = z;
+        invalidate();
+    }
+
+    /* renamed from: lambda$showEditorOptions$3$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m31lambda$showEditorOptions$3$comptportappTouchControls(int i) {
+        this.opacity = (i + 15) / 100.0f;
+        invalidate();
+    }
+
+    /* renamed from: lambda$showEditorOptions$4$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m32lambda$showEditorOptions$4$comptportappTouchControls(int i) {
+        this.sensitivity = (i / 100.0f) + 0.25f;
+    }
+
+    /* renamed from: lambda$showEditorOptions$5$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m33lambda$showEditorOptions$5$comptportappTouchControls(int i) {
+        this.deadZone = i / 100.0f;
+    }
+
+    /* renamed from: lambda$showEditorOptions$6$com-ptport-app-TouchControls, reason: not valid java name */
+    /* synthetic */ void m34lambda$showEditorOptions$6$comptportappTouchControls(CompoundButton compoundButton, boolean z) {
+        this.floating = z;
+    }
+
+    private static boolean controllerConnected() {
+        for (int i : InputDevice.getDeviceIds()) {
+            InputDevice device = InputDevice.getDevice(i);
+            if (device != null && !device.isVirtual() && isController(device.getSources())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override // android.view.View
+    protected void onDraw(Canvas canvas) {
+        if (!this.shown) {
+            return;
+        }
+        int iRound = Math.round(this.opacity * 255.0f);
+        this.ring.setColor(Color.argb(iRound, 234, 241, 255));
+        this.ring.setStrokeWidth(dp(2.0f));
+        int i = iRound / 3;
+        this.fill.setColor(Color.argb(i, 234, 241, 255));
+        this.label.setColor(Color.argb(iRound, 234, 241, 255));
+        int i2 = 0;
+        int i3 = 0;
+        while (true) {
+            Control[] controlArr = this.controls;
+            if (i3 >= controlArr.length) {
+                break;
+            }
+            Control control = controlArr[i3];
+            if ((i3 != 6 || lookStyle == 0 || editing) && (control.visible || this.editing)) {
+                int i4 = control.visible ? iRound : i;
+                this.ring.setAlpha(i4);
+                this.label.setAlpha(i4);
+                if (this.editing && i3 == this.selected) {
+                    this.ring.setColor(Color.argb(iRound, 255, 190, 70));
+                }
+                if (i3 >= 5) {
+                    drawStick(canvas, i3 == 5 ? this.move : this.look, i3, i3 == 5 ? "MOVE" : "LOOK");
+                } else {
+                    if (!control.fingers.isEmpty()) {
+                        canvas.drawRoundRect(control.area, dp(20.0f), dp(20.0f), this.fill);
+                    }
+                    canvas.drawRoundRect(control.area, dp(20.0f), dp(20.0f), this.ring);
+                    this.label.setTextSize(dp(14.0f));
+                    text(canvas, ACTION_NAMES[control.action], control.area.centerX(), control.area.centerY());
+                }
+                this.ring.setColor(Color.argb(iRound, 234, 241, 255));
+                this.label.setAlpha(iRound);
+            }
+            i3++;
+        }
+        if (this.editing) {
+            String[] strArr = {"Save", "Cancel", "Options", "Reset"};
+            this.fill.setColor(Color.argb(230, 20, 24, 30));
+            this.label.setAlpha(255);
+            this.label.setTextSize(dp(15.0f));
+            while (true) {
+                RectF[] rectFArr = this.toolbar;
+                if (i2 >= rectFArr.length) {
+                    this.label.setTextSize(dp(12.0f));
+                    text(canvas, "Drag controls. Select one, then Options to resize or remap. Save to keep changes.", this.safe.centerX(), this.safe.bottom - dp(10.0f));
+                    return;
+                } else {
+                    canvas.drawRoundRect(rectFArr[i2], dp(6.0f), dp(6.0f), this.fill);
+                    text(canvas, strArr[i2], this.toolbar[i2].centerX(), this.toolbar[i2].centerY());
+                    i2++;
+                }
+            }
+        } else {
+            this.label.setTextSize(dp(12.0f));
+            text(canvas, "SETTINGS", this.settingsHit.centerX(), this.settingsHit.centerY());
+        }
+    }
+
+    private void text(Canvas canvas, String str, float f, float f2) {
+        canvas.drawText(str, f, f2 - ((this.label.descent() + this.label.ascent()) / 2.0f), this.label);
+    }
+
+    private void drawStick(Canvas canvas, Stick stick, int i, String str) {
+        Control control = this.controls[i];
+        float fRadius = radius(i);
+        float fCenterX = (stick.pointer < 0 || this.editing) ? control.area.centerX() : stick.originX;
+        float fCenterY = (stick.pointer < 0 || this.editing) ? control.area.centerY() : stick.originY;
+        canvas.drawCircle(fCenterX, fCenterY, fRadius, this.ring);
+        if (stick.pointer >= 0 && !this.editing) {
+            float f = stick.x - fCenterX;
+            float f2 = stick.y - fCenterY;
+            float fHypot = (float) Math.hypot(f, f2);
+            if (fHypot > fRadius) {
+                float f3 = fRadius / fHypot;
+                f *= f3;
+                f2 *= f3;
+            }
+            canvas.drawCircle(fCenterX + f, fCenterY + f2, fRadius * 0.42f, this.fill);
+            return;
+        }
+        this.label.setTextSize(dp(12.0f));
+        text(canvas, str, fCenterX, fCenterY);
     }
 }

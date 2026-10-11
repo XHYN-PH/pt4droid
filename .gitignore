@@ -61,3 +61,5 @@ installer/*/obj/
 /android/build/
 /android/.gradle/
 /android/local.properties
+
+/audit-evidence/

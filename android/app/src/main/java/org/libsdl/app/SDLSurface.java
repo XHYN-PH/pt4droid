@@ -402,7 +402,18 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     @Override
     public boolean onCapturedPointerEvent(MotionEvent event)
     {
-        return SDLActivity.getMotionListener().onGenericMotion(this, event);
+        int action=event.getActionMasked();
+        int buttons=event.getButtonState();
+        if(action==MotionEvent.ACTION_BUTTON_PRESS || action==MotionEvent.ACTION_BUTTON_RELEASE) {
+            buttons=event.getActionButton();
+            action=action==MotionEvent.ACTION_BUTTON_PRESS?MotionEvent.ACTION_DOWN:MotionEvent.ACTION_UP;
+        }
+        if(action==MotionEvent.ACTION_SCROLL) {
+            SDLActivity.onNativeMouse(0,action,event.getAxisValue(MotionEvent.AXIS_HSCROLL),event.getAxisValue(MotionEvent.AXIS_VSCROLL),false);
+        } else if(action==MotionEvent.ACTION_MOVE || action==MotionEvent.ACTION_HOVER_MOVE || action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_UP) {
+            SDLActivity.onNativeMouse(buttons,action,event.getX(),event.getY(),true);
+        } else return false;
+        return true;
     }
 
     @Override

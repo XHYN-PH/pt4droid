@@ -713,6 +713,9 @@ void MountMods(App& app) {
 }
 
 void RequestEnhancedTextures(App& app, bool enabled) {
+#ifdef __ANDROID__
+    enabled=false;
+#endif
     app.texture_requested = enabled;
     if (!enabled) {
         app.texture_job.Cancel();
@@ -1285,6 +1288,9 @@ pt::RayTracingSettings RayTracingFromApp(const pt::AppSettings& s) {
 }
 
 void ApplyGraphicsSettings(App& app) {
+#ifdef __ANDROID__
+    app.settings.graphics.enhanced_textures=false; app.settings.display.hdr=false;
+#endif
     const auto& g=app.settings.graphics;
     app.scene.graphics=g;
     app.scene.raytracing=RayTracingFromApp(app.settings);
@@ -1300,6 +1306,23 @@ void ApplyGraphicsSettings(App& app) {
     // measured at the first corridor's lantern (+41 % peak lift, port scale 0.75); PT_FLARE_GHOSTS overrides it (rendering.md)
     pt::vfx::SetFlareGhostScale(g.lens_ghosts?0.75f:0.0f);
 }
+
+#ifdef __ANDROID__
+void ApplyMobilePreset(App& app, int profile) {
+    if (profile != 1 && profile != 2) return;
+    auto& s=app.settings; auto& g=s.graphics;
+    s.display.fps_limit=profile==1?0:60; s.display.vsync=false; s.display.hdr=false;
+    g.shadow_quality=profile==1?1:2; g.anisotropy=profile==1?0:2; g.texture_detail=profile==1?0:1;
+    g.ambient_occlusion=false;g.depth_of_field=false;g.motion_blur=false;
+    g.reflections=g.bloom=g.lens_distortion=g.lens_ghosts=profile==2;g.film_grain=profile==1?0.0f:1.0f;
+    g.enhanced_textures=false;s.ray_tracing={};s.network.check_updates=false;
+    if(profile==1) pt::android::SetRenderScale(std::min(pt::android::RenderScale(),0.5f));
+    ApplyGraphicsSettings(app);
+    app.renderer.SetVsync(s.display.vsync);
+    if(app.renderer.Context().device) app.textures.SetAnisotropy(g.anisotropy);
+    pt::LogInfo("android: mobile profile {} applied, frame cap {}, shadows {}",profile,s.display.fps_limit,g.shadow_quality);
+}
+#endif
 
 // anisotropic filtering (PC option, rendering.md 12.22): pt.ini [graphics] anisotropy; PT_ANISOTROPY overrides it (tests)
 int AnisotropyFromApp(const pt::AppSettings& s) {
@@ -1920,6 +1943,7 @@ public:
         const pt::AppSettings& s = app_.settings;
         std::vector<pt::game::PcSettingSection> out;
         pt::game::PcSettingSection display{"pc_section_display", 0, {}};
+#ifndef __ANDROID__
         const int mode = std::clamp(s.display.fullscreen, 0, 2);
         display.rows.push_back(Row(kDisplayMode, "pc_display_mode", {"pc_window", "pc_borderless", "pc_fullscreen"}, mode, "pc_note_display_mode"));
         const char* resolution_note = mode == 0 ? "pc_note_resolution" : "pc_note_resolution_fullscreen";
@@ -1931,6 +1955,7 @@ public:
         }
         resolution.wrap = false;
         display.rows.push_back(std::move(resolution));
+#endif
         const bool dlssg_vsync = pt::streamline::Active() && pt::streamline::FrameGenNeedsVsyncOff() &&
                                  app_.scene.upscale.frame_generation == pt::FrameGenKind::Dlss;
         display.rows.push_back(Row(kVsync, "pc_vsync", OffOn(), s.display.vsync ? 1 : 0,
@@ -1941,7 +1966,9 @@ public:
         if (s.display.fps_limit>0 && cap.value==0) { cap.values.push_back(std::to_string(s.display.fps_limit)); cap.value=9; }
         cap.wrap=false;
         display.rows.push_back(std::move(cap));
+#ifndef __ANDROID__
         display.rows.push_back(Row(kHdr,"pc_hdr",OffOn(),s.display.hdr?1:0,"pc_note_hdr_restart"));
+#endif
         display.rows.push_back(Row(kFocusPause, "pc_focus_pause", OffOn(), s.display.pause_on_focus_loss ? 1 : 0, "pc_note_focus_pause"));
         display.rows.push_back(Row(kFocusMute, "pc_focus_mute", OffOn(), s.display.mute_in_background ? 1 : 0, "pc_note_focus_mute"));
 #ifdef __ANDROID__
@@ -1951,8 +1978,11 @@ public:
                                        {"pc_second_screen_subtitles", "pc_second_screen_clock", "pc_second_screen_dim", "pc_off"},
                                        std::clamp(s.display.second_screen, 0, 3), "pc_note_second_screen"));
         }
-        display.rows.push_back(Row(kTouchControls, "pc_touch_controls", {"pc_touch_controls_auto", "pc_off"},
-                                   std::clamp(s.display.touch_controls, 0, 1), "pc_note_touch_controls"));
+        display.rows.push_back(Row(kTouchControls, "pc_touch_controls", {"pc_touch_controls_auto", "pc_off", "pc_touch_controls_always"},
+                                   pt::android::TouchControlsMode(std::clamp(s.display.touch_controls, 0, 2)), "pc_note_touch_controls"));
+#endif
+#ifdef __ANDROID__
+        auto mobile=Row(kMobileSettings,"pc_mobile_settings",{"pc_open"},0,""); mobile.action=true; display.rows.push_back(std::move(mobile));
 #endif
         out.push_back(std::move(display));
 
@@ -2263,10 +2293,15 @@ public:
             pt::android::SetSecondScreenMode(s.display.second_screen);
 #endif
             break;
-        case kTouchControls:
-            s.display.touch_controls = std::clamp(value, 0, 1);
+        case kMobileSettings:
 #ifdef __ANDROID__
-            pt::android::SetTouchControlsEnabled(s.display.touch_controls == 0);
+            pt::android::OpenMobileSettings();
+#endif
+            break;
+        case kTouchControls:
+            s.display.touch_controls = std::clamp(value, 0, 2);
+#ifdef __ANDROID__
+            pt::android::SetTouchControlsMode(s.display.touch_controls);
 #endif
             break;
         case kUpscaler: {
@@ -2569,6 +2604,9 @@ public:
     }
 
     void Activate(int id) override {
+#ifdef __ANDROID__
+        if(id==kMobileSettings) {pt::android::OpenMobileSettings();return;}
+#endif
         keep_cursor_ = false;
         if (id == kArchive) {
             page_ = kArchivePage;
@@ -2715,7 +2753,7 @@ private:
         kLoopBrowser, kExtras, kFreecam, kPhotoMode, kStreetWalk, kStreetRestart, kStreetLeave, kLoopLock, kThirdPerson, kSpeedrun, kLiveSplit, kRunMenu, kRunReal, kRunGame, kRunBest,
         kArchive, kArchiveLock,
         kVr, kVrMode, kVrFlashlight, kVrTurn, kVrHeight, kVrWorldScale,
-        kSecondScreen, kTouchControls,
+        kSecondScreen, kTouchControls, kMobileSettings,
         kLoopFirst = 1000,
         kRunSplitFirst = 3000,
         kModFirst = 2000,
@@ -3312,6 +3350,10 @@ bool PumpEvents(App& app, pt::InputDevice* input, bool& running, pt::KeyPressLat
         return true;
     }
 #ifdef __ANDROID__
+    if (int profile=pt::android::ConsumePerformanceProfile(); profile>=0) {
+        ApplyMobilePreset(app,profile);
+        if(!app.settings_path.empty()) pt::SaveAppSettings(app.settings_path,app.settings);
+    }
     pt::android::PumpTouchControls();
 #endif
     SDL_Event event;
@@ -3337,6 +3379,8 @@ bool PumpEvents(App& app, pt::InputDevice* input, bool& running, pt::KeyPressLat
             if (!app.settings_path.empty()) {
                 pt::SaveAppSettings(app.settings_path, app.settings);
             }
+        } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            app.renderer.Context().SavePipelineCache();
         } else if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
             app.renderer.Resize(static_cast<uint32_t>(event.window.data1), static_cast<uint32_t>(event.window.data2));
         }
@@ -5007,6 +5051,11 @@ int RunGame(App& app, pt::Vfs& vfs) {
                             app.settings.upscaling.quality, app.settings.upscaling.frame_generation,
                             app.settings.display.vsync ? "on" : "off", app.settings.display.fps_limit, game.Floor().CurrentFloorName(),
                             ui_ready && ui.MenuOpen() ? ", menu open" : "");
+#ifdef __ANDROID__
+                const auto& timings=app.scene.Stats();
+                pt::LogInfo("mobile passes: shadows {:.2f}, gbuffer {:.2f}, occlusion {:.2f}, lighting {:.2f}, compose {:.2f}, post {:.2f} ms; bloom {:.2f}, reflections {:.2f}, renderer CPU {:.2f} ms",
+                    timings.pass_ms[0],timings.pass_ms[1],timings.pass_ms[2],timings.pass_ms[3],timings.pass_ms[4],timings.pass_ms[5],timings.part_ms[5],timings.part_ms[3],timings.cpu_ms);
+#endif
                 status_start = status_now;
                 status_frames = 0;
                 status_gpu = 0.0;
@@ -5195,7 +5244,7 @@ int main(int argc, char** argv) {
         if (user_data.migrated_legacy) pt::LogInfo("user data: copied {} legacy files; original profile data retained", user_data.files_copied);
         for (const auto& warning : user_data.warnings) pt::LogWarn("user data: {}", warning);
     }
-    pt::LogInfo("pt-port version {} ({})", pt::update::CurrentVersion(), pt::update::Platform());
+    pt::LogInfo("pt-port version {} ({}, build {})", pt::update::CurrentVersion(), pt::update::Platform(), PT_BUILD_ID);
 #ifdef _WIN32
     // a minidump and a last line for every way the process ends that it controls (crash_report.h); the dumps go next to pt.log
     pt::InstallCrashReporting(g_output_dir, PT_BUILD_ID);
@@ -5348,7 +5397,9 @@ int main(int argc, char** argv) {
 #ifdef __ANDROID__
         save_now = save_now || android_defaults_applied;
         pt::android::SetSecondScreenMode(app.settings.display.second_screen);
-        pt::android::SetTouchControlsEnabled(app.settings.display.touch_controls == 0);
+        app.settings.display.touch_controls=pt::android::TouchControlsMode(app.settings.display.touch_controls);
+        pt::android::SetTouchControlsMode(app.settings.display.touch_controls);
+        if(int profile=pt::android::ConsumePerformanceProfile(); profile>=0) {ApplyMobilePreset(app,profile);save_now=true;}
 #endif
         if (save_now) {
             pt::SaveAppSettings(app.settings_path, app.settings);
@@ -5401,7 +5452,7 @@ int main(int argc, char** argv) {
     pt::RendererSettings settings;
     settings.headless = options.headless;
     settings.validation = options.validation;
-    settings.vsync = options.vsync;
+    settings.vsync = app.settings.display.vsync;
     settings.hdr = app.settings.display.hdr;
     if (!options.headless) {
         settings.pipeline_cache_dir = UserDataDir() / "pipeline-cache";
@@ -5432,6 +5483,7 @@ int main(int argc, char** argv) {
         app.scene.upscale.frame_generation = pt::FrameGenKind::Off;
     }
     ApplyGraphicsSettings(app);
+    settings.vsync=app.settings.display.vsync; settings.hdr=app.settings.display.hdr;
     // the ray query extensions and features only when the option is on at start
     const pt::RayTracingSettings& rt = app.scene.raytracing;
     app.renderer.Context().want_ray_query = true;
