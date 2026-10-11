@@ -5,7 +5,7 @@ import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Build;
-import android.util.Log;
+import com.ptport.app.AppLog;
 
 import java.util.Arrays;
 import java.util.ArrayList;
@@ -113,7 +113,7 @@ class SDLAudioManager {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO);
 
         } catch (Exception e) {
-            Log.v(TAG, "modify thread properties failed " + e.toString());
+            AppLog.v(TAG, "modify thread properties failed " + e.toString());
         }
     }
 

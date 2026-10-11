@@ -19,7 +19,7 @@ import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
-import android.util.Log;
+import com.ptport.app.AppLog;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -136,13 +136,13 @@ public class SDLControllerManager
         /* This is called for every button press, so let's not spam the logs */
         /*
         if ((sources & InputDevice.SOURCE_CLASS_JOYSTICK) != 0) {
-            Log.v(TAG, "Input device " + device.getName() + " has class joystick.");
+            AppLog.v(TAG, "Input device " + device.getName() + " has class joystick.");
         }
         if ((sources & InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD) {
-            Log.v(TAG, "Input device " + device.getName() + " is a dpad.");
+            AppLog.v(TAG, "Input device " + device.getName() + " is a dpad.");
         }
         if ((sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
-            Log.v(TAG, "Input device " + device.getName() + " is a gamepad.");
+            AppLog.v(TAG, "Input device " + device.getName() + " is a gamepad.");
         }
         */
 

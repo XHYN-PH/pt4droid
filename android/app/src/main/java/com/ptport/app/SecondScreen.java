@@ -20,7 +20,7 @@ import android.os.SystemClock;
 import android.text.Layout;
 import android.text.StaticLayout;
 import android.text.TextPaint;
-import android.util.Log;
+import com.ptport.app.AppLog;
 import android.view.Display;
 import android.view.View;
 import android.view.Window;
@@ -139,13 +139,13 @@ final class SecondScreen {
         if (mode.equals("off")) return;
         Display display = findSecondDisplay();
         if (display == null) return;
-        Log.i(TAG, "second screen: display " + display.getDisplayId() + " (" + display.getName() + "), mode " + mode);
+        AppLog.i(TAG, "second screen: display " + display.getDisplayId() + " (" + display.getName() + "), mode " + mode);
         try {
             presentation = new BottomScreen(activity, display);
             presentation.show();
             return;
         } catch (Throwable t) {
-            Log.w(TAG, "second screen: no Presentation on display " + display.getDisplayId() + " (" + t + "), trying an activity");
+            AppLog.w(TAG, "second screen: no Presentation on display " + display.getDisplayId() + " (" + t + "), trying an activity");
             presentation = null;
             view = null;
         }
@@ -157,7 +157,7 @@ final class SecondScreen {
             activity.startActivity(intent, options.toBundle());
             usingActivity = true;
         } catch (Throwable t) {
-            Log.w(TAG, "second screen: cannot show anything on display " + display.getDisplayId() + " (" + t + ")");
+            AppLog.w(TAG, "second screen: cannot show anything on display " + display.getDisplayId() + " (" + t + ")");
         }
     }
 

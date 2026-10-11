@@ -114,6 +114,20 @@ void PcSettingsPage::Open(PcSettingsSource* source) {
     Refresh();
 }
 
+void PcSettingsPage::DrawFocus(ui::UiBatch& batch,const UiCanvas& canvas) const {
+#ifdef __ANDROID__
+    if(Gallery()!=PcGallery::None || cursor_<0 || cursor_>=static_cast<int>(rows_.size()))return;
+    const auto& placed=rows_[cursor_];const auto at=Shown(placed);
+    const float x=640.f+10.f*(at.x-kCenterX-2.f),y=360.f-10.f*at.y;
+    const float end=640.f+10.f*(placed.value.x-kCenterX+14.f);
+    const glm::vec2 a=canvas.ToTarget({x,y-14.f}),b=canvas.ToTarget({end,y+14.f});
+    const glm::vec4 red{.52f,.09f,.10f,RowOf(placed).enabled?.60f:.25f},fade{.18f,.03f,.04f,.08f};
+    const ui::UiVertex vertices[]={{{a.x,a.y},{0,0},red},{{b.x,a.y},{0,0},fade},{{b.x,b.y},{0,0},fade},
+                                  {{a.x,a.y},{0,0},red},{{b.x,b.y},{0,0},fade},{{a.x,b.y},{0,0},red}};
+    batch.Draw(vertices,ui::UiDrawParams{},ui::UiShade::Solid,ui::UiBlend::Alpha);
+#endif
+}
+
 void PcSettingsPage::Refresh() {
     sections_ = source_ ? source_->Sections() : std::vector<PcSettingSection>{};
     Layout();
@@ -646,7 +660,11 @@ void PcSettingsPage::Apply(UifView& view, int language) const {
         }
     }
     const PcSettingRow* current = CurrentRow();
+#ifdef __ANDROID__
+    view.State(bar_group_).visible = false;
+#else
     view.State(bar_group_).visible = current != nullptr && gallery == PcGallery::None;
+#endif
     if (current) {
         view.State(bar_group_).offset = rows_[cursor_].value;
         if (Browser()) view.State(bar_group_).offset = glm::vec2(-27.0f, Shown(rows_[cursor_]).y);

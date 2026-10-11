@@ -20,6 +20,7 @@
 #include "engine/render/gpu_types.h"
 #include "engine/render/light_cull.h"
 #include "engine/render/mesh.h"
+#include "engine/render/mesh_draw_state.h"
 #include "engine/render/raytracing.h"
 #include "engine/render/render_util.h"
 #include "engine/render/renderer.h"
@@ -395,6 +396,9 @@ private:
     VkFormat ldr_format_ = VK_FORMAT_R8G8B8A8_UNORM;
     TextureManager* textures_ = nullptr;
     VkQueryPool queries_ = VK_NULL_HANDLE;
+    MeshDrawState mesh_draw_state_;
+    bool timing_failed_ = false;
+    bool EnsureTimingQueries(FrameSlot& slot);
     glm::vec3 last_eye_{0.0f};
     // DominantLightSearch (ShEffet, 0x8D12A0): the camera view's g_psSystem.m_dominantLightDir in world space (w the fade)
     DominantLightState dominant_;

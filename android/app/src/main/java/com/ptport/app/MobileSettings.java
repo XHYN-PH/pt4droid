@@ -23,15 +23,15 @@ final class MobileSettings {
     private boolean detached;
     private final Runnable poll=this::pollImport;
     MobileSettings(Activity owner,TouchControls controls){activity=owner;touch=controls;prefs=owner.getSharedPreferences("touch_layout_v1",0);}
-    static LinearLayout column(Context c){LinearLayout v=new LinearLayout(c);v.setOrientation(LinearLayout.VERTICAL);int pad=(int)(18*c.getResources().getDisplayMetrics().density);v.setPadding(pad,pad,pad,pad);return v;}
+    static LinearLayout column(Context c){LinearLayout v=new LinearLayout(c);v.setOrientation(LinearLayout.VERTICAL);int pad=MenuStyle.dp(c,20);v.setPadding(pad,pad,pad,pad);v.setBackgroundColor(MenuStyle.BACKGROUND);return v;}
     static ScrollView scroll(LinearLayout column){ScrollView s=new ScrollView(column.getContext());s.addView(column);return s;}
     static void slider(LinearLayout v,String label,int value,int max,IntConsumer changed){
-        TextView text=new TextView(v.getContext());text.setText(label);v.addView(text);
-        SeekBar bar=new SeekBar(v.getContext());bar.setMax(max);bar.setProgress(Math.max(0,Math.min(max,value)));v.addView(bar);
+        TextView text=new TextView(v.getContext());text.setText(label);text.setTextColor(MenuStyle.TEXT);v.addView(text);
+        SeekBar bar=new SeekBar(v.getContext());bar.setMax(max);bar.setProgress(Math.max(0,Math.min(max,value)));bar.setProgressTintList(MenuStyle.accent());bar.setThumbTintList(MenuStyle.accent());v.addView(bar);
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}public void onProgressChanged(SeekBar b,int p,boolean user){if(user)changed.accept(p);}});
     }
-    private void text(LinearLayout v,String t){TextView view=new TextView(activity);view.setText(t);v.addView(view);}
-    private void button(LinearLayout v,String label,Runnable action){Button b=new Button(activity);b.setText(label);b.setOnClickListener(w->action.run());v.addView(b);}
+    private TextView text(LinearLayout v,String t){TextView view=new TextView(activity);view.setText(t);view.setTextColor(MenuStyle.MUTED);view.setTextSize(14);view.setPadding(0,MenuStyle.dp(activity,5),0,MenuStyle.dp(activity,8));v.addView(view);return view;}
+    private void button(LinearLayout v,String label,Runnable action){Button b=new Button(activity);b.setText(label);MenuStyle.button(b);b.setOnClickListener(w->action.run());LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,MenuStyle.dp(activity,50));lp.setMargins(0,MenuStyle.dp(activity,8),0,0);v.addView(b,lp);}
     private Spinner choice(LinearLayout v,String title,String[] values,int selected){text(v,title);Spinner s=new Spinner(activity);s.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,values));s.setSelection(Math.max(0,Math.min(values.length-1,selected)));v.addView(s);return s;}
     private void write(String name,String value) throws IOException {DriverImportJob.atomicWrite(new File(activity.getFilesDir(),name),(value+"\n").getBytes(StandardCharsets.UTF_8));}
     private float scale(){
@@ -42,40 +42,58 @@ final class MobileSettings {
     void show(){
         if(touch!=null)touch.releaseAll();
         LinearLayout v=column(activity);
-        Spinner profile=choice(v,"Performance preset",new String[]{"Custom • keep game settings","Maximum performance","Balanced • up to 60 FPS"},prefs.getInt("performance_profile",0));
+        MenuStyle.section(v,"Graphics");
+        Spinner profile=choice(v,"Graphics preset",new String[]{"Custom • keep game settings","Maximum performance","Balanced • up to 60 FPS","Original (PS4)"},prefs.getInt("performance_profile",0));
         text(v,"Maximum performance removes the frame cap and reduces shadows, texture detail and effects. Actual FPS depends on the scene and device temperature.");
         float[] scale={scale()};TextView scaleText=new TextView(activity);scaleText.setText("Render scale: "+Math.round(scale[0]*100)+"%");v.addView(scaleText);
         slider(v,"Scene resolution",Math.round(scale[0]*100)-25,75,p->{scale[0]=(p+25)/100f;scaleText.setText("Render scale: "+(p+25)+"%");});
         CheckBox bloom=new CheckBox(activity);bloom.setText("Optimized mobile bloom");bloom.setChecked(prefs.getBoolean("optimized_bloom",true));v.addView(bloom);
+        List<Float> refreshRates=DisplayRefresh.rates(activity);String[] refreshNames=new String[refreshRates.size()+1];refreshNames[0]="Highest supported • automatic";
+        int refreshIndex=0;float storedRefresh=prefs.getFloat("display_refresh",0);
+        for(int i=0;i<refreshRates.size();i++){refreshNames[i+1]=String.format(Locale.ROOT,"%.2f Hz",refreshRates.get(i));if(Math.abs(refreshRates.get(i)-storedRefresh)<.1f)refreshIndex=i+1;}
+        Spinner refresh=choice(v,"Display refresh rate",refreshNames,refreshIndex);
+        text(v,String.format(Locale.ROOT,"Current display: %.2f Hz. Android can lower this for battery saving or temperature limits. Frame limit is in Game graphics.",DisplayRefresh.display(activity).getRefreshRate()));
+        MenuStyle.section(v,"Controls");
         Spinner look=choice(v,"Look control",new String[]{"Visible joystick","Swipe to look • no button","Hidden joystick"},prefs.getInt("look_style",1));
         text(v,"Swipe on the right half to turn by finger movement. Hidden joystick keeps turning while held away from its touch origin. Buttons take priority.");
+        float stored=prefs.getFloat("sensitivity",1f);float[] sensitivity={Float.isFinite(stored)?Math.max(.25f,Math.min(3f,stored)):1f};
+        TextView sensitivityText=text(v,String.format(Locale.ROOT,"Look sensitivity: %.2f×",sensitivity[0]));
+        slider(v,"Slower ← swipe / joystick → faster",Math.round((sensitivity[0]-.25f)*100),275,p->{sensitivity[0]=.25f+p/100f;sensitivityText.setText(String.format(Locale.ROOT,"Look sensitivity: %.2f×",sensitivity[0]));});
         Spinner mode=choice(v,"Touch controls",new String[]{"Auto","Off","Always show"},prefs.getInt("overlay_mode",0));
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Android settings").setView(scroll(v)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
+        MenuStyle.section(v,"Diagnostics");
+        CheckBox logs=new CheckBox(activity);logs.setText("Enable logs");logs.setChecked(AppLog.enabled());logs.setButtonTintList(MenuStyle.accent());v.addView(logs);
+        text(v,"Off stops app diagnostic files, console output and GPU timing collection. Turn on before reproducing a problem you want to report.");
+        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("pt4droid settings").setView(scroll(v)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
         button(v,"Customize touch layout",()->{dialog.dismiss();if(touch!=null)touch.beginEdit();else message("Start the game, then open Android settings to edit the layout.");});
         button(v,"Vulkan drivers",()->{dialog.dismiss();drivers();});
+        button(v,"Game graphics",()->{dialog.dismiss();GameGraphicsSettings.open(activity);});
         button(v,"Delete saves",()->{dialog.dismiss();deleteSaves();});
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
             try{
                 int selected=profile.getSelectedItemPosition();if(selected==1)scale[0]=Math.min(scale[0],.5f);
+                if(selected>0){Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_pending.ini").toPath());Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_applying.ini").toPath());}
                 write("render_scale.txt",Float.toString(scale[0]));write("performance_profile.txt",Integer.toString(selected));write("bloom_pass_limit.txt",bloom.isChecked()?"6":"0");
-                prefs.edit().putInt("performance_profile",selected).putInt("look_style",look.getSelectedItemPosition()).putInt("overlay_mode",mode.getSelectedItemPosition()).putBoolean("optimized_bloom",bloom.isChecked()).apply();
+                write("performance_profile_pending.txt",Integer.toString(selected));
+                prefs.edit().putInt("performance_profile",selected).putFloat("sensitivity",sensitivity[0]).putInt("look_style",look.getSelectedItemPosition()).putInt("overlay_mode",mode.getSelectedItemPosition()).putBoolean("optimized_bloom",bloom.isChecked()).putFloat("display_refresh",refresh.getSelectedItemPosition()==0?0:refreshRates.get(refresh.getSelectedItemPosition()-1)).apply();
+                DisplayRefresh.apply(activity,null);PTActivity.refreshDisplay();
+                AppLog.setEnabled(logs.isChecked());
                 if(touch!=null){touch.reloadPreferences();touch.setMode(mode.getSelectedItemPosition());}
                 if(PTActivity.gameRunning()){PTActivity.nativeSetRenderScale(scale[0]);PTActivity.nativeSetPerformanceProfile(selected);PTActivity.nativeSetBloomPassLimit(bloom.isChecked()?6:0);}
                 dialog.dismiss();
             }catch(Throwable error){message("Could not apply settings: "+error.getMessage());}
-        }));dialog.show();
+        }));dialog.show();MenuStyle.styleDialog(dialog);
     }
     private void drivers(){
-        LinearLayout v=column(activity);List<String> names=new ArrayList<>(Arrays.asList("Mesa Turnip • bundled","System Vulkan driver"));List<String> selections=new ArrayList<>(Arrays.asList("turnip","system"));
+        LinearLayout v=column(activity);List<String> names=new ArrayList<>(Arrays.asList("Automatic • match device","Mesa Turnip • bundled (Adreno)","System Vulkan driver"));List<String> selections=new ArrayList<>(Arrays.asList("auto","turnip","system"));
         File[] folders=new File(activity.getFilesDir(),"drivers").listFiles();if(folders!=null){Arrays.sort(folders,Comparator.comparing(File::getName));for(File folder:folders){
             if(!folder.isDirectory() || folder.getName().startsWith("."))continue;
             try{JSONObject info=new JSONObject(new String(Files.readAllBytes(new File(folder,"package.json").toPath()),StandardCharsets.UTF_8));String lib=info.getString("library");File file=DriverArchive.contained(folder,lib);DriverArchive.validateElf(file);names.add(info.optString("name",folder.getName()));selections.add("imported/"+folder.getName()+"/"+lib);}catch(Exception ignored){}
         }}
         int selected=0;try{selected=selections.indexOf(new String(Files.readAllBytes(new File(activity.getFilesDir(),"driver.txt").toPath()),StandardCharsets.UTF_8).trim());}catch(Exception ignored){}
         Spinner selection=choice(v,"Vulkan driver",names.toArray(new String[0]),selected);
-        text(v,"Use an ARM64 AdrenoTools driver ZIP. The selected driver loads after fully closing and reopening the game.");
+        text(v,"Automatic uses bundled Turnip on supported Adreno 6xx/7xx GPUs and the system driver on other GPUs. Imported Turnip drivers are for Adreno. Fully close and reopen the game after a driver change.");
         AlertDialog d=new AlertDialog.Builder(activity).setTitle("Vulkan drivers").setView(scroll(v)).setPositiveButton("Select",(a,b)->{try{write("driver.txt",selections.get(selection.getSelectedItemPosition()));message("Driver selected. Fully close and reopen the game to load it.");}catch(IOException ex){message(ex.getMessage());}}).setNegativeButton("Close",null).create();
-        button(v,"Import driver ZIP",()->{d.dismiss();pickDriver();});d.show();
+        button(v,"Import driver ZIP",()->{d.dismiss();pickDriver();});d.show();MenuStyle.styleDialog(d);
     }
     private void pickDriver(){try{Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream","application/x-zip-compressed"});activity.startActivityForResult(intent,PICK_DRIVER);}catch(Exception ex){message("Could not open file picker: "+ex.getMessage());}}
     boolean activityResult(int request,int result,Intent data){
@@ -97,5 +115,5 @@ final class MobileSettings {
             try{int count=SaveFiles.delete(new File(activity.getFilesDir(),"data"));File external=activity.getExternalFilesDir(null);if(external!=null)count+=SaveFiles.delete(new File(external,"data"));message(count>0?"Saves deleted. Start P.T. for a new game.":"No save slots found.");}catch(IOException ex){message("Could not delete saves: "+ex.getMessage());}
         }).show();
     }
-    private void message(String text){if(!detached && !activity.isFinishing())new AlertDialog.Builder(activity).setTitle("P.T. Test").setMessage(text).setPositiveButton("OK",null).show();}
+    private void message(String text){if(!detached && !activity.isFinishing()){AlertDialog d=new AlertDialog.Builder(activity).setTitle("pt4droid").setMessage(text).setPositiveButton("OK",null).show();MenuStyle.styleDialog(d);}}
 }

@@ -1233,11 +1233,9 @@ void SceneRenderer::DrawMesh(VkCommandBuffer cmd, const Draw& draw, uint32_t vie
                              const glm::vec4* aux, VkCullModeFlags cull, bool shadow_pass) {
     const SubMesh& sub = *draw.sub;
     const bool double_sided = shadow_pass ? sub.shadow_double_sided : sub.double_sided;
-    vkCmdSetCullMode(cmd, double_sided || no_cull ? VK_CULL_MODE_NONE : cull);
-    vkCmdSetFrontFace(cmd, mirrored ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE);
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &draw.mesh->vertices.buffer, &offset);
-    vkCmdBindIndexBuffer(cmd, draw.mesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    mesh_draw_state_.Bind(cmd,draw.mesh->vertices.buffer,draw.mesh->indices.buffer,
+                          double_sided || no_cull ? VK_CULL_MODE_NONE : cull,
+                          mirrored ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE);
     gpu::DrawPush push;
     push.model = draw.transform;
     push.ids = glm::uvec4(view, draw.material, flags, sub.skinned ? draw.skin_base : gpu::kInvalid);
@@ -1371,6 +1369,7 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         rows = std::max(rows, static_cast<uint32_t>(sv.rect.offset.y) + sv.rect.extent.height);
     }
     UseTargets(cmd, {{&shadow_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, {shadow_.Extent().width, rows}, {}, &shadow_, false, true);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
     for (const ShadowView& sv : shadow_views_) {
@@ -1422,6 +1421,7 @@ void SceneRenderer::RecordGBuffer(VkCommandBuffer cmd, const ViewSetup& view) {
                      {&normal_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&material_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&depth_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, ViewArea(view), {{&albedo_, true, {}}, {&normal_, true, {}}, {&material_, true, {}}}, &depth_, false, true);
     uint32_t debug_flags = 0;
     if (debug_view == DebugView::UV0) {
@@ -1460,6 +1460,7 @@ void SceneRenderer::RecordGBuffer(VkCommandBuffer cmd, const ViewSetup& view) {
 
 void SceneRenderer::RecordOcclusion(VkCommandBuffer cmd, const ViewSetup& view) {
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}, {&ao_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&ao_[0], false, {}}});
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, 0, 0, 0);
@@ -1472,6 +1473,7 @@ void SceneRenderer::RecordOcclusion(VkCommandBuffer cmd, const ViewSetup& view) 
     Fullscreen(cmd, occlusion_, push);
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&ao_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&ao_[1], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&ao_[1], false, {}}});
     push.f0 = glm::vec4(0.45f, 0.0f, 0.0f, 0.0f);
     Fullscreen(cmd, occlusion_blur_, push);
@@ -1586,6 +1588,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
         } else {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_);
         }
+        mesh_draw_state_.Reset();
         vkCmdSetCullMode(cmd, cull);
         for (uint32_t i = 0; i < probe_count_; ++i) {
             const SceneProbe& p = lighting_->probes[probe_order_[i]];
@@ -1602,6 +1605,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
                          {&probe_acc_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
         VkClearColorValue transmittance{};
         transmittance.float32[3] = 1.0f;
+        mesh_draw_state_.Reset();
         BeginPass(cmd, acc_area, {{&probe_acc_, true, transmittance}});
         draw_probes(shrink ? 1u : 0u);
         vkCmdEndRendering(cmd);
@@ -1613,6 +1617,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
                      {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                      {&diffuse_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&specular_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, area, {{&diffuse_, true, {}}, {&specular_, true, {}}}, &depth_, true, false);
     if (probes) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_resolve_);
@@ -1633,6 +1638,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
         } else {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, light_);
         }
+        mesh_draw_state_.Reset();
         vkCmdSetCullMode(cmd, cull);
         for (uint32_t i = 0; i < light_count_; ++i) {
             const SceneLight& l = *light_sources_[i];
@@ -1902,6 +1908,7 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
     if (main_view) {
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&particles_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, extent_, {{&particles_, true, {{0.0f, 0.0f, 0.0f, 1.0f}}}}, &depth_, false, false);
     }
     VkPipeline bound = VK_NULL_HANDLE;
@@ -1988,6 +1995,7 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&particles_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&output, false, {}}});
     gpu::PassPush push;
     // vfx_composite: the forward blends also take the scene alpha (the composite's bloom luminance) down by the transmittance
@@ -1995,6 +2003,7 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
     Fullscreen(cmd, vfx_composite_, push);
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&output, false, {}}}, &depth_, false, false);
 }
 
@@ -2009,6 +2018,7 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                      {&near_far_depth_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&near_far_depth_attachment_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, effect_extent, {{&near_far_depth_, true, {}}}, &near_far_depth_attachment_, false, true);
     BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     Fullscreen(cmd, vfx_depth_down_, gpu::PassPush{});
@@ -2018,6 +2028,7 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
                      {&particles_near_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&particles_far_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     const VkClearColorValue clear_transmittance{{0.0f, 0.0f, 0.0f, 1.0f}};
+    mesh_draw_state_.Reset();
     BeginPass(cmd, effect_extent, {{&particles_near_, true, clear_transmittance}, {&particles_far_, true, clear_transmittance}},
               &near_far_depth_attachment_, true, false);
     uint32_t recorded = 0;
@@ -2050,6 +2061,7 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
                              {&particles_far_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                              {&near_far_depth_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                              {&near_far_depth_attachment_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+            mesh_draw_state_.Reset();
             BeginPass(cmd, effect_extent, {{&particles_near_, false, {}}, {&particles_far_, false, {}}},
                       &near_far_depth_attachment_, true, false);
         };
@@ -2071,6 +2083,7 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
                          {&near_far_depth_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                          {&particles_near_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                          {&particles_far_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, extent_, {{&output, false, {}}});
         gpu::PassPush push;
         push.f0.x = context.projection[3][2];
@@ -2078,6 +2091,7 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
         vkCmdEndRendering(cmd);
     }
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&output, false, {}}}, &depth_, true, false);
 }
 
@@ -2093,6 +2107,7 @@ void SceneRenderer::RecordSceneCopy(VkCommandBuffer cmd, RenderTarget& output) {
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&output, false, {}}}, &depth_, true, false);
 }
 
@@ -2106,6 +2121,7 @@ void SceneRenderer::RecordMirrorTemporal(VkCommandBuffer cmd) {
                      {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                      {&mirror_history_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&mirror_temporal_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, mirror_view_.area, {{&mirror_temporal_, false, {}}});
     gpu::PassPush push;
     push.ids = glm::uvec4(valid_history ? 1u : 0u, 0, 0, mirror_view_.index);
@@ -2169,6 +2185,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
     if (rt_reflections_) {
         // 12.21: the map traced, with a second target for the hits off screen; the lights hidden in the camera view as bits of m
         UseTargets(cmd, {{&refmap_color_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}}, {&refmap_color_, false, {}}});
         // PT_RT_REFLECTION_DEBUG=1: the reflection shows the hits it shaded in red and those it took from the screen in green;
         // =2: every hit shaded at full weight, to compare the shading with the screen
@@ -2194,6 +2211,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
         push.ids = glm::uvec4(view.index, 0, 0, 0);
         push.m = glm::mat4(1.0f);
     } else {
+        mesh_draw_state_.Reset();
         BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}}});
         Fullscreen(cmd, reflect_make_, push);
         vkCmdEndRendering(cmd);
@@ -2225,6 +2243,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
     UseTargets(cmd, {{&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&material_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&hdr_, false, {}}});
     if (rt_reflections_) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reflect_blend_rt_);
@@ -2257,6 +2276,7 @@ void SceneRenderer::RecordReflectionTemporal(VkCommandBuffer cmd, const ViewSetu
                      {&material_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&reflect_layer_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&reflect_offset_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&reflect_layer_, false, {}}, {&reflect_offset_, false, {}}});
     push.m = previous_view_projection_;
     if (rt_reflections_) {
@@ -2275,6 +2295,7 @@ void SceneRenderer::RecordReflectionTemporal(VkCommandBuffer cmd, const ViewSetu
                      {&reflect_history_[previous], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&reflect_history_[current], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&hdr_, false, {}}, {&reflect_history_[current], false, {}}});
     gpu::PassPush temporal;
     temporal.ids = glm::uvec4(view.index, valid_history ? 1u : 0u, gpu::kImgReflectHistoryA + previous, 0u);
@@ -2301,6 +2322,7 @@ void SceneRenderer::Stamp(VkCommandBuffer cmd, uint32_t index) {
 
 void SceneRenderer::RecordObjectVelocity(VkCommandBuffer cmd, const ViewSetup& view) {
     UseTargets(cmd, {{&object_velocity_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&object_velocity_, true, {}}}, &depth_, true, false);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, velocity_pipeline_);
     for (const Draw& d : draws_) {
@@ -2308,11 +2330,9 @@ void SceneRenderer::RecordObjectVelocity(VkCommandBuffer cmd, const ViewSetup& v
         if (d.previous_model == gpu::kInvalid || sub.pass != RenderPass::Opaque || sub.kind != gpu::kKindDeferred || !Visible(d, view)) {
             continue;
         }
-        vkCmdSetCullMode(cmd, sub.double_sided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
-        vkCmdSetFrontFace(cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE);
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &d.mesh->vertices.buffer, &offset);
-        vkCmdBindIndexBuffer(cmd, d.mesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+        mesh_draw_state_.Bind(cmd, d.mesh->vertices.buffer, d.mesh->indices.buffer,
+                              sub.double_sided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT,
+                              VK_FRONT_FACE_COUNTER_CLOCKWISE);
         gpu::DrawPush push;
         push.model = d.transform;
         push.ids = glm::uvec4(view.index, d.material, motion_view_, sub.skinned ? d.skin_base : gpu::kInvalid);
@@ -2377,6 +2397,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
     if (main_view && mirror_active_) {
         UseTargets(cmd, {{&mirror_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     }
+    mesh_draw_state_.Reset();
     BeginPass(cmd, ViewArea(view), {{&output, false, {}}}, &depth_, true, false);
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, occlusion ? 1u : 0u, 0, 0);
@@ -2406,6 +2427,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         RecordDumpCopy(cmd, output, dump_compose_);
     }
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, ViewArea(view), {{&output, false, {}}}, &depth_, false, false);
     RecordForward(cmd, view, output);
     vkCmdEndRendering(cmd);
@@ -2416,6 +2438,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
     if (main_view) {
         Stamp(cmd, 7);
     }
+    mesh_draw_state_.Reset();
     BeginPass(cmd, ViewArea(view), {{&output, false, {}}}, &depth_, true, false);
     if (main_view && up_.enabled) {
         RecordOpaqueSnapshot(cmd, output);
@@ -2549,7 +2572,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         adaptation_valid_ = false;
     }
     ev_pinned_ = lighting_->exposure.pinned;
-    if (!timing_ring_.empty()) {
+    if (LogEnabled() && !timing_ring_.empty()) {
         // the port's own device memory (VMA's blocks over every heap), to see growth or a burst of allocations in a timing run
         VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
         vmaGetHeapBudgets(renderer_->Context().allocator, budgets);
@@ -2561,10 +2584,10 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         }
         stats_.device_mb = static_cast<float>(bytes / (1024.0 * 1024.0));
     }
-    if (slot.timed && frame_counter_ > 8) {
+    if (LogEnabled() && slot.timed && frame_counter_ > 8) {
         gpu_ms_sum_ += stats_.gpu_ms;
         ++gpu_samples_;
-        if (!timing_ring_.empty()) {
+        if (LogEnabled() && !timing_ring_.empty()) {
             FrameTiming& t = timing_ring_[timing_count_++ % timing_ring_.size()];
             t.gpu_ms = stats_.gpu_ms;
             std::copy(std::begin(stats_.pass_ms), std::end(stats_.pass_ms), std::begin(t.pass_ms));
@@ -2597,11 +2620,12 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         SettleExposure(lighting_->exposure);
     }
     VkCommandBuffer cmd = renderer_->Cmd();
-    vkCmdResetQueryPool(cmd, slot.queries, 0, kTimestamps);
-    if (up_.enabled) {
-        vkCmdResetQueryPool(cmd, slot.upscale_queries, 0, 4);
+    const bool collect_timing=EnsureTimingQueries(slot);
+    if(collect_timing){
+        vkCmdResetQueryPool(cmd,slot.queries,0,kTimestamps);
+        if(up_.enabled)vkCmdResetQueryPool(cmd,slot.upscale_queries,0,4);
     }
-    queries_ = slot.queries;
+    queries_=collect_timing?slot.queries:VK_NULL_HANDLE;
     Stamp(cmd, 0);
     BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     BeginLabel(cmd, "shadows");
@@ -2737,7 +2761,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
     Stamp(cmd, 6);
     queries_ = VK_NULL_HANDLE;
     last_timed_slot_ = renderer_->FrameIndex();
-    slot.timed = true;
+    slot.timed = collect_timing;
     slot.measured = true;
     slot.exposure_used = exposure_;
     stats_.ev = ev_;
@@ -2746,7 +2770,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         ++frame_counter_;
     }
     stats_.cpu_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - cpu_start).count();
-    if (static const bool frame_csv = std::getenv("PT_FRAME_CSV") != nullptr; frame_csv) {
+    if (static const bool frame_csv = std::getenv("PT_FRAME_CSV") != nullptr; frame_csv && LogEnabled()) {
         const float interval = previous_frame_start_ == std::chrono::steady_clock::time_point{}
                                    ? 0.0f
                                    : std::chrono::duration<float, std::milli>(cpu_start - previous_frame_start_).count();

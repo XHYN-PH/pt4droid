@@ -433,7 +433,11 @@ void OptionsMenu::ApplySubtitleSelection() {
     const auto* target = derived_->FindById(language_groups_[selected]);
     const auto* bar = derived_->FindById(language_bar_);
     view_.State(language_bar_).offset = glm::vec2(target->translate - bar->translate);
+#ifdef __ANDROID__
+    view_.State(language_bar_).color = glm::vec4(.65f,.12f,.13f,1.f);
+#else
     view_.State(language_bar_).color = glm::vec4(1.0f);
+#endif
 }
 
 void OptionsMenu::HoldBrightness() {
@@ -838,6 +842,14 @@ void OptionsMenu::Draw(ui::UiBatch& batch, const UiCanvas& canvas) {
         archive_view_.DrawFullScreen(batch, canvas, *assets_, pc_.Panel(), PcText(pc_.FullScreenHint(), text_language_), text_language_);
         return;
     }
+#ifdef __ANDROID__
+    const auto e=batch.Extent();const float w=static_cast<float>(e.width),h=static_cast<float>(e.height);
+    const glm::vec4 dark{.015f,.016f,.02f,.64f},fade{.015f,.016f,.02f,.22f};
+    const ui::UiVertex background[]={{{0,0},{0,0},dark},{{w,0},{0,0},fade},{{w,h},{0,0},fade},
+                                    {{0,0},{0,0},dark},{{w,h},{0,0},fade},{{0,h},{0,0},dark}};
+    batch.Draw(background,ui::UiDrawParams{},ui::UiShade::Solid,ui::UiBlend::Alpha);
+    if(settled)pc_.DrawFocus(batch,canvas);
+#endif
     view_.Draw(batch, canvas, text_language_, 1.0f);
     if (page_ == Page::Pc && pc_.Gallery() != PcGallery::None && settled) {
         // the Museum's halls or a hall's wall (museum_layout.h); the strip takes the screen's width, the previews it shows are

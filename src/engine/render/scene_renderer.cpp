@@ -146,12 +146,7 @@ bool SceneRenderer::Init(Renderer& renderer, TextureManager& textures) {
         ctx.CreateBuffer(slot.frame_data, sizeof(gpu::FrameData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
         ctx.CreateBuffer(slot.skin, sizeof(glm::mat4) * gpu::kMaxSkinMatrices, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
         ctx.CreateBuffer(slot.luminance, sizeof(glm::vec2) * gpu::kLuminanceEntries, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
-        VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-        query.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        query.queryCount = kTimestamps;
-        vkCreateQueryPool(device_, &query, nullptr, &slot.queries);
-        query.queryCount = 4;
-        vkCreateQueryPool(device_, &query, nullptr, &slot.upscale_queries);
+
     }
     frame_ = new gpu::FrameData();
     CreateBuiltinResources();
@@ -511,7 +506,7 @@ void SceneRenderer::Shutdown() {
                 n, extent_.width, extent_.height, output_extent_.width, output_extent_.height, gpu / n, lo, hi, pass[0] / n, pass[1] / n,
                 pass[2] / n, pass[3] / n, pass[4] / n, pass[5] / n);
         // PT_TIMING_CSV=<file>: the frames themselves, oldest first (medians are robust to other processes sharing the GPU)
-        if (const char* csv = std::getenv("PT_TIMING_CSV")) {
+        if (const char* csv = LogEnabled()?std::getenv("PT_TIMING_CSV"):nullptr) {
             if (FILE* f = std::fopen(csv, "w")) {
                 std::fprintf(f, "gpu,shadows,mirror,gbuffer,lighting,compose,post,forward,effects,upscale_inputs,reflections,upscaler,bloom,"
                                 "device_mb,frame\n");
@@ -525,7 +520,7 @@ void SceneRenderer::Shutdown() {
             }
         }
     }
-    if (const char* csv = std::getenv("PT_FRAME_CSV"); csv && !frame_trace_.empty()) {
+    if (const char* csv = LogEnabled()?std::getenv("PT_FRAME_CSV"):nullptr; csv && !frame_trace_.empty()) {
         if (FILE* f = std::fopen(csv, "w")) {
             std::fprintf(f, "frame,cpu_ms,interval_ms,lights,shadow_views,draws\n");
             for (size_t i = 0; i < frame_trace_.size(); ++i) {
@@ -569,8 +564,8 @@ void SceneRenderer::Shutdown() {
         ctx.DestroyBuffer(slot.frame_data);
         ctx.DestroyBuffer(slot.skin);
         ctx.DestroyBuffer(slot.luminance);
-        vkDestroyQueryPool(device_, slot.queries, nullptr);
-        vkDestroyQueryPool(device_, slot.upscale_queries, nullptr);
+        if(slot.queries)vkDestroyQueryPool(device_, slot.queries, nullptr);
+        if(slot.upscale_queries)vkDestroyQueryPool(device_, slot.upscale_queries, nullptr);
     }
     vkDestroyPipelineLayout(device_, layout_, nullptr);
     vkDestroyDescriptorPool(device_, pool_, nullptr);
@@ -1194,6 +1189,24 @@ float SceneRenderer::ExposureFor(float ev, const ExposureSettings& s) const {
     return std::exp2(ev + s.compensation + comp);
 }
 
+bool SceneRenderer::EnsureTimingQueries(FrameSlot& slot) {
+    if (!LogEnabled() || timing_failed_ || renderer_->Context().timestamp_bits == 0) return false;
+    if (slot.queries && slot.upscale_queries) return true;
+    VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    for (auto [destination, count] : {std::pair{&slot.queries, kTimestamps}, std::pair{&slot.upscale_queries, uint32_t{4}}}) {
+        if (*destination) continue;
+        info.queryCount = count;
+        VkQueryPool created = VK_NULL_HANDLE;
+        if (vkCreateQueryPool(device_, &info, nullptr, &created) != VK_SUCCESS) {
+            timing_failed_ = true;
+            return false;
+        }
+        *destination = created;
+    }
+    return true;
+}
+
 void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
     uint64_t stamps[kTimestamps] = {};
     const VkResult result =
@@ -1218,7 +1231,7 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
 }
 
 void SceneRenderer::ReadMeasurements(FrameSlot& slot, float dt, const ExposureSettings& settings) {
-    if (slot.timed) {
+    if (slot.timed && LogEnabled()) {
         ReadTimestamps(slot);
     }
     if (slot.reflection_sampled) {

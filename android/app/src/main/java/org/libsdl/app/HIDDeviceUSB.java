@@ -2,7 +2,7 @@ package org.libsdl.app;
 
 import android.hardware.usb.*;
 import android.os.Build;
-import android.util.Log;
+import com.ptport.app.AppLog;
 import java.util.Arrays;
 import java.util.Locale;
 
@@ -59,7 +59,7 @@ class HIDDeviceUSB implements HIDDevice {
             result = mDevice.getSerialNumber();
         }
         catch (Exception exception) {
-            //Log.w(TAG, "App permissions mean we cannot get serial number for device " + getDeviceName() + " message: " + exception.getMessage());
+            //AppLog.w(TAG, "App permissions mean we cannot get serial number for device " + getDeviceName() + " message: " + exception.getMessage());
         }
         if (result == null) {
             result = "";
@@ -105,14 +105,14 @@ class HIDDeviceUSB implements HIDDevice {
     public boolean open() {
         mConnection = mManager.getUSBManager().openDevice(mDevice);
         if (mConnection == null) {
-            Log.w(TAG, "Unable to open USB device " + getDeviceName());
+            AppLog.w(TAG, "Unable to open USB device " + getDeviceName());
             return false;
         }
 
         // Force claim our interface
         UsbInterface iface = mDevice.getInterface(mInterfaceIndex);
         if (!mConnection.claimInterface(iface, true)) {
-            Log.w(TAG, "Failed to claim interfaces on USB device " + getDeviceName());
+            AppLog.w(TAG, "Failed to claim interfaces on USB device " + getDeviceName());
             close();
             return false;
         }
@@ -139,7 +139,7 @@ class HIDDeviceUSB implements HIDDevice {
         // actually have -- or require -- output endpoints, so we need to accept only an input one for them or else we'll fall
         // back to the Android system gamepad functionality (and lose our paddles et al).
         if (mInputEndpoint == null) {
-            Log.w(TAG, "Missing required endpoint on USB device " + getDeviceName());
+            AppLog.w(TAG, "Missing required endpoint on USB device " + getDeviceName());
             mConnection.releaseInterface(iface);
             close();
             return false;
@@ -156,12 +156,12 @@ class HIDDeviceUSB implements HIDDevice {
     @Override
     public int writeReport(byte[] report, boolean feature) {
         if (mConnection == null) {
-            Log.w(TAG, "writeReport() called with no device connection");
+            AppLog.w(TAG, "writeReport() called with no device connection");
             return -1;
         }
 
         if (!mClaimed) {
-            Log.w(TAG, "writeReport() called but some other process currently owns the USB device");
+            AppLog.w(TAG, "writeReport() called but some other process currently owns the USB device");
             return -1;
         }
 
@@ -187,7 +187,7 @@ class HIDDeviceUSB implements HIDDevice {
                 1000/*timeout millis*/);
 
             if (res < 0) {
-                Log.w(TAG, "writeFeatureReport() returned " + res + " on device " + getDeviceName());
+                AppLog.w(TAG, "writeFeatureReport() returned " + res + " on device " + getDeviceName());
                 return -1;
             }
 
@@ -198,12 +198,12 @@ class HIDDeviceUSB implements HIDDevice {
         } else {
             if (mOutputEndpoint == null)
             {
-                Log.e(TAG, "Tried to write an output report to an interface with no output endpoint!");
+                AppLog.e(TAG, "Tried to write an output report to an interface with no output endpoint!");
                 return -1;
             }
             int res = mConnection.bulkTransfer(mOutputEndpoint, report, report.length, 1000);
             if (res != report.length) {
-                Log.w(TAG, "writeOutputReport() returned " + res + " on device " + getDeviceName());
+                AppLog.w(TAG, "writeOutputReport() returned " + res + " on device " + getDeviceName());
             }
             return res;
         }
@@ -218,7 +218,7 @@ class HIDDeviceUSB implements HIDDevice {
         byte report_number = report[0];
 
         if (mConnection == null) {
-            Log.w(TAG, "readReport() called with no device connection");
+            AppLog.w(TAG, "readReport() called with no device connection");
             return false;
         }
         if (!mClaimed) {
@@ -245,7 +245,7 @@ class HIDDeviceUSB implements HIDDevice {
             1000/*timeout millis*/);
 
         if (res < 0) {
-            Log.w(TAG, "getFeatureReport() returned " + res + " on device " + getDeviceName());
+            AppLog.w(TAG, "getFeatureReport() returned " + res + " on device " + getDeviceName());
             return false;
         }
 
@@ -306,12 +306,12 @@ class HIDDeviceUSB implements HIDDevice {
             if (frozen) {
                 mClaimed = !mConnection.releaseInterface(iface);
                 if (mClaimed) {
-                    Log.e(TAG, "Tried to release claim on USB device, but failed!");
+                    AppLog.e(TAG, "Tried to release claim on USB device, but failed!");
                 }
             } else {
                 mClaimed = mConnection.claimInterface(iface, true);
                 if (!mClaimed) {
-                    Log.e(TAG, "Tried to regain claim on USB device, but failed!");
+                    AppLog.e(TAG, "Tried to regain claim on USB device, but failed!");
                 }
             }
         }
@@ -330,7 +330,7 @@ class HIDDeviceUSB implements HIDDevice {
                 }
                 catch (Exception e)
                 {
-                    Log.v(TAG, "Exception in UsbDeviceConnection bulktransfer: " + e);
+                    AppLog.v(TAG, "Exception in UsbDeviceConnection bulktransfer: " + e);
                     break;
                 }
                 if (r < 0) {

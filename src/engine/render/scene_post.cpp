@@ -1,4 +1,5 @@
 #include "engine/platform/android.h"
+#include "engine/core/log.h"
 #include "engine/render/mobile_bloom.h"
 #include <imgui.h>
 
@@ -86,12 +87,14 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         // Native Fxaa precedes POSTFILTER. Encode before filtering so its bilinear taps see gamma colour,
         // then decode back into the port's HDR target before bloom and tonemap.
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, output_extent_, {{&hdr_copy_, false, {}, true}});
         gpu::PassPush aa;
         aa.ids = glm::uvec4(gpu::kImgHdr, 1, 0, post_view_);
         Fullscreen(cmd, fxaa_, aa);
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, output_extent_, {{&hdr_, false, {}, true}});
         aa.ids = glm::uvec4(gpu::kImgHdrCopy, 2, 0, post_view_);
         Fullscreen(cmd, fxaa_, aa);
@@ -102,6 +105,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     const bool bloom = toggles.bloom && lighting.valid && std::abs(exposure.bloom_size) >= 1.0e-5f;
     if (bloom) {
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&bloom_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, bloom_[0].Extent(), {{&bloom_[0], false, {}, true}});
         push.f0 = BloomPolynomial(exposure.bloom_extraction);
         push.f1 = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
@@ -110,6 +114,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         static const uint32_t kSlots[3] = {gpu::kImgBloomA, gpu::kImgBloomB, gpu::kImgBloomSum};
         auto blur = [&](int src, int dst, VkPipeline pipeline, const glm::vec4& f0, bool clear) {
             UseTargets(cmd, {{&bloom_[src], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&bloom_[dst], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+            mesh_draw_state_.Reset();
             BeginPass(cmd, bloom_[dst].Extent(), {{&bloom_[dst], clear, {}, pipeline != bloom_add_}});
             push.ids.x = kSlots[src];
             push.f0 = f0;
@@ -145,6 +150,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
                 UseTargets(cmd, {{&bloom_[1], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                  {&bloom_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                  {&bloom_[2], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+                mesh_draw_state_.Reset();
                 BeginPass(cmd, bloom_[0].Extent(), {{&bloom_[0], false, {}, true}, {&bloom_[2], i == 0, {}}});
                 push.ids.x = kSlots[1];
                 push.f0 = kawase;
@@ -162,6 +168,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     // scene before the Tonemap pass, so the flare passes through the tonemap curve and the colour LUT (lantern_trace_f040 ops
     // 2145 to 2148 after the depth of field, Tonemap at 2161); the tonemap pass below adds the buffer
     UseTargets(cmd, {{&flare_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, output_extent_, {{&flare_, true, {}}});
     if (vfx_filter && vr_eye_ < 0) {
         vfx_filter(FilterContext(cmd, 1u));
@@ -172,6 +179,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
 
     int current = 0;
     UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&ldr_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, output_extent_, {{&ldr_[0], false, {}, true}});
     push.ids.x = 0;
     const float lut_blend = std::clamp(screen.lut_blend, 0.0f, 1.0f);
@@ -193,6 +201,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     auto run = [&](VkPipeline pipeline, const gpu::PassPush& p) {
         RenderTarget& dst = ldr_[1 - current];
         UseTargets(cmd, {{&ldr_[current], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&dst, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, output_extent_, {{&dst, false, {}, true}});
         Fullscreen(cmd, pipeline, p);
         vkCmdEndRendering(cmd);
@@ -253,6 +262,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     output.image = renderer_->SceneColor();
     output.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, output_extent_, {{&output, false, {}, true}});
     push.ids = glm::uvec4(ldr_index(current), 0, 0, post_view_);
     const bool grain = toggles.film_grain && screen.film_grain && lighting.valid;
@@ -291,6 +301,7 @@ SceneFilterContext SceneRenderer::FilterContext(VkCommandBuffer cmd, uint32_t la
 
 void SceneRenderer::PostPass(VkCommandBuffer cmd, RenderTarget& target, VkPipeline pipeline, const gpu::PassPush& push) {
     UseTargets(cmd, {{&target, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, target.Extent(), {{&target, false, {}, true}});
     Fullscreen(cmd, pipeline, push);
     vkCmdEndRendering(cmd);
@@ -454,6 +465,7 @@ void SceneRenderer::RecordDebug(VkCommandBuffer cmd) {
     output.image = renderer_->SceneColor();
     output.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, output_extent_, {{&output, false, {}, true}});
     gpu::PassPush push;
     push.ids = glm::uvec4(static_cast<uint32_t>(debug_view), post_view_, 0, 0);
@@ -494,7 +506,7 @@ void SceneRenderer::ApplyEnvironmentOverrides() {
     }
     // ray traced shadows (12.21): the faces a shadow ray culls, for tests; back (the faces toward the light, as the shadow
     // passes cull them) by default
-    if (const char* last = std::getenv("PT_TIMING_LAST")) {
+    if (const char* last = std::getenv("PT_TIMING_LAST"); last && LogEnabled()) {
         timing_ring_.assign(static_cast<size_t>(std::clamp(std::atoi(last), 0, 100000)), FrameTiming{});
     }
     if (const char* cull = std::getenv("PT_RT_CULL")) {

@@ -17,18 +17,33 @@ import org.libsdl.app.SDLActivity;
 public class PTActivity extends SDLActivity {
     private SecondScreen secondScreen;
     private TouchControls touchControls;
-    private static PTActivity current;
+    private static volatile PTActivity current;
     private MobileSettings mobileSettings;
     static native float nativeGetRenderScale();
     static native void nativeSetRenderScale(float value);
     static native void nativeSetPerformanceProfile(int value);
     static native void nativeSetBloomPassLimit(int value);
+    static native void nativeSetLoggingEnabled(boolean enabled);
+    static native String nativeGetGameGraphicsSettings();
+    static native void nativeApplyGameGraphicsSettings();
+    public static void refreshDisplay(){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->DisplayRefresh.apply(a,mSurface==null?null:mSurface.getHolder().getSurface()));}
+    public static void gameGraphicsSettingsFailed(String message){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->android.widget.Toast.makeText(a,message,android.widget.Toast.LENGTH_LONG).show());}
     static boolean gameRunning() {return current!=null;}
     public static int getTouchControlsMode() {return current==null?0:current.getSharedPreferences("touch_layout_v1",0).getInt("overlay_mode",0);}
     public static void setTouchControlsMode(int mode) {final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{a.getSharedPreferences("touch_layout_v1",0).edit().putInt("overlay_mode",mode).apply();if(a.touchControls!=null)a.touchControls.setMode(mode);});}
     public static void openMobileSettings() {final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.mobileSettings!=null)a.mobileSettings.show();});}
+    public static void gameGraphicsPresetSelected(int preset) {
+        final PTActivity a=current;if(a==null)return;
+        a.runOnUiThread(()->{
+            int profile=preset==1?3:0;
+            try {
+                DriverImportJob.atomicWrite(new File(a.getFilesDir(),"performance_profile.txt"),(profile+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                a.getSharedPreferences("touch_layout_v1",0).edit().putInt("performance_profile",profile).apply();
+            } catch(java.io.IOException error){android.widget.Toast.makeText(a,"Could not keep preset after restart: "+error.getMessage(),android.widget.Toast.LENGTH_LONG).show();}
+        });
+    }
     @Override protected void onActivityResult(int request,int result,Intent data){if(mobileSettings!=null && mobileSettings.activityResult(request,result,data))return;super.onActivityResult(request,result,data);}
-    @Override protected void onResume(){super.onResume();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();}
+    @Override protected void onResume(){super.onResume();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();}
     @Override protected void onPause(){if(touchControls!=null)touchControls.releaseAll();super.onPause();}
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
     @Override protected void onDestroy(){if(touchControls!=null)touchControls.releaseAll();if(mobileSettings!=null)mobileSettings.detach();if(current==this)current=null;super.onDestroy();}
@@ -83,7 +98,6 @@ public class PTActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        installJavaCrashLog();
         super.onCreate(savedInstanceState);
         current = this;
         secondScreen = new SecondScreen(this);
@@ -126,7 +140,7 @@ public class PTActivity extends SDLActivity {
             try {
                 secondScreen.resume();
             } catch (Throwable t) {
-                android.util.Log.w("pt", "second screen: " + t);
+                AppLog.w("pt", "second screen: " + t);
             }
         }
     }
@@ -137,26 +151,10 @@ public class PTActivity extends SDLActivity {
             try {
                 secondScreen.pause();
             } catch (Throwable t) {
-                android.util.Log.w("pt", "second screen: " + t);
+                AppLog.w("pt", "second screen: " + t);
             }
         }
         super.onStop();
     }
 
-    /* A crash on the Java side (SDL's activity) goes to Download/PT-logs/pt-java-crash.txt, or the app's own folder. */
-    private void installJavaCrashLog() {
-        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
-        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
-            File dir = new File("/storage/emulated/0/Download/PT-logs-test");
-            if (!dir.isDirectory() && !dir.mkdirs()) {
-                dir = getExternalFilesDir(null);
-            }
-            try (PrintWriter out = new PrintWriter(new FileWriter(new File(dir, "pt-java-crash.txt")))) {
-                out.println("thread " + thread.getName());
-                error.printStackTrace(out);
-            } catch (Exception ignored) {
-            }
-            if (previous != null) previous.uncaughtException(thread, error);
-        });
-    }
 }

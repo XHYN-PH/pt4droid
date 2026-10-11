@@ -1,0 +1,17 @@
+#pragma once
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <string>
+#include <string_view>
+
+namespace pt::android {
+inline bool PreferBundledTurnip(std::string_view device_name) {
+    std::string name(device_name);
+    std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    const auto label=name.find("adreno");if(label==std::string::npos)return false;
+    const auto number=name.find_first_of("0123456789",label+6);if(number==std::string::npos)return false;
+    const auto model=std::strtoul(name.c_str()+number,nullptr,10);
+    return model>=600 && model<800;
+}
+}

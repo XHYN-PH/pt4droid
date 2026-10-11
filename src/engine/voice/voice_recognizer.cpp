@@ -883,7 +883,7 @@ VoiceRecognizer::Result VoiceRecognizer::Transcribe(std::vector<float> audio) {
     if (audio.size() < minimum) audio.resize(minimum, 0.0f);
 
     // PT_VOICE_DUMP=<folder>: every segment as the model gets it, a 16 kHz wav, for a player's report of a missed word
-    if (const char* dump = std::getenv("PT_VOICE_DUMP")) WriteSegment(std::filesystem::path(dump), audio);
+    if (const char* dump = std::getenv("PT_VOICE_DUMP"); dump && LogEnabled()) WriteSegment(std::filesystem::path(dump), audio);
     Decoded first = Decode(whisper_, jack_tokens_, audio, settings.prompt.c_str(), settings.beam, 0.0f, 1);
     if (!first.ok) return result;
     result.text = first.text;

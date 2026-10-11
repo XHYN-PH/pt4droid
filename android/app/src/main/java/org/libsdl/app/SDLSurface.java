@@ -10,7 +10,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Build;
 import android.util.DisplayMetrics;
-import android.util.Log;
+import com.ptport.app.AppLog;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -98,14 +98,15 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     // Called when we have a valid drawing surface
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-        Log.v("SDL", "surfaceCreated()");
+        if(getContext() instanceof android.app.Activity)com.ptport.app.DisplayRefresh.surfaceCreated((android.app.Activity)getContext(),holder.getSurface());
+        AppLog.v("SDL", "surfaceCreated()");
         SDLActivity.onNativeSurfaceCreated();
     }
 
     // Called when we lose the surface
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
-        Log.v("SDL", "surfaceDestroyed()");
+        AppLog.v("SDL", "surfaceDestroyed()");
 
         // Transition to pause, if needed
         SDLActivity.mNextNativeState = SDLActivity.NativeState.PAUSED;
@@ -119,7 +120,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     @Override
     public void surfaceChanged(SurfaceHolder holder,
                                int format, int width, int height) {
-        Log.v("SDL", "surfaceChanged()");
+        AppLog.v("SDL", "surfaceChanged()");
 
         if (SDLActivity.mSingleton == null) {
             return;
@@ -146,9 +147,10 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
             SDLActivity.getContext().notifyAll();
         }
 
-        Log.v("SDL", "Window size: " + width + "x" + height);
-        Log.v("SDL", "Device size: " + nDeviceWidth + "x" + nDeviceHeight);
+        AppLog.v("SDL", "Window size: " + width + "x" + height);
+        AppLog.v("SDL", "Device size: " + nDeviceWidth + "x" + nDeviceHeight);
         SDLActivity.nativeSetScreenResolution(width, height, nDeviceWidth, nDeviceHeight, density, mDisplay.getRefreshRate());
+        if(getContext() instanceof android.app.Activity)com.ptport.app.DisplayRefresh.apply((android.app.Activity)getContext(),holder.getSurface());
         SDLActivity.onNativeResize();
 
         // Prevent a screen distortion glitch,
@@ -172,7 +174,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
            double max = Math.max(mWidth, mHeight);
 
            if (max / min < 1.20) {
-              Log.v("SDL", "Don't skip on such aspect-ratio. Could be a square resolution.");
+              AppLog.v("SDL", "Don't skip on such aspect-ratio. Could be a square resolution.");
               skip = false;
            }
         }
@@ -185,7 +187,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
         }
 
         if (skip) {
-           Log.v("SDL", "Skip .. Surface is not ready.");
+           AppLog.v("SDL", "Skip .. Surface is not ready.");
            mIsSurfaceReady = false;
            return;
         }

@@ -22,12 +22,14 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <vector>
 
 #include <android/log.h>
 
 #include "engine/core/log.h"
+#include "engine/platform/mobile_driver_policy.h"
 
 namespace pt::android {
 namespace {
@@ -86,6 +88,18 @@ std::string ApplicationInfoString(const char* field_name) {
 }
 
 }  // namespace
+
+void InstallLogFilter() {
+    static std::once_flag installed;
+    static SDL_LogOutputFunction output = nullptr;
+    static void* userdata = nullptr;
+    std::call_once(installed, [] {
+        SDL_GetLogOutputFunction(&output, &userdata);
+        SDL_SetLogOutputFunction([](void*, int category, SDL_LogPriority priority, const char* text) {
+            if (LogEnabled() && output) output(userdata, category, priority, text);
+        }, nullptr);
+    });
+}
 
 std::filesystem::path DataDir() {
     static const std::filesystem::path dir = [] {
@@ -207,6 +221,7 @@ _Unwind_Reason_Code CollectFrame(_Unwind_Context* context, void* arg) {
 }
 
 void OnCrash(int signal, siginfo_t* info, void* context) {
+    if (LogEnabled()) {
     char line[512];
     std::snprintf(line, sizeof(line), "P.T. crashed: signal %d (%s), fault address %p\n", signal, strsignal(signal),
                   info ? info->si_addr : nullptr);
@@ -226,6 +241,7 @@ void OnCrash(int signal, siginfo_t* info, void* context) {
         WriteText(line);
     }
     if (g_crash_fd >= 0) fsync(g_crash_fd);
+    }
     // hand the signal on (Android's debuggerd writes its tombstone, the process ends)
     sigaction(signal, &g_previous[signal], nullptr);
     (void)context;
@@ -235,6 +251,7 @@ void OnCrash(int signal, siginfo_t* info, void* context) {
 }  // namespace
 
 void InstallCrashLog(const std::filesystem::path& path) {
+    if(!LogEnabled() || g_crash_fd>=0)return;
     g_crash_fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     struct sigaction action{};
     action.sa_sigaction = OnCrash;
@@ -298,14 +315,38 @@ std::string DriverChoice() {
             return line;
         }
     }
-    return "turnip";
+    return "auto";
+}
+
+// Probe the system ICD without a surface or touching the renderer's global dispatch.
+// Unknown GPUs stay on their own driver; only the bundled driver's Adreno generation is selected automatically.
+bool AutoUsesTurnip() {
+    bool use=false;
+    void* library=dlopen("libvulkan.so",RTLD_NOW|RTLD_LOCAL);if(!library)return false;
+    auto get=reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library,"vkGetInstanceProcAddr"));
+    auto create=get?reinterpret_cast<PFN_vkCreateInstance>(get(VK_NULL_HANDLE,"vkCreateInstance")):nullptr;
+    VkInstance instance=VK_NULL_HANDLE;
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.pApplicationName="pt4droid driver probe";app.apiVersion=VK_API_VERSION_1_0;
+    VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&app;
+    if(create && create(&info,nullptr,&instance)==VK_SUCCESS){
+        auto enumerate=reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(get(instance,"vkEnumeratePhysicalDevices"));
+        auto properties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(get(instance,"vkGetPhysicalDeviceProperties"));
+        auto destroy=reinterpret_cast<PFN_vkDestroyInstance>(get(instance,"vkDestroyInstance"));
+        uint32_t count=0;
+        if(enumerate && properties && enumerate(instance,&count,nullptr)==VK_SUCCESS && count>0 && count<32){
+            std::vector<VkPhysicalDevice> devices(count);
+            if(enumerate(instance,&count,devices.data())==VK_SUCCESS){VkPhysicalDeviceProperties props{};properties(devices.front(),&props);use=PreferBundledTurnip(props.deviceName);}
+        }
+        if(destroy)destroy(instance,nullptr);
+    }
+    dlclose(library);return use;
 }
 
 PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     const std::string choice = DriverChoice();
     std::string lower = choice;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (lower == "system") {
+    if (lower == "system" || (lower=="auto" && !AutoUsesTurnip())) {
         name = "system driver (driver.txt)";
         return nullptr;
     }
@@ -327,7 +368,7 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
         if (!ec && !relative.empty() && *relative.begin() != ".." && std::filesystem::is_regular_file(target,ec)) {
             driver_dir = target.parent_path().string() + "/"; driver_file=target.filename().string(); label="imported " + driver_file;
         } else LogWarn("android: imported driver unavailable; using bundled Turnip");
-    } else if (lower != "turnip") {
+    } else if (lower != "turnip" && lower!="auto") {
         const auto source = LogDir() / choice;
         const auto private_dir = std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "drivers";
         std::error_code ec; std::filesystem::create_directories(private_dir,ec);
@@ -415,6 +456,10 @@ void PumpTouchControls() {
     }
     const uint64_t axes = g_touch_axes.load(std::memory_order_relaxed);
     const uint32_t buttons = g_touch_buttons.load(std::memory_order_relaxed);
+    static uint64_t last_axes=~uint64_t{0};
+    static uint32_t last_buttons=~uint32_t{0};
+    if(axes==last_axes && buttons==last_buttons)return;
+    last_axes=axes;last_buttons=buttons;
     SDL_SetJoystickVirtualAxis(g_touch_pad, SDL_GAMEPAD_AXIS_LEFTX, Axis(axes, 0));
     SDL_SetJoystickVirtualAxis(g_touch_pad, SDL_GAMEPAD_AXIS_LEFTY, Axis(axes, 1));
     SDL_SetJoystickVirtualAxis(g_touch_pad, SDL_GAMEPAD_AXIS_RIGHTX, Axis(axes, 2));

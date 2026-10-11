@@ -144,6 +144,7 @@ struct AppSettings {
 };
 
 bool LoadAppSettings(const std::filesystem::path& path, AppSettings& out);
+std::string AppSettingsText(const AppSettings& settings);
 bool SaveAppSettings(const std::filesystem::path& path, const AppSettings& settings);
 
 }

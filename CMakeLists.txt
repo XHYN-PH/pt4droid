@@ -190,7 +190,7 @@ if(ANDROID)
   endif()
   add_library(ptsetup SHARED src/pkginstall/pkg_extract.cpp src/pkginstall/android_jni.cpp)
   target_include_directories(ptsetup PRIVATE src)
-  target_link_libraries(ptsetup PRIVATE mbedcrypto zlibstatic log)
+  target_link_libraries(ptsetup PRIVATE mbedcrypto zlibstatic log dl)
 endif()
 
 if(NOT ANDROID)

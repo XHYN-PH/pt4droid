@@ -44,7 +44,7 @@ final class DriverImportJob {
     }
     private static String hex(byte[] bytes){StringBuilder out=new StringBuilder();for(byte value:bytes)out.append(String.format(Locale.ROOT,"%02x",value&255));return out.toString();}
     private static byte[] hash(File file) throws Exception {MessageDigest h=MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(file)){byte[] b=new byte[32768];int n;while((n=in.read(b))!=-1)h.update(b,0,n);}return h.digest();}
-    private void log(String text){File base=app.getExternalFilesDir(null);if(base==null)base=app.getFilesDir();File file=new File(base,"data/driver-import.log");file.getParentFile().mkdirs();try(FileWriter out=new FileWriter(file,true)){out.write(new Date()+" "+text+"\n");}catch(IOException ignored){}}
+    private void log(String text){AppLog.append(app,"driver-import.log",text);}
     private void run(){
         File zip=null,stage=null;ScheduledFuture<?> deadline=TIMER.schedule(()->cancel("Import timed out after 60 seconds. Try a ZIP copied to local Downloads."),60,TimeUnit.SECONDS);
         try{

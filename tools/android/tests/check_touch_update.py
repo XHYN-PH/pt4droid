@@ -20,6 +20,7 @@ public class TouchTest {
  static class Control{int action;boolean visible=true;float size=1;RectF area=new RectF(-200,-200,-100,-100);HashSet<Integer> fingers=new HashSet<>();}
  static class Stick{int pointer=-1;float x,y,originX,originY;}
  static class MotionEvent{
+  static final int TOOL_TYPE_FINGER=1;
   static final int ACTION_DOWN=0,ACTION_UP=1,ACTION_MOVE=2,ACTION_CANCEL=3,ACTION_POINTER_DOWN=5,ACTION_POINTER_UP=6;
   int action,index,source=4098,tool=1;int[] ids;float[] x,y;
   MotionEvent(int a,int i,int[] ids,float[] x,float[] y){action=a;index=i;this.ids=ids;this.x=x;this.y=y;}

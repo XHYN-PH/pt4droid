@@ -12,7 +12,7 @@ import android.bluetooth.BluetoothGattService;
 import android.hardware.usb.UsbDevice;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
+import com.ptport.app.AppLog;
 import android.os.*;
 
 //import com.android.internal.util.HexDump;
@@ -29,10 +29,10 @@ import java.util.regex.Matcher;
 class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDevice {
 
     private static final String TAG = "hidapi";
-    private HIDDeviceManager mManager;
+    private volatile HIDDeviceManager mManager;
     private BluetoothDevice mDevice;
     private int mDeviceId;
-    private BluetoothGatt mGatt;
+    private volatile BluetoothGatt mGatt;
     private boolean mIsRegistered = false;
     private boolean mIsConnected = false;
     private boolean mIsChromebook = false;
@@ -91,7 +91,7 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
             mOp = operation;
             mUuid = uuid;
             mDelayMs = delayMs;
-        }        
+        }
 
         private GattOperation(BluetoothGatt gatt, GattOperation.Operation operation, UUID uuid, byte[] value) {
             mGatt = gatt;
@@ -109,59 +109,69 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
         }
 
         public void run() {
-            // This is executed in main thread
-            BluetoothGattCharacteristic chr;
+            if (mGatt == null) { mResult = false; return; }
+            try {
+                // This is executed in main thread
+                BluetoothGattCharacteristic chr;
 
-            switch (mOp) {
-                case CHR_READ:
-                    chr = getCharacteristic(mUuid);
-                    //Log.v(TAG, "Reading characteristic " + chr.getUuid());
-                    if (!mGatt.readCharacteristic(chr)) {
-                        Log.e(TAG, "Unable to read characteristic " + mUuid.toString());
-                        mResult = false;
-                        break;
-                    }
-                    mResult = true;
-                    break;
-                case CHR_WRITE:
-                    chr = getCharacteristic(mUuid);
-                    //Log.v(TAG, "Writing characteristic " + chr.getUuid() + " value=" + HexDump.toHexString(value));
-                    chr.setValue(mValue);
-                    if (!mGatt.writeCharacteristic(chr)) {
-                        Log.e(TAG, "Unable to write characteristic " + mUuid.toString());
-                        mResult = false;
-                        break;
-                    }
-                    mResult = true;
-                    break;
-                case ENABLE_NOTIFICATION:
-                    chr = getCharacteristic(mUuid);
-                    //Log.v(TAG, "Writing descriptor of " + chr.getUuid());
-                    if (chr != null) {
-                        BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
-                        if (cccd != null) {
-                            int properties = chr.getProperties();
-                            byte[] value;
-                            if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == BluetoothGattCharacteristic.PROPERTY_NOTIFY) {
-                                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
-                            } else if ((properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) == BluetoothGattCharacteristic.PROPERTY_INDICATE) {
-                                value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
-                            } else {
-                                Log.e(TAG, "Unable to start notifications on input characteristic");
-                                mResult = false;
-                                return;
-                            }
-
-                            mGatt.setCharacteristicNotification(chr, true);
-                            cccd.setValue(value);
-                            if (!mGatt.writeDescriptor(cccd)) {
-                                Log.e(TAG, "Unable to write descriptor " + mUuid.toString());
-                                mResult = false;
-                                return;
-                            }
-                            mResult = true;
+                switch (mOp) {
+                    case CHR_READ:
+                        chr = getCharacteristic(mUuid);
+                        if (chr == null) { mResult = false; return; }
+                        //AppLog.v(TAG, "Reading characteristic " + chr.getUuid());
+                        if (!mGatt.readCharacteristic(chr)) {
+                            AppLog.e(TAG, "Unable to read characteristic " + mUuid.toString());
+                            mResult = false;
+                            break;
                         }
-                    }
+                        mResult = true;
+                        break;
+                    case CHR_WRITE:
+                        chr = getCharacteristic(mUuid);
+                        if (chr == null) { mResult = false; return; }
+                        //AppLog.v(TAG, "Writing characteristic " + chr.getUuid() + " value=" + HexDump.toHexString(value));
+                        chr.setValue(mValue);
+                        if (!mGatt.writeCharacteristic(chr)) {
+                            AppLog.e(TAG, "Unable to write characteristic " + mUuid.toString());
+                            mResult = false;
+                            break;
+                        }
+                        mResult = true;
+                        break;
+                    case ENABLE_NOTIFICATION:
+                        chr = getCharacteristic(mUuid);
+                        if (chr == null) { mResult = false; return; }
+                        //AppLog.v(TAG, "Writing descriptor of " + chr.getUuid());
+                        if (chr != null) {
+                            BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
+                            if (cccd != null) {
+                                int properties = chr.getProperties();
+                                byte[] value;
+                                if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == BluetoothGattCharacteristic.PROPERTY_NOTIFY) {
+                                    value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
+                                } else if ((properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) == BluetoothGattCharacteristic.PROPERTY_INDICATE) {
+                                    value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
+                                } else {
+                                    AppLog.e(TAG, "Unable to start notifications on input characteristic");
+                                    mResult = false;
+                                    return;
+                                }
+
+                                mGatt.setCharacteristicNotification(chr, true);
+                                cccd.setValue(value);
+                                if (!mGatt.writeDescriptor(cccd)) {
+                                    AppLog.e(TAG, "Unable to write descriptor " + mUuid.toString());
+                                    mResult = false;
+                                    return;
+                                }
+                                mResult = true;
+                            }
+                        }
+                }
+
+            } catch (SecurityException e) {
+                AppLog.w(TAG, "Bluetooth permission unavailable", e);
+                mResult = false;
             }
         }
 
@@ -227,14 +237,23 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
     // Because on Chromebooks we show up as a dual-mode device, it will attempt to connect TRANSPORT_AUTO, which will use TRANSPORT_BREDR instead
     // of TRANSPORT_LE.  Let's force ourselves to connect low energy.
     private BluetoothGatt connectGatt(boolean managed) {
-        if (Build.VERSION.SDK_INT >= 23 /* Android 6.0 (M) */) {
-            try {
-                return mDevice.connectGatt(mManager.getContext(), managed, this, TRANSPORT_LE);
-            } catch (Exception e) {
+        if (mManager == null) return null;
+        try {
+            if (Build.VERSION.SDK_INT >= 23 /* Android 6.0 (M) */) {
+                try {
+                    return mDevice.connectGatt(mManager.getContext(), managed, this, TRANSPORT_LE);
+                } catch (SecurityException e) {
+                    throw e;
+                } catch (Exception e) {
+                    return mDevice.connectGatt(mManager.getContext(), managed, this);
+                }
+            } else {
                 return mDevice.connectGatt(mManager.getContext(), managed, this);
             }
-        } else {
-            return mDevice.connectGatt(mManager.getContext(), managed, this);
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
+            return null;
         }
     }
 
@@ -243,91 +262,108 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
     }
 
     protected int getConnectionState() {
+        if (mManager == null || mGatt == null) return BluetoothProfile.STATE_DISCONNECTED;
+        try {
+            Context context = mManager.getContext();
+            if (context == null) {
+                // We are lacking any context to get our Bluetooth information.  We'll just assume disconnected.
+                return BluetoothProfile.STATE_DISCONNECTED;
+            }
 
-        Context context = mManager.getContext();
-        if (context == null) {
-            // We are lacking any context to get our Bluetooth information.  We'll just assume disconnected.
+            BluetoothManager btManager = (BluetoothManager)context.getSystemService(Context.BLUETOOTH_SERVICE);
+            if (btManager == null) {
+                // This device doesn't support Bluetooth.  We should never be here, because how did
+                // we instantiate a device to start with?
+                return BluetoothProfile.STATE_DISCONNECTED;
+            }
+
+            return btManager.getConnectionState(mDevice, BluetoothProfile.GATT);
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
             return BluetoothProfile.STATE_DISCONNECTED;
         }
-
-        BluetoothManager btManager = (BluetoothManager)context.getSystemService(Context.BLUETOOTH_SERVICE);
-        if (btManager == null) {
-            // This device doesn't support Bluetooth.  We should never be here, because how did
-            // we instantiate a device to start with?
-            return BluetoothProfile.STATE_DISCONNECTED;
-        }
-
-        return btManager.getConnectionState(mDevice, BluetoothProfile.GATT);
     }
 
     void reconnect() {
+        if (mManager == null) return;
+        try {
+            if (getConnectionState() != BluetoothProfile.STATE_CONNECTED) {
+                if (mGatt != null) mGatt.disconnect();
+                mGatt = connectGatt();
+            }
 
-        if (getConnectionState() != BluetoothProfile.STATE_CONNECTED) {
-            mGatt.disconnect();
-            mGatt = connectGatt();
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
         }
-
     }
 
     protected void checkConnectionForChromebookIssue() {
-        if (!mIsChromebook) {
-            // We only do this on Chromebooks, because otherwise it's really annoying to just attempt
-            // over and over.
-            return;
-        }
+        if (mGatt == null || mManager == null) return;
+        try {
+            if (!mIsChromebook) {
+                // We only do this on Chromebooks, because otherwise it's really annoying to just attempt
+                // over and over.
+                return;
+            }
 
-        int connectionState = getConnectionState();
+            int connectionState = getConnectionState();
 
-        switch (connectionState) {
-            case BluetoothProfile.STATE_CONNECTED:
-                if (!mIsConnected) {
-                    // We are in the Bad Chromebook Place.  We can force a disconnect
-                    // to try to recover.
-                    Log.v(TAG, "Chromebook: We are in a very bad state; the controller shows as connected in the underlying Bluetooth layer, but we never received a callback.  Forcing a reconnect.");
-                    mIsReconnecting = true;
-                    mGatt.disconnect();
-                    mGatt = connectGatt(false);
-                    break;
-                }
-                else if (!isRegistered()) {
-                    if (mGatt.getServices().size() > 0) {
-                        Log.v(TAG, "Chromebook: We are connected to a controller, but never got our registration.  Trying to recover.");
-                        probeService(this);
-                    }
-                    else {
-                        Log.v(TAG, "Chromebook: We are connected to a controller, but never discovered services.  Trying to recover.");
+            switch (connectionState) {
+                case BluetoothProfile.STATE_CONNECTED:
+                    if (!mIsConnected) {
+                        // We are in the Bad Chromebook Place.  We can force a disconnect
+                        // to try to recover.
+                        AppLog.v(TAG, "Chromebook: We are in a very bad state; the controller shows as connected in the underlying Bluetooth layer, but we never received a callback.  Forcing a reconnect.");
                         mIsReconnecting = true;
                         mGatt.disconnect();
                         mGatt = connectGatt(false);
                         break;
                     }
-                }
-                else {
-                    Log.v(TAG, "Chromebook: We are connected, and registered.  Everything's good!");
-                    return;
-                }
-                break;
+                    else if (!isRegistered()) {
+                        if (mGatt.getServices().size() > 0) {
+                            AppLog.v(TAG, "Chromebook: We are connected to a controller, but never got our registration.  Trying to recover.");
+                            probeService(this);
+                        }
+                        else {
+                            AppLog.v(TAG, "Chromebook: We are connected to a controller, but never discovered services.  Trying to recover.");
+                            mIsReconnecting = true;
+                            mGatt.disconnect();
+                            mGatt = connectGatt(false);
+                            break;
+                        }
+                    }
+                    else {
+                        AppLog.v(TAG, "Chromebook: We are connected, and registered.  Everything's good!");
+                        return;
+                    }
+                    break;
 
-            case BluetoothProfile.STATE_DISCONNECTED:
-                Log.v(TAG, "Chromebook: We have either been disconnected, or the Chromebook BtGatt.ContextMap bug has bitten us.  Attempting a disconnect/reconnect, but we may not be able to recover.");
+                case BluetoothProfile.STATE_DISCONNECTED:
+                    AppLog.v(TAG, "Chromebook: We have either been disconnected, or the Chromebook BtGatt.ContextMap bug has bitten us.  Attempting a disconnect/reconnect, but we may not be able to recover.");
 
-                mIsReconnecting = true;
-                mGatt.disconnect();
-                mGatt = connectGatt(false);
-                break;
+                    mIsReconnecting = true;
+                    mGatt.disconnect();
+                    mGatt = connectGatt(false);
+                    break;
 
-            case BluetoothProfile.STATE_CONNECTING:
-                Log.v(TAG, "Chromebook: We're still trying to connect.  Waiting a bit longer.");
-                break;
-        }
-
-        final HIDDeviceBLESteamController finalThis = this;
-        mHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                finalThis.checkConnectionForChromebookIssue();
+                case BluetoothProfile.STATE_CONNECTING:
+                    AppLog.v(TAG, "Chromebook: We're still trying to connect.  Waiting a bit longer.");
+                    break;
             }
-        }, CHROMEBOOK_CONNECTION_CHECK_INTERVAL);
+
+            final HIDDeviceBLESteamController finalThis = this;
+            mHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    finalThis.checkConnectionForChromebookIssue();
+                }
+            }, CHROMEBOOK_CONNECTION_CHECK_INTERVAL);
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
+        }
     }
 
     private boolean isRegistered() {
@@ -339,81 +375,87 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
     }
 
     private boolean probeService(HIDDeviceBLESteamController controller) {
-
-        if (isRegistered()) {
-            return true;
-        }
-
-        if (!mIsConnected) {
-            return false;
-        }
-
-        Log.v(TAG, "probeService controller=" + controller);
-
-        for (BluetoothGattService service : mGatt.getServices()) {
-            if (service.getUuid().equals(steamControllerService)) {
-                Log.v(TAG, "Found Valve steam controller service " + service.getUuid());
-
-                for (BluetoothGattCharacteristic chr : service.getCharacteristics()) {
-                    if (chr.getUuid().equals(inputCharacteristicTriton_0x45)) {
-                        Log.v(TAG, "Found Triton input characteristic 0x45");
-                        mProductId = TRITON_BLE_PID;
-                        mReportId = 0x45;
-                        mInputCharacteristic = chr.getUuid();
-                    } else if (chr.getUuid().equals(inputCharacteristicTriton_0x47)) {
-                        Log.v(TAG, "Found Triton input characteristic 0x47");
-                        mProductId = TRITON_BLE_PID;
-                        mReportId = 0x47;
-                        mInputCharacteristic = chr.getUuid();
-                    } else if (chr.getUuid().equals(inputCharacteristicD0G)) {
-                        Log.v(TAG, "Found D0G input characteristic");
-                        mProductId = D0G_BLE2_PID;
-                        mReportId = 0x03;
-                        mInputCharacteristic = chr.getUuid();
-                    } else {
-                        Pattern reportPattern = Pattern.compile("100F6C([0-9A-Z]{2})", Pattern.CASE_INSENSITIVE);
-                        Matcher matcher = reportPattern.matcher(chr.getUuid().toString());
-
-                        if (matcher.find()) {
-                            try {
-                                int reportId = Integer.parseInt(matcher.group(1), 16);
-
-                                reportId -= 0x35;
-                                if (reportId >= 0x80) {
-                                    // This is a Triton output report characteristic that we need to care about.
-                                    Log.v(TAG, "Found Triton output report 0x" + Integer.toString(reportId, 16));
-                                    mOutputReportChars.put(reportId, chr);
-                                }
-                            }
-                            catch (NumberFormatException nfe) {
-                                Log.w(TAG, "Could not parse report characteristic " + chr.getUuid().toString() + ": " + nfe.toString());
-                            }
-                        }
-                    }
-                }
-
-                for (BluetoothGattCharacteristic chr : service.getCharacteristics()) {
-                    if (chr.getUuid().equals(mInputCharacteristic)) {
-                        // Start notifications
-                        BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
-                        if (cccd != null) {
-                            enableNotification(chr.getUuid());
-                        }
-                    }
-                }
+        if (mGatt == null || mManager == null) return false;
+        try {
+            if (isRegistered()) {
                 return true;
             }
-        }
 
-        if ((mGatt.getServices().size() == 0) && mIsChromebook && !mIsReconnecting) {
-            Log.e(TAG, "Chromebook: Discovered services were empty; this almost certainly means the BtGatt.ContextMap bug has bitten us.");
-            mIsConnected = false;
-            mIsReconnecting = true;
-            mGatt.disconnect();
-            mGatt = connectGatt(false);
-        }
+            if (!mIsConnected) {
+                return false;
+            }
 
-        return false;
+            AppLog.v(TAG, "probeService controller=" + controller);
+
+            for (BluetoothGattService service : mGatt.getServices()) {
+                if (service.getUuid().equals(steamControllerService)) {
+                    AppLog.v(TAG, "Found Valve steam controller service " + service.getUuid());
+
+                    for (BluetoothGattCharacteristic chr : service.getCharacteristics()) {
+                        if (chr.getUuid().equals(inputCharacteristicTriton_0x45)) {
+                            AppLog.v(TAG, "Found Triton input characteristic 0x45");
+                            mProductId = TRITON_BLE_PID;
+                            mReportId = 0x45;
+                            mInputCharacteristic = chr.getUuid();
+                        } else if (chr.getUuid().equals(inputCharacteristicTriton_0x47)) {
+                            AppLog.v(TAG, "Found Triton input characteristic 0x47");
+                            mProductId = TRITON_BLE_PID;
+                            mReportId = 0x47;
+                            mInputCharacteristic = chr.getUuid();
+                        } else if (chr.getUuid().equals(inputCharacteristicD0G)) {
+                            AppLog.v(TAG, "Found D0G input characteristic");
+                            mProductId = D0G_BLE2_PID;
+                            mReportId = 0x03;
+                            mInputCharacteristic = chr.getUuid();
+                        } else {
+                            Pattern reportPattern = Pattern.compile("100F6C([0-9A-Z]{2})", Pattern.CASE_INSENSITIVE);
+                            Matcher matcher = reportPattern.matcher(chr.getUuid().toString());
+
+                            if (matcher.find()) {
+                                try {
+                                    int reportId = Integer.parseInt(matcher.group(1), 16);
+
+                                    reportId -= 0x35;
+                                    if (reportId >= 0x80) {
+                                        // This is a Triton output report characteristic that we need to care about.
+                                        AppLog.v(TAG, "Found Triton output report 0x" + Integer.toString(reportId, 16));
+                                        mOutputReportChars.put(reportId, chr);
+                                    }
+                                }
+                                catch (NumberFormatException nfe) {
+                                    AppLog.w(TAG, "Could not parse report characteristic " + chr.getUuid().toString() + ": " + nfe.toString());
+                                }
+                            }
+                        }
+                    }
+
+                    for (BluetoothGattCharacteristic chr : service.getCharacteristics()) {
+                        if (chr.getUuid().equals(mInputCharacteristic)) {
+                            // Start notifications
+                            BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
+                            if (cccd != null) {
+                                enableNotification(chr.getUuid());
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            if ((mGatt.getServices().size() == 0) && mIsChromebook && !mIsReconnecting) {
+                AppLog.e(TAG, "Chromebook: Discovered services were empty; this almost certainly means the BtGatt.ContextMap bug has bitten us.");
+                mIsConnected = false;
+                mIsReconnecting = true;
+                mGatt.disconnect();
+                mGatt = connectGatt(false);
+            }
+
+            return false;
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
+            return false;
+        }
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -455,11 +497,16 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
                 public void run() {
                     synchronized (mOperations) {
                         if (mCurrentOperation == null) {
-                            Log.e(TAG, "Current operation null in executor?");
+                            AppLog.e(TAG, "Current operation null in executor?");
                             return;
                         }
 
                         mCurrentOperation.run();
+                        if (!mCurrentOperation.finish()) {
+                            mCurrentOperation = null;
+                            executeNextGattOperation();
+                            return;
+                        }
                         // now wait for the GATT callback and when it comes, finish this operation
                     }
                 }
@@ -505,7 +552,7 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
                     if (finalThis.mHasSeenInputUpdate) {
                         // Amazon Five devices may have enabled notifications on the input characteristic and not given us a callback. If we've seen
                         // input reports, though, somewhat by definition notifications are enabled.
-                        Log.w(TAG, "WriteDescriptor has never returned, but we've seen input reports. Moving on with controller initialization.");
+                        AppLog.w(TAG, "WriteDescriptor has never returned, but we've seen input reports. Moving on with controller initialization.");
                         finalThis.mHasEnabledNotifications = true;
                         finalThis.enableValveMode();
                         return;
@@ -516,7 +563,7 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
                     finalThis.queueGattOperation(retry);
                 }
             }
-        }, 1000);            
+        }, 1000);
     }
 
     void writeCharacteristic(UUID uuid, byte[] value) {
@@ -535,7 +582,8 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
-        //Log.v(TAG, "onConnectionStateChange status=" + status + " newState=" + newState);
+        //AppLog.v(TAG, "onConnectionStateChange status=" + status + " newState=" + newState);
+        if (mManager == null || g != mGatt) return;
         mIsReconnecting = false;
         if (newState == 2) {
             mIsConnected = true;
@@ -544,7 +592,12 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
                 mHandler.post(new Runnable() {
                     @Override
                     public void run() {
-                        mGatt.discoverServices();
+                        if (mManager == null || g != mGatt) return;
+                        try {
+                            g.discoverServices();
+                        } catch (SecurityException e) {
+                            AppLog.w(TAG, "Bluetooth permission unavailable", e);
+                        }
                     }
                 });
             }
@@ -558,32 +611,39 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-        //Log.v(TAG, "onServicesDiscovered status=" + status);
-        if (status == 0) {
-            if (gatt.getServices().size() == 0) {
-                Log.v(TAG, "onServicesDiscovered returned zero services; something has gone horribly wrong down in Android's Bluetooth stack.");
-                mIsReconnecting = true;
-                mIsConnected = false;
-                gatt.disconnect();
-                mGatt = connectGatt(false);
-            } else {
-                if (getProductId() == TRITON_BLE_PID) {
-                    // Android will not properly play well with Data Length Extensions without manually requesting a large MTU,
-                    // and Triton controllers require DLE support.
-                    //
-                    // 517 is basically a "magic number" as far as Android's bluetooth code is concerned, so do not change
-                    // this value. It is functionally "please enable data length extensions" on some Android builds.
-                    mGatt.requestMtu(517);
-                }
+        if (mManager == null || gatt != mGatt) return;
+        try {
+            //AppLog.v(TAG, "onServicesDiscovered status=" + status);
+            if (status == 0) {
+                if (gatt.getServices().size() == 0) {
+                    AppLog.v(TAG, "onServicesDiscovered returned zero services; something has gone horribly wrong down in Android's Bluetooth stack.");
+                    mIsReconnecting = true;
+                    mIsConnected = false;
+                    gatt.disconnect();
+                    mGatt = connectGatt(false);
+                } else {
+                    if (getProductId() == TRITON_BLE_PID) {
+                        // Android will not properly play well with Data Length Extensions without manually requesting a large MTU,
+                        // and Triton controllers require DLE support.
+                        //
+                        // 517 is basically a "magic number" as far as Android's bluetooth code is concerned, so do not change
+                        // this value. It is functionally "please enable data length extensions" on some Android builds.
+                        mGatt.requestMtu(517);
+                    }
 
-                probeService(this);
+                    probeService(this);
+                }
             }
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
         }
     }
 
     @Override
     public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        //Log.v(TAG, "onCharacteristicRead status=" + status + " uuid=" + characteristic.getUuid());
+        if (mManager == null || gatt != mGatt) return;
+        //AppLog.v(TAG, "onCharacteristicRead status=" + status + " uuid=" + characteristic.getUuid());
 
         if (characteristic.getUuid().equals(reportCharacteristic) && !mFrozen) {
             mManager.HIDDeviceReportResponse(getId(), characteristic.getValue());
@@ -594,12 +654,13 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        //Log.v(TAG, "onCharacteristicWrite status=" + status + " uuid=" + characteristic.getUuid());
+        if (mManager == null || gatt != mGatt) return;
+        //AppLog.v(TAG, "onCharacteristicWrite status=" + status + " uuid=" + characteristic.getUuid());
 
         if (characteristic.getUuid().equals(reportCharacteristic)) {
             // Only register controller with the native side once it has been fully configured
             if (!isRegistered()) {
-                Log.v(TAG, "Registering Steam Controller with ID: " + getId());
+                AppLog.v(TAG, "Registering Steam Controller with ID: " + getId());
                 mManager.HIDDeviceConnected(getId(), getIdentifier(), getVendorId(), getProductId(), getSerialNumber(), getVersion(), getManufacturerName(), getProductName(), 0, 0, 0, 0, true, mReportId);
                 setRegistered();
             }
@@ -610,8 +671,9 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+        if (mManager == null || gatt != mGatt) return;
     // Enable this for verbose logging of controller input reports
-        //Log.v(TAG, "onCharacteristicChanged uuid=" + characteristic.getUuid() + " data=" + HexDump.dumpHexString(characteristic.getValue()));
+        //AppLog.v(TAG, "onCharacteristicChanged uuid=" + characteristic.getUuid() + " data=" + HexDump.dumpHexString(characteristic.getValue()));
 
         if (characteristic.getUuid().equals(mInputCharacteristic) && !mFrozen) {
             mHasSeenInputUpdate = true;
@@ -621,35 +683,42 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void onDescriptorRead(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-        //Log.v(TAG, "onDescriptorRead status=" + status);
+        //AppLog.v(TAG, "onDescriptorRead status=" + status);
     }
 
     private void enableValveMode()
     {
-        BluetoothGattService valveService = mGatt.getService(steamControllerService);
-        if (valveService == null)
-            return;
+        if (mGatt == null || mManager == null) return;
+        try {
+            BluetoothGattService valveService = mGatt.getService(steamControllerService);
+            if (valveService == null)
+                return;
 
-        BluetoothGattCharacteristic reportChr = valveService.getCharacteristic(reportCharacteristic);
-        if (reportChr != null) {
-            if (getProductId() == TRITON_BLE_PID) {
-                // For Triton we just mark things registered.
-                Log.v(TAG, "Registering Triton Steam Controller with ID: " + getId());
-                mManager.HIDDeviceConnected(getId(), getIdentifier(), getVendorId(), getProductId(), getSerialNumber(), getVersion(), getManufacturerName(), getProductName(), 0, 0, 0, 0, true, mReportId);
-                setRegistered();
-            } else {
-                // For the original controller, we need to manually enter Valve mode.
-                Log.v(TAG, "Writing report characteristic to enter valve mode");
-                reportChr.setValue(enterValveMode);
-                mGatt.writeCharacteristic(reportChr);
+            BluetoothGattCharacteristic reportChr = valveService.getCharacteristic(reportCharacteristic);
+            if (reportChr != null) {
+                if (getProductId() == TRITON_BLE_PID) {
+                    // For Triton we just mark things registered.
+                    AppLog.v(TAG, "Registering Triton Steam Controller with ID: " + getId());
+                    mManager.HIDDeviceConnected(getId(), getIdentifier(), getVendorId(), getProductId(), getSerialNumber(), getVersion(), getManufacturerName(), getProductName(), 0, 0, 0, 0, true, mReportId);
+                    setRegistered();
+                } else {
+                    // For the original controller, we need to manually enter Valve mode.
+                    AppLog.v(TAG, "Writing report characteristic to enter valve mode");
+                    reportChr.setValue(enterValveMode);
+                    mGatt.writeCharacteristic(reportChr);
+                }
             }
+
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
         }
     }
 
     @Override
     public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+        if (mManager == null || gatt != mGatt) return;
         BluetoothGattCharacteristic chr = descriptor.getCharacteristic();
-        //Log.v(TAG, "onDescriptorWrite status=" + status + " uuid=" + chr.getUuid() + " descriptor=" + descriptor.getUuid());
+        //AppLog.v(TAG, "onDescriptorWrite status=" + status + " uuid=" + chr.getUuid() + " descriptor=" + descriptor.getUuid());
 
         if (chr.getUuid().equals(mInputCharacteristic)) {
             mHasEnabledNotifications = true;
@@ -661,17 +730,17 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void onReliableWriteCompleted(BluetoothGatt gatt, int status) {
-        //Log.v(TAG, "onReliableWriteCompleted status=" + status);
+        //AppLog.v(TAG, "onReliableWriteCompleted status=" + status);
     }
 
     @Override
     public void onReadRemoteRssi(BluetoothGatt gatt, int rssi, int status) {
-        //Log.v(TAG, "onReadRemoteRssi status=" + status);
+        //AppLog.v(TAG, "onReadRemoteRssi status=" + status);
     }
 
     @Override
     public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
-        //Log.v(TAG, "onMtuChanged status=" + status);
+        //AppLog.v(TAG, "onMtuChanged status=" + status);
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -692,20 +761,27 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public int getProductId() {
-        if (mProductId > 0) {
-            // We've already set a product ID.
+        try {
+            if (mProductId > 0) {
+                // We've already set a product ID.
+                return mProductId;
+            }
+
+            String name = mDevice.getName();
+        if (name != null && name.startsWith("Steam Ctrl")) {
+                // We're a newer Triton device
+                mProductId = TRITON_BLE_PID;
+            } else {
+                // We're an OG Steam Controller
+                mProductId = D0G_BLE2_PID;
+            }
+
             return mProductId;
-        }
 
-        if (mDevice.getName().startsWith("Steam Ctrl")) {
-            // We're a newer Triton device
-            mProductId = TRITON_BLE_PID;
-        } else {
-            // We're an OG Steam Controller
-            mProductId = D0G_BLE2_PID;
+        } catch (SecurityException e) {
+            AppLog.w(TAG, "Bluetooth permission unavailable", e);
+            return D0G_BLE2_PID;
         }
-
-        return mProductId;
     }
 
     @Override
@@ -742,7 +818,7 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
     @Override
     public int writeReport(byte[] report, boolean feature) {
         if (!isRegistered()) {
-            Log.e(TAG, "Attempted writeReport before Steam Controller is registered!");
+            AppLog.e(TAG, "Attempted writeReport before Steam Controller is registered!");
             if (mIsConnected) {
                 probeService(this);
             }
@@ -752,13 +828,13 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
         if (feature) {
             // We need to skip the first byte, as that doesn't go over the air
             byte[] actual_report = Arrays.copyOfRange(report, 1, report.length - 1);
-            //Log.v(TAG, "writeFeatureReport " + HexDump.dumpHexString(actual_report));
+            //AppLog.v(TAG, "writeFeatureReport " + HexDump.dumpHexString(actual_report));
             writeCharacteristic(reportCharacteristic, actual_report);
             return report.length;
         } else {
             // If we're an original-recipe Steam Controller we just write to the characteristic directly.
             if (getProductId() == D0G_BLE2_PID) {
-                //Log.v(TAG, "writeOutputReport " + HexDump.dumpHexString(report));
+                //AppLog.v(TAG, "writeOutputReport " + HexDump.dumpHexString(report));
                 writeCharacteristic(reportCharacteristic, report);
                 return report.length;
             }
@@ -769,11 +845,11 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
                 BluetoothGattCharacteristic targetedReportCharacteristic = mOutputReportChars.get(reportId);
                 if (targetedReportCharacteristic != null) {
                     byte[] actual_report = Arrays.copyOfRange(report, 1, report.length - 1);
-                    //Log.v(TAG, "writeOutputReport 0x" + Integer.toString(reportId, 16) + " " + HexDump.dumpHexString(report));
+                    //AppLog.v(TAG, "writeOutputReport 0x" + Integer.toString(reportId, 16) + " " + HexDump.dumpHexString(report));
                     writeCharacteristic(targetedReportCharacteristic.getUuid(), actual_report);
                     return report.length;
                 } else {
-                    Log.w(TAG, "Got report write request for unknown report type 0x" + Integer.toString(reportId, 16));
+                    AppLog.w(TAG, "Got report write request for unknown report type 0x" + Integer.toString(reportId, 16));
                 }
             }
         }
@@ -784,7 +860,7 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
     @Override
     public boolean readReport(byte[] report, boolean feature) {
         if (!isRegistered()) {
-            Log.e(TAG, "Attempted readReport before Steam Controller is registered!");
+            AppLog.e(TAG, "Attempted readReport before Steam Controller is registered!");
             if (mIsConnected) {
                 probeService(this);
             }
@@ -811,19 +887,25 @@ class HIDDeviceBLESteamController extends BluetoothGattCallback implements HIDDe
 
     @Override
     public void shutdown() {
+        mHandler.removeCallbacksAndMessages(null);
         close();
-
         BluetoothGatt g = mGatt;
-        if (g != null) {
-            g.disconnect();
-            g.close();
-            mGatt = null;
-        }
+        mGatt = null;
         mManager = null;
         mIsRegistered = false;
         mIsConnected = false;
-        mOperations.clear();
+        synchronized (mOperations) {
+            mCurrentOperation = null;
+            mOperations.clear();
+        }
+        if (g != null) {
+            try { g.disconnect(); } catch (SecurityException e) {
+                AppLog.w(TAG, "Bluetooth permission unavailable", e);
+            }
+            try { g.close(); } catch (SecurityException e) {
+                AppLog.w(TAG, "Bluetooth permission unavailable", e);
+            }
+        }
     }
 
 }
-

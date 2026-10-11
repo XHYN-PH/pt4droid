@@ -56,16 +56,16 @@ public class SetupActivity extends Activity {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         mobileSettings = new MobileSettings(this,null);
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.rgb(8, 8, 9));
+        root.setBackground(MenuStyle.background());
         ScrollView scroll = new ScrollView(this);
         panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setGravity(Gravity.CENTER_HORIZONTAL);
-        int pad = dp(28);
+        panel.setGravity(Gravity.START);
+        int pad = dp(24);
         panel.setPadding(pad, pad, pad, pad);
         scroll.addView(panel, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.min(dp(640), getResources().getDisplayMetrics().widthPixels),
-                ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.min(dp(600), getResources().getDisplayMetrics().widthPixels),
+                ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START);
         root.addView(scroll, lp);
         setContentView(root);
         if (gameInstalled()) {
@@ -79,6 +79,7 @@ public class SetupActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        DisplayRefresh.apply(this,null);
         if(mobileSettings!=null)mobileSettings.resumeImport();
         // back from Android's permission screen: the files in Download are readable now
         if (waitingForAccess && gameInstalled()) {
@@ -90,14 +91,23 @@ public class SetupActivity extends Activity {
     // ---- screens
 
     @Override protected void onDestroy(){if(mobileSettings!=null)mobileSettings.detach();super.onDestroy();}
-    private void showReady(){panel.removeAllViews();title("P.T. Test");button("Start P.T.",v->startGame());button("Android settings",v->mobileSettings.show());button("Delete saves",v->mobileSettings.deleteSaves());button("Quit",v->finish());}
+    private void showReady(){
+        panel.removeAllViews();title("pt4droid");
+        text("P.T. • Android");
+        button("Continue",v->startGame()).requestFocus();
+        button("Settings",v->mobileSettings.show());
+        button("Game graphics",v->GameGraphicsSettings.open(this));
+        button("Delete saves",v->mobileSettings.deleteSaves());
+        button("Quit",v->finish());
+        TextView version=text("pt4droid • "+versionName());version.setTextSize(11);version.setPadding(0,dp(18),0,0);
+    }
+    private String versionName(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception ignored){return "test";}}
     private void showWelcome() {
         panel.removeAllViews();
-        title("P.T.");
+        title("pt4droid");
         text("This app needs your own copy of the game.\n\n"
                 + "Choose your P.T. .pkg file (a fake PKG made from your own dump). The setup takes the game files out of it "
-                + "once, which takes a minute or two and needs about 1.4 GB of free space. After that the game starts straight "
-                + "away every time.");
+                + "once, which takes a minute or two and needs about 1.4 GB of free space. After that you can start the game from the launcher.");
         Button pick = button("Choose your P.T. .pkg", v -> pickPackage());
         button("I already have the extracted files", v -> showExtractedFiles());
         button("Quit", v -> finish());
@@ -360,8 +370,8 @@ public class SetupActivity extends Activity {
         view.setText(text);
         view.setTextColor(Color.rgb(222, 218, 208));
         view.setTextSize(34);
-        view.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD));
-        view.setGravity(Gravity.CENTER);
+        view.setTypeface(Typeface.create("serif", Typeface.NORMAL));
+        view.setGravity(Gravity.START);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0, dp(12), 0, dp(18));
         panel.addView(view, lp);
@@ -382,25 +392,9 @@ public class SetupActivity extends Activity {
     private Button button(String label, View.OnClickListener onClick) {
         Button view = new Button(this);
         view.setText(label);
-        view.setAllCaps(false);
-        view.setTextSize(17);
-        view.setTextColor(Color.rgb(230, 226, 216));
-        view.setFocusable(true);
-        GradientDrawable normal = new GradientDrawable();
-        normal.setColor(Color.rgb(28, 28, 30));
-        normal.setCornerRadius(dp(6));
-        normal.setStroke(dp(2), Color.rgb(28, 28, 30));
-        GradientDrawable focused = new GradientDrawable();
-        focused.setColor(Color.rgb(44, 42, 40));
-        focused.setCornerRadius(dp(6));
-        focused.setStroke(dp(2), Color.rgb(200, 190, 170));
-        android.graphics.drawable.StateListDrawable states = new android.graphics.drawable.StateListDrawable();
-        states.addState(new int[] {android.R.attr.state_focused}, focused);
-        states.addState(new int[] {android.R.attr.state_pressed}, focused);
-        states.addState(new int[] {}, normal);
-        view.setBackground(states);
+        MenuStyle.button(view);
         view.setOnClickListener(onClick);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
         lp.setMargins(0, 0, 0, dp(12));
         panel.addView(view, lp);
         return view;

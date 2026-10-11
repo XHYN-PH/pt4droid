@@ -9,7 +9,7 @@ android {
     compileSdkVersion 35
     defaultConfig {
         applicationId project.findProperty("ptApplicationId") ?: "com.ptport.app.test"
-        manifestPlaceholders = [ptAppLabel: project.findProperty("ptAppLabel") ?: "P.T. Test"]
+        manifestPlaceholders = [ptAppLabel: project.findProperty("ptAppLabel") ?: "pt4droid"]
         minSdkVersion 29
         targetSdkVersion 35
         versionCode((project.findProperty('ptVersionCode') ?: '1') as int)
@@ -43,7 +43,7 @@ android {
         }
     }
     lint {
-        abortOnError = false
-        checkReleaseBuilds = false
+        abortOnError = true
+        checkReleaseBuilds = true
     }
 }

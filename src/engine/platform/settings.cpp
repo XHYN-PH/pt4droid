@@ -217,7 +217,7 @@ bool LoadAppSettings(const std::filesystem::path& path, AppSettings& out) {
     return true;
 }
 
-bool SaveAppSettings(const std::filesystem::path& path, const AppSettings& s) {
+std::string AppSettingsText(const AppSettings& s) {
     std::ostringstream text;
     text << "; P.T. port settings. The in-game options (brightness, subtitles, camera inversion) live in the save data.\n\n"
          << "[display]\n"
@@ -349,14 +349,29 @@ bool SaveAppSettings(const std::filesystem::path& path, const AppSettings& s) {
             text << folder << " = " << (enabled ? 1 : 0) << "\n";
         }
     }
+    return text.str();
+}
+
+bool SaveAppSettings(const std::filesystem::path& path, const AppSettings& s) {
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
-    std::ofstream out(path, std::ios::binary);
+#ifdef __ANDROID__
+    std::filesystem::path destination=path;destination+=".tmp";
+#else
+    const auto& destination=path;
+#endif
+    std::ofstream out(destination, std::ios::binary);
     if (!out) {
         LogWarn("settings: cannot write {}", pt::os::PathToUtf8(path));
         return false;
     }
-    out << text.str();
+    out << AppSettingsText(s);
+    out.close();
+    if(out.fail())return false;
+#ifdef __ANDROID__
+    std::filesystem::rename(destination,path,ec);
+    if(ec){LogWarn("settings: cannot replace {}: {}",pt::os::PathToUtf8(path),ec.message());return false;}
+#endif
     return true;
 }
 

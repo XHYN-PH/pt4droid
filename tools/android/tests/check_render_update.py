@@ -18,6 +18,7 @@ prefix=r'''#include <cstdio>
 #include <algorithm>
 #include "engine/render/mobile_bloom.h"
 #include "engine/platform/settings.h"
+#include "engine/platform/graphics_presets.h"
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 struct SDL_Window{}; SDL_Window window; void* native=reinterpret_cast<void*>(1);int width=2400,height=1080;
@@ -58,6 +59,7 @@ int main(){
  ApplyMobilePreset(app,1);assert(app.settings.display.fps_limit==0 && !app.settings.display.vsync && !app.renderer.vsync);assert(app.settings.graphics.shadow_quality==1 && app.settings.graphics.texture_detail==0);assert(!app.settings.graphics.bloom && !app.settings.graphics.reflections && !app.settings.graphics.ambient_occlusion);assert(app.settings.ray_tracing.shadows==0 && pt::android::scale==.5f);assert(app.textures.anisotropy==-1);
  app.renderer.ctx.device=reinterpret_cast<void*>(1);ApplyMobilePreset(app,2);assert(app.settings.display.fps_limit==60 && app.settings.graphics.bloom && app.settings.graphics.shadow_quality==2);assert(app.textures.anisotropy==2);
  app.settings.display.fps_limit=144;app.settings.graphics.shadow_quality=3;ApplyMobilePreset(app,0);assert(app.settings.display.fps_limit==144 && app.settings.graphics.shadow_quality==3);
+ app.settings.ray_tracing.shadows=2;ApplyMobilePreset(app,3);assert(app.settings.display.fps_limit==144 && pt::DetectGraphicsPreset(app.settings,false)==pt::GraphicsPreset::Original);assert(!app.settings.ray_tracing.shadows && app.graphics_calls==3);
  std::puts("Render checks passed: 2080 bloom variance/energy cases; 10000 stable SUBOPTIMAL frames; resize, rotation, window and surface loss; preset behavior");
 }
 '''
@@ -65,5 +67,5 @@ with tempfile.TemporaryDirectory() as tmp:
  t=Path(tmp);file=t/'render.cpp';file.write_text(prefix+policy+'\n'+preset+body)
  compiler=os.environ.get('CXX','g++');extra=os.environ.get('PT_TEST_CXX_FLAGS','')
  import shlex
- args=[compiler]+shlex.split(extra)+['-std=c++20','-D__ANDROID__','-I'+str(repo/'src'),'-I'+str(next((repo/'build/android/_deps').glob('*/include/vulkan/vulkan.h')).parents[1]),str(file),'-o',str(t/'check')]
+ args=[compiler]+shlex.split(extra)+['-std=c++20','-D__ANDROID__','-I'+str(repo/'src'),'-I'+str(next((repo/'build/android/_deps').glob('*/include/vulkan/vulkan.h')).parents[1]),str(file),str(repo/'src/engine/platform/graphics_presets.cpp'),'-o',str(t/'check')]
  subprocess.run(args,check=True);subprocess.run([str(t/'check')],check=True)

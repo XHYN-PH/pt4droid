@@ -32,6 +32,12 @@ void ConsumeLookDelta(float& dx, float& dy);
 void SetTouchControlsMode(int mode);
 int TouchControlsMode(int fallback);
 void OpenMobileSettings();
+void GameGraphicsPresetSelected(int preset);
+void GameGraphicsSettingsFailed(const std::string& message);
+void PublishGameGraphicsSettings(std::string text);
+bool ConsumeGameGraphicsChanges();
+std::filesystem::path GameGraphicsChangesFile();
+void InstallLogFilter();
 
 /* The second screen of a dual-screen handheld (AYN Thor and others; android/.../SecondScreen.java): the loop the player is on
    and the subtitle line playing now (empty for none), sent on only when one of them changes. Does nothing without one. */
@@ -51,8 +57,8 @@ void InstallCrashLog(const std::filesystem::path& path);
    list differs from the one copied last time. The engine reads them as ordinary files from there. */
 bool UnpackBundledAssets();
 
-/* The Vulkan driver chosen in DataDir()/driver.txt: "turnip" (the default, Mesa Turnip bundled in the APK and loaded
-   through libadrenotools) or "system" (the device's own driver). Returns the driver's vkGetInstanceProcAddr, or null for
+/* The Vulkan driver chosen in private driver.txt: "auto" (device policy), "turnip", "system", or an imported package.
+   Returns the driver's vkGetInstanceProcAddr, or null for
    the system loader; `name` says which one was taken. */
 PFN_vkGetInstanceProcAddr LoadVulkanDriver(std::string& name);
 

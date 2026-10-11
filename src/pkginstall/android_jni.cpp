@@ -4,12 +4,45 @@
 #include <jni.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 
 #include <string>
 
 #include "pkginstall/pkg_extract.h"
 
 namespace {
+
+std::atomic<bool> logging_enabled{false};
+__android_logger_function logd_logger=nullptr;
+void FilterLog(const __android_log_message* message){if(logging_enabled.load(std::memory_order_relaxed) && logd_logger)logd_logger(message);}
+
+void ConfigureLogging(bool enabled) {
+    logging_enabled.store(enabled,std::memory_order_relaxed);
+    setenv("PT_LOGS",enabled?"1":"0",1);
+    // Android 11+: filter process liblog output, including bundled native dependencies.
+    static void* library=dlopen("liblog.so",RTLD_NOW|RTLD_LOCAL);
+    static auto set_logger=reinterpret_cast<void(*)(__android_logger_function)>(library?dlsym(library,"__android_log_set_logger"):nullptr);
+    if(set_logger){
+        if(!logd_logger)logd_logger=reinterpret_cast<__android_logger_function>(dlsym(library,"__android_log_logd_logger"));
+        if(logd_logger)set_logger(FilterLog);
+    }
+    static int stdout_copy=dup(STDOUT_FILENO),stderr_copy=dup(STDERR_FILENO);
+    static bool redirected=false;
+    if(!enabled && !redirected){
+        std::fflush(stdout);std::fflush(stderr);
+        int null=open("/dev/null",O_WRONLY|O_CLOEXEC);
+        if(null>=0){dup2(null,STDOUT_FILENO);dup2(null,STDERR_FILENO);close(null);redirected=true;}
+    } else if(enabled && redirected){
+        std::fflush(stdout);std::fflush(stderr);
+        if(stdout_copy>=0)dup2(stdout_copy,STDOUT_FILENO);
+        if(stderr_copy>=0)dup2(stderr_copy,STDERR_FILENO);
+        redirected=false;
+    }
+}
 
 std::string Utf8(JNIEnv* env, jstring text) {
     if (!text) return {};
@@ -20,6 +53,8 @@ std::string Utf8(JNIEnv* env, jstring text) {
 }
 
 }  // namespace
+
+extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_PTApplication_nativeConfigureLogging(JNIEnv*,jclass,jboolean enabled){ConfigureLogging(enabled==JNI_TRUE);}
 
 // String nativeExtract(int fd, String destination): null when done, else the message for the player. Calls back
 // boolean onExtractProgress(long done, long total, String stage) on the same object; false cancels.
@@ -65,9 +100,11 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_ptport_app_SetupActivity_nativeExt
     });
     if (stage_text) env->DeleteLocalRef(stage_text);
     env->DeleteLocalRef(cls);
+    if(logging_enabled.load(std::memory_order_relaxed)) {
     __android_log_print(result.ok ? ANDROID_LOG_INFO : ANDROID_LOG_WARN, "pt", "setup: %s %s (%s)", result.ok ? "installed" : "failed",
                         result.content_id.c_str(), result.ok ? "ok" : result.error.c_str());
     for (const auto& w : result.warnings) __android_log_print(ANDROID_LOG_WARN, "pt", "setup: %s", w.c_str());
+    }
     if (result.ok) return nullptr;
     return env->NewStringUTF(result.cancelled ? "" : result.error.c_str());
 }

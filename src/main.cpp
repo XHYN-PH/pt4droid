@@ -70,6 +70,9 @@
 #include "engine/platform/sdl_diag.h"
 #include "engine/platform/user_data.h"
 #include "engine/platform/graphics_presets.h"
+#ifdef __ANDROID__
+#include "engine/platform/mobile_graphics.h"
+#endif
 #include "engine/platform/virtual_pad.h"
 #include "engine/voice/microphone.h"
 #include "engine/voice/voice_recognizer.h"
@@ -1305,10 +1308,44 @@ void ApplyGraphicsSettings(App& app) {
     // the lens flares' full screen ghosts (graphics.lens_ghosts): on draws them at the strength a shadPS4 sweep of the original
     // measured at the first corridor's lantern (+41 % peak lift, port scale 0.75); PT_FLARE_GHOSTS overrides it (rendering.md)
     pt::vfx::SetFlareGhostScale(g.lens_ghosts?0.75f:0.0f);
+#ifdef __ANDROID__
+    const auto& context = app.renderer.Context();
+    std::string reason = context.device ? context.ray_query_missing : "Start the game to check the selected driver's ray-query support";
+    std::replace(reason.begin(), reason.end(), '\n', ' ');
+    pt::android::PublishGameGraphicsSettings(pt::AppSettingsText(app.settings) + "\n[android_capabilities]\nray_tracing = " +
+        (context.ray_query_supported ? "1" : "0") + "\nray_reason = " + reason + "\n");
+#endif
 }
 
 #ifdef __ANDROID__
+void ApplyMobileGameGraphicsChanges(App& app) {
+    if (!pt::android::ConsumeGameGraphicsChanges()) return;
+    const auto path = pt::android::GameGraphicsChangesFile();
+    if (!pt::android::ApplyGameGraphicsOverrides(path, app.settings, app.renderer.Context().ray_query_supported)) {
+        pt::android::GameGraphicsSettingsFailed("Could not read saved graphics settings. Please retry.");
+        return;
+    }
+    ApplyGraphicsSettings(app);
+    app.renderer.SetVsync(app.settings.display.vsync);
+    if (app.renderer.Context().device) app.textures.SetAnisotropy(app.settings.graphics.anisotropy);
+    if (!app.settings_path.empty() && pt::SaveAppSettings(app.settings_path, app.settings)) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    } else {
+        pt::android::GameGraphicsSettingsFailed("Graphics changed, but could not be saved. They will be retried at the next start.");
+    }
+    std::string reason;
+    pt::android::GameGraphicsPresetSelected(static_cast<int>(pt::DetectGraphicsPreset(app.settings, app.scene.RayTracingSupported(reason))));
+}
+
 void ApplyMobilePreset(App& app, int profile) {
+    if(profile==3) {
+        pt::ApplyGraphicsPreset(app.settings,pt::GraphicsPreset::Original,false);
+        app.settings.network.check_updates=false;
+        ApplyGraphicsSettings(app);
+        if(app.renderer.Context().device)app.textures.SetAnisotropy(app.settings.graphics.anisotropy);
+        return;
+    }
     if (profile != 1 && profile != 2) return;
     auto& s=app.settings; auto& g=s.graphics;
     s.display.fps_limit=profile==1?0:60; s.display.vsync=false; s.display.hdr=false;
@@ -2198,6 +2235,10 @@ public:
 
     void Set(int id, int value) override {
         pt::AppSettings& s = app_.settings;
+#ifdef __ANDROID__
+        const auto previous_graphics=s.graphics;
+        const auto previous_ray_tracing=s.ray_tracing;
+#endif
         pt::UpscaleSettings& u = app_.scene.upscale;
         if (id >= kModFirst) {
             // saved for the next start; the mods in use stay as they were found
@@ -2432,6 +2473,12 @@ public:
             return;
         }
         ApplyGraphicsSettings(app_);
+#ifdef __ANDROID__
+        if(s.graphics!=previous_graphics || s.ray_tracing!=previous_ray_tracing){
+            std::string reason;
+            pt::android::GameGraphicsPresetSelected(static_cast<int>(pt::DetectGraphicsPreset(s,app_.scene.RayTracingSupported(reason))));
+        }
+#endif
         Save();
     }
 
@@ -3123,7 +3170,8 @@ private:
         pt::game::PcSettingSection quality{"pc_graphics_quality",0,{}};
         auto preset=Row(kGraphicsPreset,"pc_graphics_preset",{"pc_preset_low","pc_preset_original","pc_preset_high","pc_preset_ultra","pc_preset_custom"},
                         static_cast<int>(pt::DetectGraphicsPreset(s,supported)),"pc_note_preset");
-        preset.wrap=false;quality.rows.push_back(std::move(preset));
+        // Custom is an observation of the current settings; allow accept/tap to cycle out of it.
+        preset.wrap=true;quality.rows.push_back(std::move(preset));
         // one row per feature: its values run from the original's own technique to the ray traced ones, so no feature
         // appears twice (the page had a shadow, ambient occlusion and reflection row in both a standard and a ray tracing
         // section, and a master ray tracing switch over them)
@@ -3335,6 +3383,9 @@ private:
     }
 
     void Save() {
+#ifdef __ANDROID__
+        ApplyGraphicsSettings(app_);
+#endif
         if (!app_.settings_path.empty()) {
             pt::SaveAppSettings(app_.settings_path, app_.settings);
         }
@@ -3354,6 +3405,7 @@ bool PumpEvents(App& app, pt::InputDevice* input, bool& running, pt::KeyPressLat
         ApplyMobilePreset(app,profile);
         if(!app.settings_path.empty()) pt::SaveAppSettings(app.settings_path,app.settings);
     }
+    ApplyMobileGameGraphicsChanges(app);
     pt::android::PumpTouchControls();
 #endif
     SDL_Event event;
@@ -4379,10 +4431,11 @@ int RunGame(App& app, pt::Vfs& vfs) {
             if (options.audio_offline && sound.Ready() && !device_periods) {
                 render_offline(static_cast<uint32_t>(48000.0f * step + 0.5f));
             }
-            if (tick_csv) {
+            if (tick_csv && pt::LogEnabled()) {
                 static std::vector<std::array<float, 4>> ticks_trace;
                 static const bool registered = [] {
                     std::atexit([] {
+                        if (!pt::LogEnabled()) return;
                         if (FILE* f = std::fopen(std::getenv("PT_TICK_CSV"), "w")) {
                             std::fprintf(f, "tick,game_ms,vfx_ms,ui_ms,audio_ms\n");
                             for (size_t i = 0; i < ticks_trace.size(); ++i) {
@@ -4886,7 +4939,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             struct PartsTrace {
                 std::vector<std::array<float, 7>> rows;
                 ~PartsTrace() {
-                    if (const char* path = std::getenv("PT_PARTS_CSV"); path && !rows.empty()) {
+                    if (const char* path = std::getenv("PT_PARTS_CSV"); path && !rows.empty() && pt::LogEnabled()) {
                         if (FILE* f = std::fopen(path, "w")) {
                             std::fprintf(f, "frame,wait_ms,build_ms,vfx_ms,render_ms,submit_ms,tick,loop_ms\n");
                             for (size_t i = 0; i < rows.size(); ++i) {
@@ -4926,7 +4979,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             last_render_frame = frame;
             const auto part_t5 = std::chrono::steady_clock::now();
             app.renderer.EndFrame(app.window != nullptr);
-            if (parts_csv) {
+            if (parts_csv && pt::LogEnabled()) {
                 parts_row[3] = parts_ms(part_t5 - part_t4).count();
                 parts_last_end = std::chrono::steady_clock::now();
                 parts_row[4] = parts_ms(parts_last_end - part_t5).count();
@@ -5162,13 +5215,16 @@ int main(int argc, char** argv) {
 #endif
 #ifdef __ANDROID__
     // landscape only, and the shaders and fonts out of the APK into the data folder before anything looks for them
+    pt::android::InstallLogFilter();
     /* one fixed landscape: following the motion sensor between the two landscapes flipped the picture when a dual screen
        handheld (AYN Thor) was held at an angle */
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft");
     // the log (and a crash report) where the player can reach them: Download/PT-logs when the app may write there
-    pt::LogSetFile(pt::android::LogDir() / "pt.log");
-    pt::android::InstallCrashLog(pt::android::LogDir() / "pt-crash.txt");
-    pt::LogInfo("android: log in {}", pt::android::LogDir().string());
+    if(pt::LogEnabled()) {
+        pt::LogSetFile(pt::android::LogDir() / "pt.log");
+        pt::android::InstallCrashLog(pt::android::LogDir() / "pt-crash.txt");
+        pt::LogInfo("android: log in {}", pt::android::LogDir().string());
+    }
     pt::android::UnpackBundledAssets();
 #endif
     App app;
@@ -5211,13 +5267,16 @@ int main(int argc, char** argv) {
         if (options.headless) {
             return;
         }
-        const std::string text = what + "\n\n" + advice + "\n\nDetails are in " + pt::os::PathToUtf8(std::filesystem::absolute(log_path)) +
-                                 "; please attach that file when you report this.";
+        const std::string diagnostics=pt::LogEnabled()?"Details are in "+pt::os::PathToUtf8(std::filesystem::absolute(log_path))+"; please attach that file when you report this.":
+                                      "Enable logs in pt4droid settings and retry to collect diagnostics.";
+        const std::string text = what + "\n\n" + advice + "\n\n"+diagnostics;
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "P.T. could not start", text.c_str(), nullptr);
     };
 #ifdef _WIN32
     const std::string driver_advice = "Install the latest graphics driver from NVIDIA, AMD or Intel (a clean reinstall fixed this for other "
                                       "players), and close overlays such as RivaTuner or MSI Afterburner. P.T. needs a GPU with Vulkan 1.3.";
+#elif defined(__ANDROID__)
+    const std::string driver_advice="Choose Automatic or System Vulkan in pt4droid settings. Turnip drivers need a supported Adreno GPU. The renderer requires Vulkan 1.3.";
 #else
     const std::string driver_advice = "Make sure your graphics driver provides Vulkan 1.3 (Mesa 23 or newer, or the NVIDIA driver) and that "
                                       "P.T. runs inside your desktop session.";
@@ -5500,6 +5559,10 @@ int main(int argc, char** argv) {
         app.renderer.Context().CheckDeviceLost(VK_ERROR_DEVICE_LOST, "PT_TEST_CRASH");
     }
     if (renderer_ready && app.textures.Init(app.renderer.Context()) && app.scene.Init(app.renderer, app.textures)) {
+#ifdef __ANDROID__
+        ApplyMobileGameGraphicsChanges(app);
+        ApplyGraphicsSettings(app);
+#endif
         app.textures.SetAnisotropy(AnisotropyFromApp(app.settings));
         app.vfs = &vfs;
         app.texture_runtime = pt::ExecutableDir() / "texture-tools";

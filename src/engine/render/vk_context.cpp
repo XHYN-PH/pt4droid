@@ -309,6 +309,7 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
                     best_score = score;
                     physical = candidate;
                     queue_family = i;
+                    timestamp_bits = families[i].timestampValidBits;
                     properties = props;
                 }
                 break;
@@ -798,27 +799,32 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
     swapchain.extent = extent;
     swapchain.min_image_count = image_count;
     uint32_t count = 0;
+    VkResult images_result=VK_SUCCESS;
     if (swapchain_owner_) {
-        swapchain_owner_->SwapchainImages(handle, &count, nullptr);
+        images_result=swapchain_owner_->SwapchainImages(handle, &count, nullptr);
+        if(!Check(images_result,"swapchain image count") || count==0){DestroySwapchain();swapchain_refused=true;return false;}
         swapchain.images.resize(count);
-        swapchain_owner_->SwapchainImages(handle, &count, swapchain.images.data());
+        images_result=swapchain_owner_->SwapchainImages(handle, &count, swapchain.images.data());
     } else {
-        vkGetSwapchainImagesKHR(device, handle, &count, nullptr);
+        images_result=vkGetSwapchainImagesKHR(device, handle, &count, nullptr);
+        if(!Check(images_result,"swapchain image count") || count==0){DestroySwapchain();swapchain_refused=true;return false;}
         swapchain.images.resize(count);
-        vkGetSwapchainImagesKHR(device, handle, &count, swapchain.images.data());
+        images_result=vkGetSwapchainImagesKHR(device, handle, &count, swapchain.images.data());
     }
+    if(!Check(images_result,"swapchain images") || count==0){DestroySwapchain();swapchain_refused=true;return false;}
+    swapchain.images.resize(count);
     for (VkImage image : swapchain.images) {
         VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         view_info.image = image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = chosen.format;
         view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VkImageView view;
-        vkCreateImageView(device, &view_info, nullptr, &view);
+        VkImageView view=VK_NULL_HANDLE;
+        if(!Check(vkCreateImageView(device,&view_info,nullptr,&view),"swapchain image view")){DestroySwapchain();swapchain_refused=true;return false;}
         swapchain.views.push_back(view);
         VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VkSemaphore semaphore;
-        vkCreateSemaphore(device, &semaphore_info, nullptr, &semaphore);
+        VkSemaphore semaphore=VK_NULL_HANDLE;
+        if(!Check(vkCreateSemaphore(device,&semaphore_info,nullptr,&semaphore),"swapchain presentation semaphore")){DestroySwapchain();swapchain_refused=true;return false;}
         swapchain.render_finished.push_back(semaphore);
     }
     return true;

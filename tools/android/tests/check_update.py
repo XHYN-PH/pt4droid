@@ -10,6 +10,7 @@ driver=Path(os.environ.get('PT_TEST_DRIVER_SO',str(workspace/'recovery/apk/lib/a
 with tempfile.TemporaryDirectory() as tmp:
  t=Path(tmp)
  stubs={
+ 'com/ptport/app/AppLog.java':'''package com.ptport.app;import android.content.Context;public final class AppLog{static void append(Context c,String name,String text){}}''',
  'android/content/Context.java':'''package android.content;import java.io.File;public abstract class Context{public Context getApplicationContext(){return this;}public abstract File getFilesDir();public File getExternalFilesDir(String x){return getFilesDir();}public abstract ContentResolver getContentResolver();}''',
  'android/content/ContentResolver.java':'''package android.content;import android.net.Uri;import android.os.CancellationSignal;import android.content.res.AssetFileDescriptor;import java.io.IOException;public abstract class ContentResolver{public abstract AssetFileDescriptor openAssetFileDescriptor(Uri u,String m,CancellationSignal c)throws IOException;}''',
  'android/content/res/AssetFileDescriptor.java':'''package android.content.res;import java.io.*;public class AssetFileDescriptor implements AutoCloseable{public final File file;public AssetFileDescriptor(File f){file=f;}public long getLength(){return file.length();}public InputStream createInputStream()throws IOException{return new FileInputStream(file);}public void close()throws IOException{}}''',

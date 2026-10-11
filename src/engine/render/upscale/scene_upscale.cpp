@@ -355,13 +355,15 @@ void SceneRenderer::RecordOpaqueSnapshot(VkCommandBuffer cmd, RenderTarget& outp
     vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, opaque_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                    &copy);
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&opaque_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&output, false, {}}}, &depth_, true, false);
 }
 
 void SceneRenderer::RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& view) {
     FrameSlot& slot = slots_[renderer_->FrameIndex()];
-    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 0);
+    if(queries_ && slot.upscale_queries)vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 0);
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}, {&motion_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&motion_, false, {}}}, &depth_, true, false);
     gpu::PassPush push;
     push.ids = glm::uvec4(0, 0, 0, view.index);
@@ -373,11 +375,9 @@ void SceneRenderer::RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& vi
         if (d.previous_model == gpu::kInvalid || sub.pass != RenderPass::Opaque || sub.kind != gpu::kKindDeferred || !Visible(d, view)) {
             continue;
         }
-        vkCmdSetCullMode(cmd, sub.double_sided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
-        vkCmdSetFrontFace(cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE);
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &d.mesh->vertices.buffer, &offset);
-        vkCmdBindIndexBuffer(cmd, d.mesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+        mesh_draw_state_.Bind(cmd, d.mesh->vertices.buffer, d.mesh->indices.buffer,
+                              sub.double_sided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT,
+                              VK_FRONT_FACE_COUNTER_CLOCKWISE);
         gpu::DrawPush draw;
         draw.model = d.transform;
         draw.ids = glm::uvec4(view.index, d.material, motion_view_, sub.skinned ? d.skin_base : gpu::kInvalid);
@@ -392,6 +392,7 @@ void SceneRenderer::RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& vi
                      {&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&opaque_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&reactive_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&reactive_, false, {}}});
     push = gpu::PassPush{};
     push.ids = glm::uvec4(0, 0, 0, view.index);
@@ -454,6 +455,7 @@ void SceneRenderer::RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& vi
                          {&diffuse_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                          {&opaque_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                          {&handy_factor_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
         BeginPass(cmd, extent_, {{&opaque_, false, {}}, {&handy_factor_, false, {}}});
         gpu::PassPush demod;
         demod.ids = glm::uvec4(view.index, handy, handy_shadow ? 1u : 0u, 0u);
@@ -462,12 +464,12 @@ void SceneRenderer::RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& vi
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&opaque_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&handy_factor_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     }
-    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 1);
+    if(queries_ && slot.upscale_queries)vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 1);
 }
 
 void SceneRenderer::RecordUpscale(VkCommandBuffer cmd, float dt) {
     FrameSlot& slot = slots_[renderer_->FrameIndex()];
-    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 2);
+    if(queries_ && slot.upscale_queries)vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 2);
     UseTargets(cmd, {{&exposure_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
     VkClearColorValue value{};
     value.float32[0] = exposure_;
@@ -551,6 +553,7 @@ void SceneRenderer::RecordUpscale(VkCommandBuffer cmd, float dt) {
                      {&post_hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&post_depth_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&post_object_velocity_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
     BeginPass(cmd, output_extent_, {{&post_hdr_, false, {}}, {&post_depth_, false, {}}, {&post_object_velocity_, false, {}}});
     gpu::PassPush push;
     const bool warp = up_.warp_test && up_.warp_history && !up_.reset;
@@ -575,12 +578,12 @@ void SceneRenderer::RecordUpscale(VkCommandBuffer cmd, float dt) {
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&upscaled_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
         up_.warp_history = true;
     }
-    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 3);
-    slot.upscale_timed = true;
+    if(queries_ && slot.upscale_queries)vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 3);
+    slot.upscale_timed = queries_ && slot.upscale_queries;
 }
 
 void SceneRenderer::ReadUpscaleTimestamps(FrameSlot& slot) {
-    if (!slot.upscale_timed) {
+    if (!slot.upscale_timed || !LogEnabled()) {
         return;
     }
     slot.upscale_timed = false;

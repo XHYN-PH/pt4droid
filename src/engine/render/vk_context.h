@@ -92,6 +92,7 @@ public:
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
     std::filesystem::path pipeline_cache_dir;
     uint32_t queue_family = 0;
+    uint32_t timestamp_bits = 0;
     VkQueue queue = VK_NULL_HANDLE;
     VmaAllocator allocator = nullptr;
     Swapchain swapchain;

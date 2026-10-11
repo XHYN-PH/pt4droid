@@ -11,11 +11,14 @@
 #include "engine/ui/uif.h"
 #include "game/ui/pc_settings.h"
 
+namespace pt::ui {class UiBatch;}
+
 namespace pt::game {
 
 class Game;
 class UifView;
 struct MenuInput;
+struct UiCanvas;
 
 class PcSettingsPage {
 public:
@@ -31,6 +34,7 @@ public:
     void SetFlash(const ui::UiaAnimation* animation) { flash_animation_ = animation; }
     void Open(PcSettingsSource* source);
     void Refresh();
+    void DrawFocus(ui::UiBatch& batch,const UiCanvas& canvas) const;
     Result Update(Game& game, const MenuInput& input, float dt);
     void Step(bool active);
     void Apply(UifView& view, int language) const;

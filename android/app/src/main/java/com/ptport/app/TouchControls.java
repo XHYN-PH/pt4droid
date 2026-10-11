@@ -206,7 +206,7 @@ public class TouchControls extends View {
                 i++;
             } else {
                 this.opacity = clamp(this.prefs.getFloat("opacity", this.opacity), 0.15f, 1.0f);
-                this.sensitivity = clamp(this.prefs.getFloat("sensitivity", this.sensitivity), 0.25f, 2.0f);
+                this.sensitivity = clamp(this.prefs.getFloat("sensitivity", this.sensitivity), 0.25f, 3.0f);
                 this.deadZone = clamp(this.prefs.getFloat("dead_zone", this.deadZone), 0.0f, 0.3f);
                 this.floating = this.prefs.getBoolean("floating", true);
                 layout();
@@ -296,7 +296,7 @@ public class TouchControls extends View {
     void setMode(int i) {
         this.mode = Math.max(0, Math.min(2, i));
         releaseAll();
-        setVisibility((this.mode != 1 || this.editing) ? 0 : 8);
+        setVisibility((this.mode != 1 || this.editing) ? View.VISIBLE : View.GONE);
         int i2 = this.mode;
         if (i2 == 1) {
             setShown(false);
@@ -376,7 +376,7 @@ public class TouchControls extends View {
     }
 
     static boolean isFingerEvent(MotionEvent motionEvent) {
-        return motionEvent.isFromSource(4098) && !motionEvent.isFromSource(8194) && motionEvent.getToolType(motionEvent.getActionIndex()) == 1;
+        return motionEvent.isFromSource(4098) && !motionEvent.isFromSource(8194) && motionEvent.getToolType(motionEvent.getActionIndex()) == MotionEvent.TOOL_TYPE_FINGER;
     }
 
     /* JADX WARN: Removed duplicated region for block: B:46:0x008b  */
@@ -387,7 +387,7 @@ public class TouchControls extends View {
     */
     public boolean onTouchEvent(MotionEvent event) {
         int action=event.getActionMasked(), index=event.getActionIndex();
-        if(action==MotionEvent.ACTION_CANCEL && anyFingerDown()) { releaseAll(); return true; }
+        if(action==MotionEvent.ACTION_CANCEL){if(editing)return editEvent(event);if(anyFingerDown()){releaseAll();return true;}return false;}
         if(!isFingerEvent(event) || (mode==1 && !editing))return false;
         if(editing)return editEvent(event);
         removeCallbacks(hideIdle);if(!shown)setShown(true);
@@ -508,7 +508,8 @@ public class TouchControls extends View {
         this.editing = true;
         this.selected = -1;
         this.editPointer = -1;
-        setVisibility(0);
+        this.toolbarPressed = -1;
+        setVisibility(View.VISIBLE);
         setShown(true);
         layout();
     }
@@ -538,72 +539,32 @@ public class TouchControls extends View {
         }
     }
 
-    private boolean editEvent(MotionEvent motionEvent) {
-        int actionMasked = motionEvent.getActionMasked();
-        int actionIndex = motionEvent.getActionIndex();
-        int i = 0;
-        if (actionMasked == 0) {
-            this.editPointer = motionEvent.getPointerId(0);
-            this.toolbarPressed = -1;
-            int i2 = 0;
-            while (true) {
-                RectF[] rectFArr = this.toolbar;
-                if (i2 >= rectFArr.length) {
-                    this.selected = -1;
-                    while (true) {
-                        Control[] controlArr = this.controls;
-                        if (i >= controlArr.length) {
-                            break;
-                        }
-                        if (controlArr[i].area.contains(motionEvent.getX(), motionEvent.getY())) {
-                            this.selected = i;
-                            break;
-                        }
-                        i++;
-                    }
-                    int i3 = this.selected;
-                    if (i3 >= 0) {
-                        this.dragDx = this.controls[i3].area.centerX() - motionEvent.getX();
-                        this.dragDy = this.controls[this.selected].area.centerY() - motionEvent.getY();
-                    }
-                } else {
-                    if (rectFArr[i2].contains(motionEvent.getX(), motionEvent.getY())) {
-                        this.toolbarPressed = i2;
-                        return true;
-                    }
-                    i2++;
-                }
-            }
-        } else if (actionMasked == 2 && this.toolbarPressed < 0 && this.selected >= 0) {
-            int iFindPointerIndex = motionEvent.findPointerIndex(this.editPointer);
-            if (iFindPointerIndex >= 0) {
-                this.controls[this.selected].nx = clamp(((motionEvent.getX(iFindPointerIndex) + this.dragDx) - this.safe.left) / this.safe.width(), 0.0f, 1.0f);
-                this.controls[this.selected].ny = clamp(((motionEvent.getY(iFindPointerIndex) + this.dragDy) - this.safe.top) / this.safe.height(), 0.0f, 1.0f);
+    private boolean editEvent(MotionEvent event) {
+        int action=event.getActionMasked(),index=event.getActionIndex();
+        if(action==MotionEvent.ACTION_CANCEL){editPointer=-1;toolbarPressed=-1;invalidate();return true;}
+        if(action==MotionEvent.ACTION_DOWN) {
+            editPointer=event.getPointerId(index);toolbarPressed=-1;selected=-1;
+            float x=event.getX(index),y=event.getY(index);
+            for(int i=0;i<toolbar.length;i++)if(toolbar[i].contains(x,y)){toolbarPressed=i;invalidate();return true;}
+            for(int i=controls.length-1;i>=0;i--)if(controls[i].area.contains(x,y)){selected=i;break;}
+            if(selected>=0){dragDx=controls[selected].area.centerX()-x;dragDy=controls[selected].area.centerY()-y;}
+        } else if(action==MotionEvent.ACTION_MOVE && toolbarPressed<0 && selected>=0) {
+            int pointer=event.findPointerIndex(editPointer);
+            if(pointer>=0 && safe.width()>0 && safe.height()>0) {
+                controls[selected].nx=clamp((event.getX(pointer)+dragDx-safe.left)/safe.width(),0f,1f);
+                controls[selected].ny=clamp((event.getY(pointer)+dragDy-safe.top)/safe.height(),0f,1f);
                 layout();
             }
-        } else if ((actionMasked == 1 || actionMasked == 6) && motionEvent.getPointerId(actionIndex) == this.editPointer) {
-            int i4 = this.toolbarPressed;
-            if (i4 >= 0 && this.toolbar[i4].contains(motionEvent.getX(actionIndex), motionEvent.getY(actionIndex))) {
-                int i5 = this.toolbarPressed;
-                if (i5 == 0) {
-                    finishEdit(true);
-                } else if (i5 == 1) {
-                    finishEdit(false);
-                } else if (i5 == 2) {
-                    showEditorOptions();
-                } else {
-                    defaults();
-                    layout();
-                }
+        } else if((action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP) && event.getPointerId(index)==editPointer) {
+            int pressed=toolbarPressed;editPointer=-1;toolbarPressed=-1;
+            if(pressed>=0 && toolbar[pressed].contains(event.getX(index),event.getY(index))) {
+                if(pressed==0)finishEdit(true);
+                else if(pressed==1)finishEdit(false);
+                else if(pressed==2)showEditorOptions();
+                else {defaults();selected=-1;layout();}
             }
-            this.editPointer = -1;
-            this.toolbarPressed = -1;
-        } else if (actionMasked == 3) {
-            this.editPointer = -1;
-            this.toolbarPressed = -1;
         }
-        invalidate();
-        return true;
+        invalidate();return true;
     }
 
     private void showEditorOptions() {
@@ -651,7 +612,7 @@ public class TouchControls extends View {
                 TouchControls.this.m31lambda$showEditorOptions$3$comptportappTouchControls(i2);
             }
         });
-        MobileSettings.slider(linearLayoutColumn, "Look sensitivity", Math.round((this.sensitivity - 0.25f) * 100.0f), 175, new IntConsumer() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda4
+        MobileSettings.slider(linearLayoutColumn, "Look sensitivity", Math.round((this.sensitivity - 0.25f) * 100.0f), 275, new IntConsumer() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda4
             @Override // java.util.function.IntConsumer
             public final void accept(int i2) {
                 TouchControls.this.m32lambda$showEditorOptions$4$comptportappTouchControls(i2);
