@@ -57,6 +57,7 @@
 #include "engine/render/model_cache.h"
 #include "engine/render/renderer.h"
 #include "engine/render/scene_renderer.h"
+#include "engine/render/render_timing.h"
 #include "engine/render/texture_manager.h"
 #include "engine/render/upscale/frame_generation.h"
 #include "engine/render/upscale/streamline.h"
@@ -3756,6 +3757,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     pt::game::VfxScene vfx_scene;
     if (vfx_pass.Init(app.renderer, app.textures, vfs)) {
         app.scene.vfx_forward = [&vfx_pass](const pt::SceneVfxContext& c) { vfx_pass.RecordForward(c); };
+        app.scene.vfx_offscreen_available = [&vfx_pass] { return vfx_pass.HasOffscreenDraws(); };
         app.scene.vfx_filter = [&vfx_pass](const pt::SceneFilterContext& c) { vfx_pass.RecordFilter(c); };
     }
     pt::game::RenderSceneBuilder scene_builder;
@@ -5117,40 +5119,61 @@ int RunGame(App& app, pt::Vfs& vfs) {
         if (status_log) {
             static auto status_start = std::chrono::steady_clock::now();
             static uint64_t status_frames = 0;
-            static double status_gpu = 0.0;
-            ++status_frames;
-            status_gpu += app.scene.Stats().gpu_ms;
-            const auto status_now = std::chrono::steady_clock::now();
-            const double status_seconds = std::chrono::duration<double>(status_now - status_start).count();
-            if (status_seconds >= 10.0) {
-                VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
-                vmaGetHeapBudgets(app.renderer.Context().allocator, budgets);
-                const VkPhysicalDeviceMemoryProperties* memory = nullptr;
-                vmaGetMemoryProperties(app.renderer.Context().allocator, &memory);
-                double used = 0.0;
-                double budget = 0.0;
-                for (uint32_t h = 0; memory && h < memory->memoryHeapCount; ++h) {
-                    if (memory->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
-                        used += static_cast<double>(budgets[h].usage);
-                        budget += static_cast<double>(budgets[h].budget);
-                    }
-                }
-                const VkExtent2D render_extent = app.renderer.RenderExtent();
-                pt::LogInfo("status: {:.0f} fps, gpu {:.2f} ms, vram {:.0f} of {:.0f} MB, {}x{}, upscaler {} {}, frame generation {}, vsync {}, "
-                            "fps limit {}, floor {}{}",
-                            status_frames / status_seconds, status_gpu / std::max<uint64_t>(status_frames, 1), used / 1048576.0,
-                            budget / 1048576.0, render_extent.width, render_extent.height, app.settings.upscaling.upscaler,
-                            app.settings.upscaling.quality, app.settings.upscaling.frame_generation,
-                            app.settings.display.vsync ? "on" : "off", app.settings.display.fps_limit, game.Floor().CurrentFloorName(),
-                            ui_ready && ui.MenuOpen() ? ", menu open" : "");
-#ifdef __ANDROID__
-                const auto& timings=app.scene.Stats();
-                pt::LogInfo("mobile passes: shadows {:.2f}, mirror {:.2f}, gbuffer {:.2f}, lighting/AO {:.2f}, compose {:.2f}, post {:.2f} ms; bloom {:.2f}, reflections {:.2f}, renderer CPU {:.2f} ms",
-                    timings.pass_ms[0],timings.pass_ms[1],timings.pass_ms[2],timings.pass_ms[3],timings.pass_ms[4],timings.pass_ms[5],timings.part_ms[5],timings.part_ms[3],timings.cpu_ms);
-#endif
-                status_start = status_now;
+            static pt::RenderTimingWindow timings;
+            static bool diagnostics_active = false;
+            const bool diagnostics = pt::LogEnabled();
+            if (diagnostics != diagnostics_active) {
+                status_start = std::chrono::steady_clock::now();
                 status_frames = 0;
-                status_gpu = 0.0;
+                timings.Reset();
+                diagnostics_active = diagnostics;
+            }
+            if (diagnostics) {
+                ++status_frames;
+                timings.AddGpu(app.scene.Stats());
+                timings.AddCpu(app.scene.Stats());
+                const auto status_now = std::chrono::steady_clock::now();
+                const double status_seconds = std::chrono::duration<double>(status_now - status_start).count();
+                if (status_seconds >= 10.0) {
+                    VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
+                    vmaGetHeapBudgets(app.renderer.Context().allocator, budgets);
+                    const VkPhysicalDeviceMemoryProperties* memory = nullptr;
+                    vmaGetMemoryProperties(app.renderer.Context().allocator, &memory);
+                    double used = 0.0;
+                    double budget = 0.0;
+                    for (uint32_t h = 0; memory && h < memory->memoryHeapCount; ++h) {
+                        if (memory->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                            used += static_cast<double>(budgets[h].usage);
+                            budget += static_cast<double>(budgets[h].budget);
+                        }
+                    }
+                    const VkExtent2D render_extent = app.renderer.RenderExtent();
+                    pt::LogInfo("status: {:.0f} fps, gpu {:.2f} ms, vram {:.0f} of {:.0f} MB, {}x{}, upscaler {} {}, frame generation {}, vsync {}, "
+                                "fps limit {}, floor {}{}",
+                                status_frames / status_seconds, timings.GpuMean(timings.gpu_ms), used / 1048576.0,
+                                budget / 1048576.0, render_extent.width, render_extent.height, app.settings.upscaling.upscaler,
+                                app.settings.upscaling.quality, app.settings.upscaling.frame_generation,
+                                app.settings.display.vsync ? "on" : "off", app.settings.display.fps_limit, game.Floor().CurrentFloorName(),
+                                ui_ready && ui.MenuOpen() ? ", menu open" : "");
+#ifdef __ANDROID__
+                    if (timings.gpu_samples) {
+                        pt::LogInfo("mobile passes avg ({} GPU samples): shadows {:.2f}, mirror {:.2f}, gbuffer {:.2f}, lighting/AO {:.2f}, compose {:.2f}, post {:.2f} ms; bloom {:.2f}, reflections {:.2f}, ray setup {:.2f} ms; renderer CPU avg {:.2f} ms",
+                            timings.gpu_samples, timings.GpuMean(timings.passes[0]), timings.GpuMean(timings.passes[1]), timings.GpuMean(timings.passes[2]),
+                            timings.GpuMean(timings.passes[3]), timings.GpuMean(timings.passes[4]), timings.GpuMean(timings.passes[5]),
+                            timings.GpuMean(timings.parts[5]), timings.GpuMean(timings.parts[3]), timings.GpuMean(timings.ray_ms), timings.CpuMean(timings.cpu_ms));
+                    } else {
+                        pt::LogInfo("mobile passes: GPU timings unavailable; renderer CPU avg {:.2f} ms", timings.CpuMean(timings.cpu_ms));
+                    }
+                    pt::LogInfo("mobile work avg: shadow tiles reused {:.1f}, rendered {:.1f}, shadow draws {:.1f}, mirrors occluded {:.2f}",
+                        timings.CpuMean(timings.reused), timings.CpuMean(timings.rendered), timings.CpuMean(timings.shadow_draws), timings.CpuMean(timings.mirrors_occluded));
+                    pt::LogInfo("mobile quality: shadow level {}, ray shadows {}, ray reflections {}, ray AO {}, ray contact {}",
+                        app.settings.graphics.shadow_quality, app.settings.ray_tracing.shadows, app.settings.ray_tracing.reflections,
+                        app.settings.ray_tracing.ambient_occlusion, app.settings.ray_tracing.contact_shadows);
+#endif
+                    status_start = status_now;
+                    status_frames = 0;
+                    timings.Clear();
+                }
             }
         }
         if (app.window && !vr) {
@@ -5219,6 +5242,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     sound.Shutdown();
     vkDeviceWaitIdle(app.renderer.Context().device);
     app.scene.vfx_forward = nullptr;
+    app.scene.vfx_offscreen_available = nullptr;
     app.scene.vfx_filter = nullptr;
     vfx_pass.Shutdown();
     app.renderer.overlay = nullptr;
