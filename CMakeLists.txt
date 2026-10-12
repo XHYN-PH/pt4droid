@@ -69,6 +69,7 @@ add_dependencies(pt_engine pt_version)
 target_include_directories(pt_engine PUBLIC src)
 target_compile_definitions(pt_engine PUBLIC VK_NO_PROTOTYPES NOMINMAX WIN32_LEAN_AND_MEAN GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
 target_link_libraries(pt_engine PUBLIC pt_thirdparty SDL3::SDL3-static)
+include(cmake/AndroidFramePacing.cmake)
 if(WIN32)
   # dbghelp: the crash report (src/engine/core/crash_report.cpp) writes minidumps from pt_engine, so every test links it
   target_link_libraries(pt_engine PUBLIC gdi32 usp10 winhttp dbghelp ws2_32)
@@ -88,6 +89,7 @@ if(ANDROID)
   # Android (docs/android.md): the game is libmain.so, which SDL's Java activity loads and starts at SDL_main
   add_library(pt SHARED src/main.cpp)
   set_target_properties(pt PROPERTIES OUTPUT_NAME main)
+  target_link_options(pt PRIVATE -Wl,--wrap=__android_log_print -Wl,--wrap=__android_log_vprint -Wl,--wrap=__android_log_write)
   target_link_libraries(pt_engine PUBLIC adrenotools android log)
   # libadrenotools' hook libraries are loaded from the APK's library folder, beside libmain.so
   add_dependencies(pt main_hook file_redirect_hook gsl_alloc_hook hook_impl)

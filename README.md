@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/images/pt4droid-logo.png" alt="P.T. logo" width="200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/pt4droid-logo.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/pt4droid-logo-light.png">
+    <img src="docs/images/pt4droid-logo-light.png" alt="P.T. logo" width="200">
+  </picture>
 </p>
 
 <h1 align="center">pt4droid</h1>
@@ -23,22 +27,29 @@
 
 This fork adds customizable touch controls, an Android settings menu, individual graphics options, custom Vulkan driver imports, display refresh-rate selection and further mobile performance work.
 
-> **Current test build: 0.2.1-test.3.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
+> **Current test build: 0.2.1-test.5.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
 
 ## Features
 
 | Feature | What you can change |
 | --- | --- |
 | **Customizable touch controls** | Button positions, sizes, mappings, visibility and opacity, plus stick preferences and saved layouts. |
+| **Invisible movement** | Touch and drag on the left half without a visible movement stick; hold to walk and lift to stop. |
 | **Button-free looking** | Swipe on the right side of the screen, or choose a visible or hidden look joystick. |
 | **Look sensitivity** | Adjust swipe and joystick sensitivity from **0.25× to 3.00×**. |
+| **More input options** | Separate mouse/controller sensitivity, invert vertical look, and optional gyro look with its own sensitivity. |
 | **Graphics settings** | Choose a preset or adjust individual game settings from the launcher or during play. |
-| **Vulkan drivers** | Automatic selection, bundled Mesa Turnip, the system driver or a compatible imported driver ZIP. |
+| **Performance choices** | Cheaper AO/reflection sampling, optional Android frame pacing, and optional sustained performance/heat management. Resolution stays fixed. |
+| **Sharper upscaling** | Optional SGSR1 at reduced render scale, with adjustable sharpness. Off preserves the fast compositor path. |
+| **Vulkan drivers** | Automatic selection, bundled Turnip, System, experimental bundled PanVK for Mali, or a compatible imported ZIP. |
 | **Display refresh rate** | Request the highest supported rate automatically, or choose a rate reported by your device. |
 | **Save management** | Delete game save slots without clearing the app's data. |
+| **Return to menu** | Leave the game from the in-game settings or Android settings, then start again from the launcher. |
 | **Optional logging** | App diagnostics are **Off by default** and can be enabled when reporting a problem. |
 
 The launcher uses a dark theme with serif text and red highlights. Gamepad, keyboard and mouse input are also available; the touch overlay lets physical mouse input pass through.
+
+**Game graphics** is inside **Settings**. The launcher keeps one Settings entry, and the logo has a transparent background.
 
 ## Device requirements
 
@@ -51,14 +62,15 @@ The launcher uses a dark theme with serif text and red highlights. Gamepad, keyb
 
 Automatic driver selection uses bundled Turnip on **Adreno 6xx/7xx** and the **system driver** on other GPUs, including Adreno 8xx. Imported Turnip drivers must support your specific Adreno GPU and Android version.
 
-Other GPUs, including Mali, remain experimental and may lack required compressed-texture support. Selecting a system driver does not add missing hardware or renderer features.
+**Mali support is experimental.** Bundled PanVK Kbase RC3 requires **Android 15+**, a compatible Mali v9–v13 GPU and `mali_kbase` kernel interface. It is never selected automatically. Driver loading and feature checks are implemented; pt4droid gameplay and performance on Mali still need device testing. The system driver or an imported package must also supply the required compressed-texture formats and other Vulkan features.
 
 ## Getting started
 
 1. Download the `pt4droid-*.apk` from [Releases](https://github.com/XHYN-PH/pt4droid/releases) and install it.
-2. Open **pt4droid** and choose **Choose your P.T. .pkg**.
-3. Select a fake PKG made from your own game dump and wait for extraction to finish.
-4. Open **Settings** to configure controls, graphics and drivers, then start the game.
+2. Open **pt4droid**. The first launch offers storage access for shared Download folders. Android 11+ opens its **All files access** screen; Android 10 asks for runtime storage permission. You can decline and still use file-picker imports.
+3. Choose **Choose your P.T. .pkg**.
+4. Select a fake PKG made from your own game dump and wait for extraction to finish.
+5. Open **Settings** to configure controls, graphics and drivers, then start the game.
 
 If your package is inside a `.zip`, `.rar` or `.7z` archive, extract it with a file manager before choosing it.
 
@@ -78,6 +90,10 @@ Encrypted PlayStation Store packages are not supported.
 
 Use **Settings → Touch controls** to select **Auto**, **Always show** or **Off**.
 
+For a clear screen, select **Movement control → Invisible left-half movement** and **Look control → Swipe to look • no button**, then tap **Apply**. Touch and drag on the left to move, hold to keep walking, and lift to stop. Swipe on the right to look around. Both work at the same time; action buttons and Settings take priority. Each finger keeps its original role even if dragged across the middle.
+
+**Visible joystick** remains the default movement option. Invisible movement always starts at your touch position, including when **Floating sticks** is off. Joystick size and dead zone still affect movement. The layout editor shows both stick guides so they remain adjustable.
+
 | Look mode | Behavior |
 | --- | --- |
 | **Swipe to look • no button** | Drag on the right side to look around without a visible look stick. |
@@ -85,6 +101,10 @@ Use **Settings → Touch controls** to select **Auto**, **Always show** or **Off
 | **Hidden joystick** | An invisible stick keeps turning while held away from its touch origin. |
 
 Adjust **Look sensitivity** in Settings. To rearrange buttons, start the game and open **Android settings → Customize touch layout**. Save the layout when finished, or cancel to restore it.
+
+Mouse and controller sensitivity are separate multipliers. **Invert vertical look** also applies to touch and gyro. **Gyroscope look** is optional, requires a gyroscope, and runs only during focused gameplay; it stops in menus and when the app loses focus.
+
+To leave a session, open the in-game settings page or **Android settings**, choose **Return to menu** and confirm. The game finishes its normal shutdown before returning to the launcher. Progress follows the game's existing save points; returning does not create an extra checkpoint. You can start the game again, change settings, delete saves or quit from the launcher.
 
 A built-in, USB or Bluetooth gamepad can also be used. Allow the nearby-device permission when requested for Bluetooth controllers.
 
@@ -104,6 +124,15 @@ Available options include:
 - Ray-traced effects and ray quality **when supported by the active Vulkan device**.
 
 **Settings** also provides scene render scale and an optimized mobile bloom option.
+
+Additional options:
+
+- **AO / Screen reflections → Performance:** fewer samples or march steps, preserving the effects with reduced detail. These sampling choices are independent of the base graphics preset.
+- **Android frame pacing:** optional Swappy presentation for capped gameplay. Uncapped gameplay uses the existing path, and unsupported pacing falls back to the existing limiter. Off by default.
+- **SGSR1 sharper upscaling:** an optional quality pass at fixed reduced resolution. It adds GPU work and uses full-size output; leave it Off for maximum speed. Off by default.
+- **Sustained performance / heat management:** requests Android's supported sustained mode and lowers the effective FPS ceiling when hot (45/30/20 FPS). It does not change your saved frame limit or resolution. Off by default.
+
+**Dynamic resolution is not included.** Render scale changes only when you change it yourself. No new quality pass or thermal FPS limit is enabled automatically.
 
 | Preset | Behavior |
 | --- | --- |
@@ -132,6 +161,8 @@ A 120 Hz screen does not guarantee 120 rendered FPS. Menus and paused gameplay r
 To switch drivers later, open **Vulkan drivers**, choose the driver and press **Select**. If an import times out, copy the ZIP to local Downloads and try again. Import progress can be cancelled.
 
 Driver compatibility depends on the GPU, Android version and driver build. If a custom driver causes problems, switch back to **Automatic** or **System Vulkan driver** and restart.
+
+For Mali, select **PanVK Kbase RC3 • experimental**, or import an Android/Bionic PanVK package. Linux/glibc packages are rejected. Missing imported files fall back to System rather than loading an Adreno-only driver on another GPU. A successful ZIP import confirms installation, not game compatibility; startup reports missing required driver features even with logs Off.
 
 ## Starting a new save
 
