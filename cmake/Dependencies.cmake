@@ -1,5 +1,7 @@
 include(FetchContent)
-cmake_policy(SET CMP0169 OLD)
+if(POLICY CMP0169)
+  cmake_policy(SET CMP0169 OLD)
+endif()
 set(FETCHCONTENT_QUIET ON)
 
 if(ANDROID)
