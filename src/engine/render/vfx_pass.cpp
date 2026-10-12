@@ -400,9 +400,7 @@ uint32_t VfxPass::DrawLayer(VkCommandBuffer cmd, VkDescriptorSet set, vfx::Layer
         // (fx_sh_viwdis01_s1, 02) take the CeilLamp's glow sprites with the image they move instead of leaving them, unmoved,
         // over the moved lamp. PT_VFX_LIQUID_SCENE=1 draws every liquid on the scene before the effect buffer, as before.
         static const bool liquid_scene = std::getenv("PT_VFX_LIQUID_SCENE") != nullptr;
-        const bool effect_liquid = d.refract && !d.opaque && !liquid_scene;
-        const bool buffered = (!d.refract || effect_liquid) &&
-                              (d.blend == vfx::BlendMode::Alpha || d.blend == vfx::BlendMode::Add || d.blend == vfx::BlendMode::Sub);
+        const bool buffered = vfx::BufferedEffect(d, liquid_scene);
         if ((subset == kVfxScene && buffered) || (subset == kVfxOffscreen && !buffered)) {
             continue;
         }
@@ -445,6 +443,13 @@ uint32_t VfxPass::DrawLayer(VkCommandBuffer cmd, VkDescriptorSet set, vfx::Layer
         }
     }
     return copies;
+}
+
+bool VfxPass::HasOffscreenDraws() const {
+    static const bool liquid_scene = std::getenv("PT_VFX_LIQUID_SCENE") != nullptr;
+    return std::any_of(list_.draws.begin(), list_.draws.end(), [](const vfx::Draw& d) {
+        return d.layer == vfx::Layer::World && d.count > 0 && vfx::BufferedEffect(d, liquid_scene);
+    });
 }
 
 void VfxPass::RecordForward(const SceneVfxContext& context) {

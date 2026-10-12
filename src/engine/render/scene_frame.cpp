@@ -502,6 +502,11 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
             d.center = center;
             d.radius = local_radius * scale;
             d.hidden_views = item.hidden_views;
+            if (!sub.skinned && skin_base == gpu::kInvalid) d.shadow_bounds = TransformBounds(sub.bounds, item.transform);
+            if (d.shadow_bounds.valid) {
+                d.shadow_center = (d.shadow_bounds.lo + d.shadow_bounds.hi) * 0.5f;
+                d.shadow_radius = glm::length(d.shadow_bounds.hi - d.shadow_bounds.lo) * 0.5f;
+            }
             draws_.push_back(d);
         }
     }
@@ -530,6 +535,26 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
         }
     }
 
+    // Build the current camera's occluders once, before considering a mirror.
+    // The same volumes are reused by light selection below. Moving doors and
+    // stage changes therefore affect the decision immediately, without queries.
+    static const bool legacy_cull = [] {
+        const char* s = std::getenv("PT_LIGHT_CULL_LEGACY");
+        return s && std::string_view(s) == "1";
+    }();
+    legacy_light_cull_ = legacy_cull;
+    main_occluders_ = {};
+    mirror_occluders_ = {};
+    main_cull_view_projection_ = unjittered * gl_view;
+    if (!legacy_cull) {
+        main_occluders_ = lightcull::BuildOccluderVolumes(lighting.occluders, main_cull_view_projection_, camera.position,
+                                                         lightcull::LimitsFromEnv());
+    }
+    stats_.mirrors_occluded = 0;
+    static const bool mirror_occlusion = [] {
+        const char* value = std::getenv("PT_MIRROR_OCCLUSION");
+        return !value || std::string_view(value) != "0";
+    }();
     mirror_active_ = false;
     mirror_stale_active_ = false;
     mirror_temporal_enabled_ = up_.enabled && !std::getenv("PT_MIRROR_TEMPORAL_OFF");
@@ -589,6 +614,14 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
                                                                           facing >= 0.01f);
             }
             if (distance > 12.0f || !SphereInPlanes(center, radius, main_view_.planes) || facing < 0.01f) {
+                continue;
+            }
+            const GeometryBounds mirror_bounds = TransformBounds({mirror.mesh->bounds_min, mirror.mesh->bounds_max, true}, mirror.transform);
+            // Reject only a fully hidden enclosure, padded away from the wall
+            // plane. Partial visibility and missing/degenerate bounds still draw.
+            if (mirror_occlusion && mirror_bounds.valid &&
+                lightcull::FindOccludingVolume(mirror_bounds.lo - glm::vec3(0.01f), mirror_bounds.hi + glm::vec3(0.01f), main_occluders_) >= 0) {
+                ++stats_.mirrors_occluded;
                 continue;
             }
             // 0x959870 (camera +0x150 the near distance, +0xF8 the focal length): the capture view looks from the camera position
@@ -684,11 +717,6 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
 
     // PT_LIGHT_CULL_LEGACY=1: the port's former stand-in for A/B tests (every OccluderEx tested from the eye with no
     // selection, and BuildShadowViews' hysteresis and 4 + 8 limits); otherwise the original's occluder stage below
-    static const bool legacy_cull = [] {
-        const char* s = std::getenv("PT_LIGHT_CULL_LEGACY");
-        return s && std::string_view(s) == "1";
-    }();
-    legacy_light_cull_ = legacy_cull;
     // PT_LIGHT_CULL_TRACE=1: which lights the frame's own rules drop and why, and what became of each occluder. A light
     // that comes and goes while the player walks forward and back is one of these tests flipping, and the reason names it.
     // PT_LIGHT_CULL_TRACE=every: each rendered frame (a headless run renders only its screenshot frames)
@@ -697,14 +725,10 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
     static const bool trace_cull_every = trace_cull && std::string_view(trace_cull_env) == "every";
     const bool trace_cull_frame = trace_cull && (trace_cull_every || frame_counter_ % 60 == 0);
     static const bool light_changes = std::getenv("PT_LIGHT_CHANGES") != nullptr;
-    main_occluders_ = {};
-    mirror_occluders_ = {};
     if (!legacy_cull) {
         // 0xD53AC0 runs its occluder stage (0xD29E90, 0xD2A100 per OccluderEx, 0xD2AC10) for every frustum query, so for
         // the camera view and for the mirror capture view on their own (rendering.md 12.23)
         const lightcull::OccluderLimits& limits = lightcull::LimitsFromEnv();
-        main_cull_view_projection_ = unjittered * gl_view;
-        main_occluders_ = lightcull::BuildOccluderVolumes(lighting.occluders, main_cull_view_projection_, camera.position, limits);
         if (mirror_active_) {
             mirror_occluders_ = lightcull::BuildOccluderVolumes(lighting.occluders, mirror_current_view_projection_, mirror_view_.eye, limits);
         }
@@ -1354,34 +1378,57 @@ void SceneRenderer::RecordRayTracing(VkCommandBuffer cmd) {
     }
 }
 
+void SceneRenderer::InvalidateShadowCache() {
+    for (auto& tile : shadow_cache_) tile.Invalidate();
+}
+
 void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
+    stats_.shadow_tiles_reused = stats_.shadow_tiles_rendered = stats_.shadow_draws = 0;
     if (rt_active_ || rt_reflections_ || rt_ao_active_ || rt_contact_active_) {
         RecordRayTracing(cmd);
     }
+    Stamp(cmd, 12);
     if (rt_active_) {
         return;
     }
     if (shadow_views_.empty()) {
         return;
     }
-    // tiles fill the atlas row by row: clear only the rows in use
+    static const bool cache_enabled = [] {
+        const char* value = std::getenv("PT_SHADOW_CACHE");
+        return !value || std::string_view(value) != "0";
+    }();
+    static const bool tight_bounds = [] {
+        const char* value = std::getenv("PT_SHADOW_BOUNDS");
+        return !value || std::string_view(value) != "0";
+    }();
+    const uint32_t tile_size = shadow_.Extent().width / kShadowTiles;
+    std::array<bool, 16> dirty{};
+    uint32_t dirty_count = 0;
+    // A tile's exact view and accepted caster states are compared, without a hash
+    // collision risk. Tile reassignment naturally invalidates it. Skinned and
+    // alpha-tested maps still render every frame.
     uint32_t rows = 0;
     for (const ShadowView& sv : shadow_views_) {
         rows = std::max(rows, static_cast<uint32_t>(sv.rect.offset.y) + sv.rect.extent.height);
-    }
-    UseTargets(cmd, {{&shadow_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
-    mesh_draw_state_.Reset();
-    BeginPass(cmd, {shadow_.Extent().width, rows}, {}, &shadow_, false, true);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
-    for (const ShadowView& sv : shadow_views_) {
-        SetViewport(cmd, sv.rect);
-        vkCmdSetDepthBias(cmd, sv.bias_constant, 0.0f, sv.bias_slope);
-        // The camera view's lights take the casters that view draws (guess: the light views were not traced); a light only the
-        // mirror view has (the MirrorLight) takes the mirror view's, as the capture views render their own shadow maps (0xD3F0C0)
-        const uint8_t casters = sv.casters;
-        uint32_t shadow_draws = 0, shadow_indices = 0;
+        const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
+        ShadowMapState& state = shadow_states_[tile];
+        const auto& view = frame_->views[sv.view];
+        state.view_projection = view.view_projection;
+        state.view = view.view;
+        state.projection_param = view.projection_param;
+        state.eye = view.eye;
+        state.shadow = view.shadow;
+        state.bias_constant = sv.bias_constant;
+        state.bias_slope = sv.bias_slope;
+        state.cull = sv.cull;
+        state.caster_views = sv.casters;
+        state.reusable = cache_enabled;
+        state.casters.clear();
+        auto& accepted = shadow_casters_[tile];
+        accepted.clear();
         for (const Draw& d : draws_) {
-            if (!d.sub->shadow || (d.hidden_views & casters) != 0) {
+            if (!d.sub->shadow || (d.hidden_views & sv.casters) != 0) {
                 continue;
             }
             if (static const char* exclude = std::getenv("PT_SHADOW_EXCLUDE"); exclude && d.mesh->name.find(exclude) != std::string::npos) {
@@ -1396,14 +1443,55 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
             if (static const bool no_skin_shadow = std::getenv("PT_SHADOW_NO_SKIN") != nullptr; no_skin_shadow && d.sub->skinned) {
                 continue;
             }
-            if (glm::length(d.center - sv.center) > sv.radius + d.radius) {
+            const bool bounded = tight_bounds && d.shadow_bounds.valid;
+            const glm::vec3 centre = bounded ? d.shadow_center : d.center;
+            const float radius = bounded ? d.shadow_radius : d.radius;
+            const glm::vec3 delta = centre - sv.center;
+            const float reach = sv.radius + radius;
+            if (glm::dot(delta, delta) > reach * reach) {
                 continue;
             }
-            if (sv.frustum && !SphereInPlanes(d.center, d.radius, sv.planes)) {
+            if (sv.frustum && (bounded ? !BoundsInPlanes(d.shadow_bounds, sv.planes) : !SphereInPlanes(d.center, d.radius, sv.planes))) {
                 continue;
             }
+            accepted.push_back(&d);
+            const uint32_t material_flags = textures_->MaterialFlags(d.material);
+            state.reusable = state.reusable && !d.sub->skinned && d.skin_base == gpu::kInvalid && (material_flags & gpu::kMatAlphaTest) == 0;
+            if (state.reusable) {
+                state.casters.push_back({reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
+                                         d.material, uint32_t(d.sub->shadow_double_sided), d.transform});
+            }
+        }
+        dirty[tile] = !shadow_cache_[tile].Reuse(state);
+        if (dirty[tile]) ++dirty_count;
+        else ++stats_.shadow_tiles_reused;
+    }
+    if (!dirty_count) return;
+    // All dirty: retain the original cheap loadOp clear. Partial updates clear
+    // only the changed rectangles; untouched tiles keep their depth contents.
+    const bool clear_all = dirty_count == shadow_views_.size();
+    if (clear_all) InvalidateShadowCache();
+    UseTargets(cmd, {{&shadow_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+    mesh_draw_state_.Reset();
+    BeginPass(cmd, {shadow_.Extent().width, rows}, {}, &shadow_, false, clear_all);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
+    for (const ShadowView& sv : shadow_views_) {
+        const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
+        if (!dirty[tile]) continue;
+        if (!clear_all) {
+            VkClearAttachment clear{};
+            clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            clear.clearValue.depthStencil = {0.0f, 0};
+            VkClearRect rectangle{sv.rect, 0, 1};
+            vkCmdClearAttachments(cmd, 1, &clear, 1, &rectangle);
+        }
+        SetViewport(cmd, sv.rect);
+        vkCmdSetDepthBias(cmd, sv.bias_constant, 0.0f, sv.bias_slope);
+        uint32_t shadow_draws = 0, shadow_indices = 0;
+        for (const Draw* pointer : shadow_casters_[tile]) {
+            const Draw& d = *pointer;
             ++shadow_draws; shadow_indices += d.sub->index_count;
-            ++shadow_draws; shadow_indices += d.sub->index_count;
+            ++stats_.shadow_draws;
             if (static const bool dump = std::getenv("PT_SHADOW_PASS_DUMP") != nullptr; dump && light_sources_[sv.light]->id == kMirrorLightId) {
                 LogInfo("shadow draw: {}#{} {} verts-radius {:.2f} centre ({:.2f} {:.2f} {:.2f})", d.mesh->name, static_cast<int>(d.sub - d.mesh->submeshes.data()), d.sub->index_count, d.radius, d.center.x, d.center.y, d.center.z);
             }
@@ -1412,6 +1500,8 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         if (static const bool trace = std::getenv("PT_SHADOW_PASS_TRACE") != nullptr; trace) {
             LogInfo("shadow pass: {} casters {:#x} draws {} indices {} at ({:.3f} {:.3f} {:.3f})", light_sources_[sv.light]->name, sv.casters, shadow_draws, shadow_indices, sv.center.x, sv.center.y, sv.center.z);
         }
+        ++stats_.shadow_tiles_rendered;
+        shadow_cache_[tile].Recorded(shadow_states_[tile]);
     }
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&shadow_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
@@ -1462,7 +1552,7 @@ void SceneRenderer::RecordGBuffer(VkCommandBuffer cmd, const ViewSetup& view) {
 void SceneRenderer::RecordOcclusion(VkCommandBuffer cmd, const ViewSetup& view) {
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}, {&ao_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, extent_, {{&ao_[0], false, {}}});
+    BeginPass(cmd, extent_, {{&ao_[0], false, {}, true}});
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, 0, 0, 0);
 #ifdef __ANDROID__
@@ -1478,7 +1568,7 @@ void SceneRenderer::RecordOcclusion(VkCommandBuffer cmd, const ViewSetup& view) 
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&ao_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&ao_[1], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, extent_, {{&ao_[1], false, {}}});
+    BeginPass(cmd, extent_, {{&ao_[1], false, {}, true}});
     push.f0 = glm::vec4(0.45f, 0.0f, 0.0f, 0.0f);
     Fullscreen(cmd, occlusion_blur_, push);
     vkCmdEndRendering(cmd);
@@ -2017,6 +2107,9 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
 // premultiplied layers, then resolves them at full resolution with NearFarUpScale2x2. Called inside the effect pass on output; leaves
 // that pass open again.
 void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, SceneVfxContext context) {
+    // Keep the caller's rendering scope open. Empty or scene-only effects need
+    // neither depth downsampling nor clearing/storing the two effect buffers.
+    if (vfx_offscreen_available && !vfx_offscreen_available()) return;
     vkCmdEndRendering(cmd);
     const VkExtent2D effect_extent = particles_near_.Extent();
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
@@ -2126,7 +2219,9 @@ void SceneRenderer::RecordMirrorTemporal(VkCommandBuffer cmd) {
                      {&mirror_history_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&mirror_temporal_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, mirror_view_.area, {{&mirror_temporal_, false, {}}});
+    const bool overwrite_target = mirror_view_.area.width == mirror_temporal_.Extent().width &&
+                                  mirror_view_.area.height == mirror_temporal_.Extent().height;
+    BeginPass(cmd, mirror_view_.area, {{&mirror_temporal_, false, {}, overwrite_target}});
     gpu::PassPush push;
     push.ids = glm::uvec4(valid_history ? 1u : 0u, 0, 0, mirror_view_.index);
     push.f0 = glm::vec4(size, size, 1.0f / extent_.width, 1.0f / extent_.height);
@@ -2193,7 +2288,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
         // 12.21: the map traced, with a second target for the hits off screen; the lights hidden in the camera view as bits of m
         UseTargets(cmd, {{&refmap_color_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
         mesh_draw_state_.Reset();
-        BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}}, {&refmap_color_, false, {}}});
+        BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}, true}, {&refmap_color_, false, {}, true}});
         // PT_RT_REFLECTION_DEBUG=1: the reflection shows the hits it shaded in red and those it took from the screen in green;
         // =2: every hit shaded at full weight, to compare the shading with the screen
         static const uint32_t debug = [] {
@@ -2219,7 +2314,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
         push.m = glm::mat4(1.0f);
     } else {
         mesh_draw_state_.Reset();
-        BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}}});
+        BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}, true}});
         Fullscreen(cmd, reflect_make_, push);
         vkCmdEndRendering(cmd);
         push.ids.y=0; // Sampling quality belongs only to the march, not the later blend/history passes.
@@ -2252,7 +2347,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
                      {&material_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, extent_, {{&hdr_, false, {}}});
+    BeginPass(cmd, extent_, {{&hdr_, false, {}, true}});
     if (rt_reflections_) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reflect_blend_rt_);
         const VkDescriptorSet rt_set = rt_->Set(renderer_->FrameIndex());
@@ -2285,7 +2380,7 @@ void SceneRenderer::RecordReflectionTemporal(VkCommandBuffer cmd, const ViewSetu
                      {&reflect_layer_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&reflect_offset_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, extent_, {{&reflect_layer_, false, {}}, {&reflect_offset_, false, {}}});
+    BeginPass(cmd, extent_, {{&reflect_layer_, false, {}, true}, {&reflect_offset_, false, {}, true}});
     push.m = previous_view_projection_;
     if (rt_reflections_) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reflect_layer_rt_);
@@ -2304,7 +2399,7 @@ void SceneRenderer::RecordReflectionTemporal(VkCommandBuffer cmd, const ViewSetu
                      {&reflect_history_[current], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, extent_, {{&hdr_, false, {}}, {&reflect_history_[current], false, {}}});
+    BeginPass(cmd, extent_, {{&hdr_, false, {}, true}, {&reflect_history_[current], false, {}, true}});
     gpu::PassPush temporal;
     temporal.ids = glm::uvec4(view.index, valid_history ? 1u : 0u, gpu::kImgReflectHistoryA + previous, 0u);
     // 0.9 of the history at rest; the neighbourhood clip keeps 1.25 standard deviations around this frame's mean
@@ -2406,7 +2501,9 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         UseTargets(cmd, {{&mirror_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     }
     mesh_draw_state_.Reset();
-    BeginPass(cmd, ViewArea(view), {{&output, false, {}}}, &depth_, true, false);
+    const VkExtent2D area = ViewArea(view);
+    const bool overwrite_target = area.width == output.Extent().width && area.height == output.Extent().height;
+    BeginPass(cmd, area, {{&output, false, {}, overwrite_target}}, &depth_, true, false);
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, occlusion ? 1u : 0u, 0, 0);
     const TppAtmosphereSettings& tpp = lighting_->tpp;
@@ -2592,12 +2689,13 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         }
         stats_.device_mb = static_cast<float>(bytes / (1024.0 * 1024.0));
     }
-    if (LogEnabled() && slot.timed && frame_counter_ > 8) {
+    if (LogEnabled() && stats_.gpu_timing_valid && frame_counter_ > 8) {
         gpu_ms_sum_ += stats_.gpu_ms;
         ++gpu_samples_;
         if (LogEnabled() && !timing_ring_.empty()) {
             FrameTiming& t = timing_ring_[timing_count_++ % timing_ring_.size()];
             t.gpu_ms = stats_.gpu_ms;
+            t.ray_setup_ms = stats_.ray_setup_ms;
             std::copy(std::begin(stats_.pass_ms), std::end(stats_.pass_ms), std::begin(t.pass_ms));
             std::copy(std::begin(stats_.part_ms), std::end(stats_.part_ms), std::begin(t.part_ms));
             t.device_mb = stats_.device_mb;

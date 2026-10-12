@@ -30,6 +30,7 @@ public:
     void RecordForward(const SceneVfxContext& context);
     void RecordFilter(const SceneFilterContext& context);
     const vfx::RenderList& List() const { return list_; }
+    bool HasOffscreenDraws() const;
 
 private:
     struct PipelineKey {

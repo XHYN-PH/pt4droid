@@ -1,6 +1,7 @@
 #include "engine/render/render_util.h"
 
 #include "engine/render/pipeline_cache_store.h"
+#include "engine/render/render_sync.h"
 
 #include <cstddef>
 
@@ -18,12 +19,17 @@ void UseTargets(VkCommandBuffer cmd, std::initializer_list<TargetUse> uses) {
         if (!use.target || !use.target->Valid() || count == std::size(barriers)) {
             continue;
         }
+        if (!TargetBarrierRequired(use.target->layout, use.layout)) {
+            continue;
+        }
+        const auto source = TargetAccessScope(use.target->layout);
+        const auto destination = TargetAccessScope(use.layout);
         VkImageMemoryBarrier2& b = barriers[count++];
         b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-        b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        b.srcStageMask = source.stages;
+        b.srcAccessMask = source.access;
+        b.dstStageMask = destination.stages;
+        b.dstAccessMask = destination.access;
         b.oldLayout = use.target->layout;
         b.newLayout = use.layout;
         b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

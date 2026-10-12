@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "engine/render/vk.h"
+#include "engine/render/geometry_bounds.h"
 
 namespace pt {
 
@@ -43,6 +44,7 @@ struct SubMesh {
     bool shadow_double_sided = false;
     uint16_t group = 0;
     uint8_t layer = 0;
+    GeometryBounds bounds;
 };
 
 struct MeshGroup {

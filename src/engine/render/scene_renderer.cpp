@@ -99,6 +99,7 @@ bool SceneRenderer::EnsureShadowTarget() {
         UseTargets(cmd,{{&replacement,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
     });
     ctx.DestroyImage(shadow_.image);shadow_=replacement;
+    InvalidateShadowCache();
     if(extent_.width>0) WriteImageDescriptors();
     LogInfo("graphics: shadow atlas {}x{}, tile {} px",size,size,tile);
     return true;
@@ -468,6 +469,7 @@ void SceneRenderer::DestroyPipelines() {
 }
 
 void SceneRenderer::Shutdown() {
+    InvalidateShadowCache();
     if (!renderer_) {
         return;
     }
@@ -489,12 +491,14 @@ void SceneRenderer::Shutdown() {
     if (timing_count_ > 0) {
         const size_t n = static_cast<size_t>(std::min<uint64_t>(timing_count_, timing_ring_.size()));
         double gpu = 0.0;
+        double ray_setup = 0.0;
         double pass[6] = {};
         float lo = timing_ring_[0].gpu_ms;
         float hi = lo;
         for (size_t i = 0; i < n; ++i) {
             const FrameTiming& t = timing_ring_[i];
             gpu += t.gpu_ms;
+            ray_setup += t.ray_setup_ms;
             lo = std::min(lo, t.gpu_ms);
             hi = std::max(hi, t.gpu_ms);
             for (int k = 0; k < 6; ++k) {
@@ -502,19 +506,19 @@ void SceneRenderer::Shutdown() {
             }
         }
         LogInfo("scene renderer: timing of the last {} frames at {}x{} -> {}x{}: gpu {:.3f} ms (min {:.3f}, max {:.3f}); shadows {:.3f}, mirror {:.3f}, "
-                "gbuffer {:.3f}, lighting {:.3f}, compose {:.3f}, post {:.3f}",
+                "gbuffer {:.3f}, lighting {:.3f}, compose {:.3f}, post {:.3f}, ray setup {:.3f}",
                 n, extent_.width, extent_.height, output_extent_.width, output_extent_.height, gpu / n, lo, hi, pass[0] / n, pass[1] / n,
-                pass[2] / n, pass[3] / n, pass[4] / n, pass[5] / n);
+                pass[2] / n, pass[3] / n, pass[4] / n, pass[5] / n, ray_setup / n);
         // PT_TIMING_CSV=<file>: the frames themselves, oldest first (medians are robust to other processes sharing the GPU)
         if (const char* csv = LogEnabled()?std::getenv("PT_TIMING_CSV"):nullptr) {
             if (FILE* f = std::fopen(csv, "w")) {
                 std::fprintf(f, "gpu,shadows,mirror,gbuffer,lighting,compose,post,forward,effects,upscale_inputs,reflections,upscaler,bloom,"
-                                "device_mb,frame\n");
+                                "ray_setup,device_mb,frame\n");
                 for (size_t i = 0; i < n; ++i) {
                     const FrameTiming& t = timing_ring_[(timing_count_ - n + i) % timing_ring_.size()];
-                    std::fprintf(f, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%llu\n", t.gpu_ms, t.pass_ms[0],
+                    std::fprintf(f, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%llu\n", t.gpu_ms, t.pass_ms[0],
                                  t.pass_ms[1], t.pass_ms[2], t.pass_ms[3], t.pass_ms[4], t.pass_ms[5], t.part_ms[0], t.part_ms[1], t.part_ms[2],
-                                 t.part_ms[3], t.part_ms[4], t.part_ms[5], t.device_mb, static_cast<unsigned long long>(t.frame));
+                                 t.part_ms[3], t.part_ms[4], t.part_ms[5], t.ray_setup_ms, t.device_mb, static_cast<unsigned long long>(t.frame));
                 }
                 std::fclose(f);
             }
@@ -1132,6 +1136,9 @@ std::unique_ptr<GpuMesh> SceneRenderer::Upload(const MeshData& data) {
     mesh->groups = data.groups;
     mesh->bounds_min = data.bounds_min;
     mesh->bounds_max = data.bounds_max;
+    for (SubMesh& sub : mesh->submeshes) {
+        sub.bounds = sub.skinned ? GeometryBounds{} : IndexedBounds<Vertex>(data.vertices, data.indices, sub.first_index, sub.index_count, sub.vertex_offset);
+    }
     for (const SubMesh& sub : data.submeshes) {
         mesh->skinned = mesh->skinned || sub.skinned;
     }
@@ -1151,6 +1158,7 @@ std::unique_ptr<GpuMesh> SceneRenderer::Upload(const MeshData& data) {
 }
 
 void SceneRenderer::Destroy(GpuMesh& mesh) {
+    InvalidateShadowCache();
     auto& ctx = renderer_->Context();
     if (rt_) {
         rt_->Forget(mesh);
@@ -1221,6 +1229,8 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
     for (uint32_t i = 1; i <= 6; ++i) {
         stats_.pass_ms[i - 1] = span(i - 1, i);
     }
+    stats_.ray_setup_ms = span(0, 12);
+    stats_.pass_ms[0] = span(12, 1);
     stats_.part_ms[0] = span(4, 7);
     stats_.part_ms[1] = span(7, 5);
     stats_.part_ms[2] = span(5, 8);
@@ -1228,9 +1238,12 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
     stats_.part_ms[4] = span(9, 10);
     stats_.part_ms[5] = span(10, 11);
     stats_.gpu_ms = span(0, 6);
+    stats_.gpu_timing_valid = true;
+    ++stats_.gpu_sample;
 }
 
 void SceneRenderer::ReadMeasurements(FrameSlot& slot, float dt, const ExposureSettings& settings) {
+    stats_.gpu_timing_valid = false;
     if (slot.timed && LogEnabled()) {
         ReadTimestamps(slot);
     }

@@ -23,6 +23,7 @@
 #include "engine/render/mesh_draw_state.h"
 #include "engine/render/raytracing.h"
 #include "engine/render/render_util.h"
+#include "engine/render/shadow_cache.h"
 #include "engine/render/renderer.h"
 #include "engine/render/scene_lighting.h"
 #include "engine/render/subsurface_pass.h"
@@ -165,6 +166,13 @@ struct RenderStats {
     uint32_t lights = 0;
     uint32_t probes = 0;
     uint32_t shadow_views = 0;
+    uint32_t shadow_tiles_reused = 0;
+    uint32_t shadow_tiles_rendered = 0;
+    uint32_t shadow_draws = 0;
+    uint32_t mirrors_occluded = 0;
+    uint64_t gpu_sample = 0;
+    bool gpu_timing_valid = false;
+    float ray_setup_ms = 0.0f;
     float ev = 0.0f;
     float exposure = 1.0f;
     float luminance = 0.0f;
@@ -225,6 +233,7 @@ public:
     static constexpr uint32_t kShadowTile = 2048;
     static constexpr uint32_t kShadowAtlasSize = 8192;
     std::function<void(const SceneVfxContext&)> vfx_forward;
+    std::function<bool()> vfx_offscreen_available;
     std::function<void(const SceneFilterContext&)> vfx_filter;
     const RenderStats& Stats() const { return stats_; }
     UpscaleSettings upscale;
@@ -275,6 +284,9 @@ private:
         float radius = 0.0f;
         uint8_t hidden_views = 0;
         bool character_shadow = false;
+        GeometryBounds shadow_bounds;
+        glm::vec3 shadow_center{0.0f};
+        float shadow_radius = 0.0f;
     };
 
     struct MotionHistory {
@@ -332,6 +344,7 @@ private:
 
     void BindSets(VkCommandBuffer cmd, VkPipelineBindPoint point);
     void RecordShadows(VkCommandBuffer cmd);
+    void InvalidateShadowCache();
     void RecordRayTracing(VkCommandBuffer cmd);
     void RecordView(VkCommandBuffer cmd, const ViewSetup& view, RenderTarget& output, bool main_view);
     void RecordGBuffer(VkCommandBuffer cmd, const ViewSetup& view);
@@ -388,7 +401,8 @@ private:
 
     // 0 start, 1 shadows, 2 mirror, 3 G-buffer, 4 lighting, 5 compose, forward and effects, 6 end; within them 7 the forward draws,
     // 8 the upscale inputs, 9 the reflections, 10 the upscaler, 11 the bloom (written on every frame, in place when a pass is off)
-    static constexpr uint32_t kTimestamps = 12;
+    // 12 ends ray structure preparation, separating it from shadow-map rendering.
+    static constexpr uint32_t kTimestamps = 13;
     static constexpr uint32_t kReflectMapSize = 512;
     static constexpr float kCameraCutDistance = 3.0f;
 
@@ -443,6 +457,9 @@ private:
     RenderTarget reflect_offset_;
     RenderTarget reflect_history_[2];
     RenderTarget shadow_;
+    std::array<ShadowTileCache, 16> shadow_cache_;
+    std::array<ShadowMapState, 16> shadow_states_;
+    std::array<std::vector<const Draw*>, 16> shadow_casters_;
     RenderTarget ao_[2];
     RenderTarget refmap_;
     RenderTarget hdr_copy_;
@@ -687,6 +704,7 @@ private:
     // PT_TIMING_LAST=<n>: the GPU time and the passes of the last n timed frames, logged at shutdown (timing runs)
     struct FrameTiming {
         float gpu_ms = 0.0f;
+        float ray_setup_ms = 0.0f;
         float pass_ms[6] = {};
         float part_ms[6] = {};
         float device_mb = 0.0f;
