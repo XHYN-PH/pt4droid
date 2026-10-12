@@ -16,6 +16,7 @@ timing=method('src/engine/render/scene_renderer.cpp','bool SceneRenderer::Ensure
 change=method('src/game/ui/pc_settings_page.cpp','void PcSettingsPage::Change(')
 row=method('src/main.cpp','static pt::game::PcSettingRow Row(')
 sections=method('src/main.cpp','std::vector<pt::game::PcSettingSection> GraphicsSections() const')
+return_menu_action=method('src/main.cpp','if(id==kReturnToMenu)')
 prefix=r'''#include <cassert>
 #include <fstream>
 #include <iostream>
@@ -51,7 +52,7 @@ struct MockContext{uint32_t timestamp_bits=64;};struct MockRenderer{MockContext 
 using pt::LogEnabled;
 struct FrameSlot{VkQueryPool queries=VK_NULL_HANDLE,upscale_queries=VK_NULL_HANDLE;};
 struct SceneRenderer {bool timing_failed_=false;MockRenderer data;MockRenderer* renderer_=&data;VkDevice device_=VK_NULL_HANDLE;static constexpr uint32_t kTimestamps=12;bool EnsureTimingQueries(FrameSlot& slot);};
-struct AudioSink{void PostEvent(const char*,void*){}};struct Game{AudioSink* Audio(){return nullptr;}};
+struct AudioSink{void PostEvent(const char*,void*){}};struct Game{std::vector<int> steps;AudioSink* Audio(){return nullptr;}void RequestOptionsSave(){steps.push_back(1);}void RequestQuit(){steps.push_back(3);}};
 constexpr const char* kCursorSound="cursor";constexpr const char* kChangeSound="change";
 using pt::game::PcSettingRow;
 struct PresetSource:pt::game::PcSettingsSource {
@@ -67,7 +68,9 @@ struct PresetSource:pt::game::PcSettingsSource {
  SECTIONS_METHOD
  std::vector<pt::game::PcSettingSection> Sections()override{return {};}
  void Set(int,int value)override{pt::ApplyGraphicsPreset(settings,static_cast<pt::GraphicsPreset>(value),false);set_calls++;Refresh();}
- void Activate(int)override{}
+ Game* game_=nullptr;static constexpr int kReturnToMenu=2;
+ void Save(){game_->steps.push_back(2);}
+ void Activate(int id)override{auto& game_=*this->game_;RETURN_MENU_ACTION}
 };
 struct PcSettingsPage {
  PresetSource data;PresetSource* source_=&data;int cursor_=0,preview_id_=-1,preview_value_=0;bool confirming_=false;float flash_frame_=0;std::vector<int> rows_{0};
@@ -102,6 +105,10 @@ int main(int argc,char** argv){
  PcSettingsPage page;Game game;assert(page.data.row.value==4);page.Change(game,1,true);assert(page.data.row.value==0 && page.data.set_calls==1);page.Change(game,1,true);assert(page.data.row.value==1 && page.data.set_calls==2);
  for(int n=0;n<100;n++){page.Change(game,1,true);page.Change(game,-1,false);}assert(page.data.row.value==1);
  page.data.row.wrap=false;page.data.row.value=4;const int calls=page.data.set_calls;page.Change(game,1,true);assert(page.data.set_calls==calls);
+ page.data.row.id=PresetSource::kReturnToMenu;page.data.row.action=true;page.data.game_=&game;
+ page.Change(game,1,false);assert(game.steps.empty() && !page.confirming_);
+ page.Change(game,1,true);assert(game.steps.empty() && page.confirming_);
+ page.Change(game,1,true);assert((game.steps==std::vector<int>{1,2,3}) && !page.confirming_);
  auto graphics_path=path.parent_path()/"graphics.ini";
  pt::AppSettings settings;settings.audio.volume=1.7f;settings.progress.loops_reached=123;settings.progress.archive="keep";settings.input.mouse_sensitivity=2.5f;settings.display.width=2400;
  auto requested=settings;requested.audio.volume=.1f;requested.progress.archive="discard";requested.display.width=320;
@@ -114,7 +121,7 @@ int main(int argc,char** argv){
  assert(pt::android::ApplyGameGraphicsOverrides(graphics_path,settings,false));assert(settings.ray_tracing==pt::AppSettings::RayTracing{});
  assert(!pt::android::ApplyGameGraphicsOverrides(graphics_path.parent_path()/"missing.ini",settings,true));
  auto roundtrip=path.parent_path()/"roundtrip.ini";assert(pt::SaveAppSettings(roundtrip,settings));pt::AppSettings loaded;assert(pt::LoadAppSettings(roundtrip,loaded));assert(loaded.graphics==settings.graphics && loaded.progress==settings.progress);
- std::puts("Native checks passed: log Off/On and formatting; 10000 cached draws; lazy/unsupported/failed timing; 13 GPU policies; Custom to PS4 cycling");
+ std::puts("Native checks passed: log Off/On and formatting; 10000 cached draws; lazy/unsupported/failed timing; 13 GPU policies; Custom to PS4 cycling; confirmed Return to menu");
 }
 '''
 options='\n'.join(method('src/engine/platform/android_options.cpp',s) for s in ['std::filesystem::path PrivateFile(', 'float ReadNumber(', 'void Load()', 'int ConsumePerformanceProfile()', 'bool ConsumeGameGraphicsChanges()', 'std::filesystem::path GameGraphicsChangesFile()'])
@@ -151,7 +158,7 @@ int main(int argc,char** argv){assert(argc==3);storage=argv[1];std::string mode=
 with tempfile.TemporaryDirectory() as tmp:
     t=Path(tmp);flags=[os.environ.get('CXX','g++')]+shlex.split(os.environ.get('PT_TEST_CXX_FLAGS',''))+['-std=c++20','-pthread','-I'+str(repo/'src')]
     for folder in ['vulkan_headers-src/include','volk-src','vma-src/include']:flags+=['-I'+str(repo/'build/android/_deps'/folder)]
-    file=t/'native.cpp';file.write_text(prefix.replace('ROW_METHOD',row).replace('SECTIONS_METHOD',sections)+timing+'\n'+change+body)
+    file=t/'native.cpp';file.write_text(prefix.replace('RETURN_MENU_ACTION',return_menu_action).replace('ROW_METHOD',row).replace('SECTIONS_METHOD',sections)+timing+'\n'+change+body)
     subprocess.run(flags+['-D__ANDROID__','-c',str(repo/'src/engine/platform/settings.cpp'),'-o',str(t/'settings.o')],check=True,timeout=60)
     subprocess.run(flags+[str(file),str(repo/'src/engine/core/log.cpp'),str(repo/'src/engine/platform/graphics_presets.cpp'),str(t/'settings.o'),'-o',str(t/'native')],check=True,timeout=60)
     env=os.environ.copy();env['PT_LOGS']='0'

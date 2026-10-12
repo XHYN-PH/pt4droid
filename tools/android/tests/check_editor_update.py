@@ -22,7 +22,7 @@ signatures = ['private float dp(', 'private static float clamp(', 'private float
     'void setMode(', 'private void setShown(', 'void releaseAll()', 'private boolean anyFingerDown()',
     'static boolean isFingerEvent(', 'public boolean onTouchEvent(', 'private void updateLook(',
     'private void press(', 'private void release(int i)', 'private float[] axes(', 'private void send()',
-    'void beginEdit()', 'boolean cancelEditor(', 'private void finishEdit(', 'private boolean editEvent(',
+    'void beginEdit()', 'boolean cancelEditor(', 'private void finishEdit(', 'private boolean editEvent(', 'void reloadPreferences()',
     'protected void onDraw(', 'private void text(', 'private void drawStick(']
 
 prefix = r'''import java.util.*;
@@ -53,10 +53,10 @@ public class EditorTest {
  static class Paint {void setColor(int c){}void setStrokeWidth(float w){}void setAlpha(int a){}void setTextSize(float s){}float descent(){return 2;}float ascent(){return -8;}}
  static class Color {static int argb(int a,int r,int g,int b){return(a<<24)|(r<<16)|(g<<8)|b;}}
  static class Canvas {
-  int draws;void draw(){if(++draws>200)throw new AssertionError("unbounded drawing");}
+  int draws,circles;Set<String> texts=new HashSet<>();void draw(){if(++draws>200)throw new AssertionError("unbounded drawing");}
   void drawRoundRect(RectF r,float x,float y,Paint p){draw();}
-  void drawText(String s,float x,float y,Paint p){if(!Float.isFinite(x+y))throw new AssertionError("invalid text position");draw();}
-  void drawCircle(float x,float y,float radius,Paint p){draw();}
+  void drawText(String s,float x,float y,Paint p){if(!Float.isFinite(x+y))throw new AssertionError("invalid text position");texts.add(s);draw();}
+  void drawCircle(float x,float y,float radius,Paint p){circles++;draw();}
  }
  static class SharedPreferences {
   Map<String,Object> data=new HashMap<>();
@@ -68,13 +68,13 @@ public class EditorTest {
    void apply(){data.putAll(pending);}}
   Editor edit(){return new Editor();}
  }
- static class PTActivity {static void openMobileSettings(){}}
+ static class PTActivity {static void openMobileSettings(){}static void setTouchLayoutEditing(boolean v){}}
  static final int[] ACTION_BITS={1,8,2,4,16};static final String[] ACTION_NAMES={"Use","Zoom","Back","Pause","Name"};
  static final long HIDE_AFTER_MS=5000;
  Control[] controls=new Control[7];Stick move=new Stick(),look=new Stick();
  RectF safe=new RectF(),settingsHit=new RectF();RectF[] toolbar={new RectF(),new RectF(),new RectF(),new RectF()};
  Paint ring=new Paint(),fill=new Paint(),label=new Paint();SharedPreferences prefs=new SharedPreferences();
- int insetLeft,insetRight,insetTop,insetBottom,mode,lookStyle=1,selected=-1,editPointer=-1,toolbarPressed=-1,lastButtons=-1;
+ int insetLeft,insetRight,insetTop,insetBottom,mode,moveStyle=0,lookStyle=1,selected=-1,editPointer=-1,toolbarPressed=-1,lastButtons=-1;
  float deadZone=.05f,dragDx,dragDy,opacity=.7f,sensitivity=1,lastLx,lastLy,lastRx,lastRy,lookLastX,lookLastY;
  boolean floating=true,editing,shown=true;Runnable hideIdle=()->{};int width=1200,height=600;
  EditorTest(){for(int i=0;i<7;i++)controls[i]=new Control();load();}
@@ -111,9 +111,16 @@ suffix = r'''
   ok(t.safe.left==100 && t.safe.bottom==1030 && t.controls[0].area.left>=t.safe.left,"resizing respects safe area");
   t.setMode(1);t.beginEdit();ok(visibility==0 && t.shown && !nativeShown,"Off mode still allows editor");t.cancelEditor(new KeyEvent(1));ok(!t.editing && visibility==8 && !t.shown,"Back exits and restores Off mode");
   t.setMode(2);t.beginEdit();tap(t,0);ok(visibility==0 && t.shown && nativeShown,"Always mode restored after Save");
+  ok(t.moveStyle==0,"existing layouts default to visible movement");t.prefs.edit().putInt("move_style",1).putInt("look_style",1).apply();t.reloadPreferences();
+  canvas=new Canvas();t.onDraw(canvas);ok(canvas.circles==0 && !canvas.texts.contains("MOVE") && !canvas.texts.contains("LOOK"),"both hidden sticks draw nothing during play");
+  t.move.pointer=7;t.move.originX=100;t.move.originY=300;t.move.x=130;t.move.y=300;canvas=new Canvas();t.onDraw(canvas);ok(canvas.circles==0,"active hidden movement draws no thumb or ring");
+  t.beginEdit();canvas=new Canvas();t.onDraw(canvas);ok(canvas.circles==2 && canvas.texts.contains("MOVE") && canvas.texts.contains("LOOK"),"editor shows both hidden guides");
+  drag(t,5,400,400);t.controls[5].size=1.5f;tap(t,0);t.load();ok(t.moveStyle==1 && t.controls[5].size==1.5f,"layout Save preserves hidden mode and movement size");
+  t.move.pointer=8;t.prefs.edit().putInt("move_style",0).apply();t.reloadPreferences();ok(t.move.pointer<0 && t.moveStyle==0,"mode preference reload releases existing movement");
+  t.prefs.edit().putInt("move_style",99).apply();t.load();ok(t.moveStyle==1,"out-of-range hidden movement preference bounded");t.prefs.edit().putInt("move_style",-1).apply();t.load();ok(t.moveStyle==0,"negative movement preference bounded");
   for(int i=0;i<5000;i++){t.beginEdit();t.onTouchEvent(e(0,1,600,300));t.onDraw(new Canvas());t.finishEdit(false);}
   ok(!t.editing,"repeated editor open touch draw close completes");
-  System.out.println("Editor checks passed: "+checks+"; 5000 edit cycles; baseline freeze reproduced");
+  System.out.println("Editor checks passed: "+checks+"; 5000 edit cycles");
  }
 }'''
 java_home=Path(os.environ.get('JAVA_HOME',str(repo.parent/'toolchain/host/usr/lib/jvm/java-17-openjdk-amd64')))
@@ -124,8 +131,10 @@ with tempfile.TemporaryDirectory() as tmp:
         java.write_text(prefix+'\n'.join(method(text,s) for s in signatures)+suffix)
         subprocess.run([str(java_home/'bin/javac'),str(java)],check=True,timeout=30)
         subprocess.run([str(java_home/'bin/java'),'-cp',str(folder),'EditorTest']+(['hang'] if baseline else []),check=True,timeout=2 if baseline else 15)
-    baseline=subprocess.check_output(['git','show','a550b66a047c6b0e1423deb81392d773dc4fcfbd:'+path],cwd=repo,text=True)
+    # The first public fork has different commit IDs from the earlier private test build.
+    # 6e78c43 is the public revision before the editor loop was fixed.
+    baseline=subprocess.check_output(['git','show','6e78c43:'+path],cwd=repo,text=True)
     try: run(baseline,t/'baseline',True)
-    except subprocess.TimeoutExpired: pass
-    else: raise AssertionError('Expected the reported editor freeze in test.2')
+    except subprocess.TimeoutExpired: print('Baseline editor freeze reproduced')
+    else: raise AssertionError('Expected the reported editor freeze in the previous revision')
     run(source,t/'fixed')
