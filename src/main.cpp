@@ -861,6 +861,12 @@ std::filesystem::path FindGameDir(const Options& options) {
     if (options.game_dir_given || LooksLikeGameDir(options.game_dir)) {
         return options.game_dir;
     }
+#ifdef __ANDROID__
+    // Read an existing import from either app folder even if writable assets moved to the internal fallback.
+    for(const char* root:{SDL_GetAndroidExternalStoragePath(),SDL_GetAndroidInternalStoragePath()}){
+        if(root&&*root){const auto candidate=std::filesystem::path(root)/"game/CUSA01127";if(LooksLikeGameDir(candidate))return candidate;}
+    }
+#endif
     std::filesystem::path dir = pt::ExecutableDir();
     if (!dir.empty() && dir.filename().empty()) {
         dir = dir.parent_path();
@@ -2020,6 +2026,9 @@ public:
 #endif
 #ifdef __ANDROID__
         auto mobile=Row(kMobileSettings,"pc_mobile_settings",{"pc_open"},0,""); mobile.action=true; display.rows.push_back(std::move(mobile));
+        auto return_menu=Row(kReturnToMenu,"pc_return_to_menu",{"pc_return_value"},0,"pc_note_return_to_menu");
+        return_menu.action=true;
+        display.rows.push_back(std::move(return_menu));
 #endif
         out.push_back(std::move(display));
 
@@ -2653,6 +2662,7 @@ public:
     void Activate(int id) override {
 #ifdef __ANDROID__
         if(id==kMobileSettings) {pt::android::OpenMobileSettings();return;}
+        if(id==kReturnToMenu) {game_.RequestOptionsSave();Save();game_.RequestQuit();return;}
 #endif
         keep_cursor_ = false;
         if (id == kArchive) {
@@ -2800,7 +2810,7 @@ private:
         kLoopBrowser, kExtras, kFreecam, kPhotoMode, kStreetWalk, kStreetRestart, kStreetLeave, kLoopLock, kThirdPerson, kSpeedrun, kLiveSplit, kRunMenu, kRunReal, kRunGame, kRunBest,
         kArchive, kArchiveLock,
         kVr, kVrMode, kVrFlashlight, kVrTurn, kVrHeight, kVrWorldScale,
-        kSecondScreen, kTouchControls, kMobileSettings,
+        kSecondScreen, kTouchControls, kMobileSettings, kReturnToMenu,
         kLoopFirst = 1000,
         kRunSplitFirst = 3000,
         kModFirst = 2000,
@@ -4188,7 +4198,13 @@ int RunGame(App& app, pt::Vfs& vfs) {
         const bool keyboard_free = app.window && !show_settings && !(show_debug && ImGui::GetIO().WantCaptureKeyboard);
         // headless runs have no window to capture the mouse: injected mouse buttons act as in play unless the menu is open
         const bool menu_open = ui_ready && ui.MenuOpen();
-        const pt::MouseUse mouse_use = mouse_captured || (!app.window && !menu_open) ? pt::MouseUse::Look
+#ifdef __ANDROID__
+        // Touch and gyro look must work even when Android cannot grab a physical mouse pointer.
+        const bool gameplay_look=mouse_capture_requested;
+#else
+        const bool gameplay_look=mouse_captured;
+#endif
+        const pt::MouseUse mouse_use = gameplay_look || (!app.window && !menu_open) ? pt::MouseUse::Look
                                        : menu_open && !show_settings                   ? pt::MouseUse::Menu
                                                                                        : pt::MouseUse::None;
         pt::InputState polled = pads ? input.Poll(keyboard_free, mouse_use, !show_settings) : pt::InputState{};
@@ -5124,6 +5140,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
             static std::chrono::steady_clock::time_point frame_deadline{};
             const bool menu = ((ui_ready && ui.MenuOpen()) || show_settings || game.Paused()) && !photo_mode;
             int cap = app.settings.display.fps_limit;
+#ifdef __ANDROID__
+            cap=pt::android::EffectiveFrameLimit(cap);
+#endif
             if (menu) {
                 cap = cap > 0 ? std::min(cap, kMenuFpsCap) : kMenuFpsCap;
             }
@@ -5145,6 +5164,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
             if (reflex_paced) {
                 cap = 0;
             }
+#ifdef __ANDROID__
+            app.renderer.Context().SetAndroidFramePacing(cap);
+            if(app.renderer.Context().AndroidFramePacingActive())cap=0;
+#endif
             if (cap > 0) {
                 const auto period = std::chrono::nanoseconds(1000000000LL / cap);
                 const auto now = std::chrono::steady_clock::now();
@@ -5276,7 +5299,7 @@ int main(int argc, char** argv) {
     const std::string driver_advice = "Install the latest graphics driver from NVIDIA, AMD or Intel (a clean reinstall fixed this for other "
                                       "players), and close overlays such as RivaTuner or MSI Afterburner. P.T. needs a GPU with Vulkan 1.3.";
 #elif defined(__ANDROID__)
-    const std::string driver_advice="Choose Automatic or System Vulkan in pt4droid settings. Turnip drivers need a supported Adreno GPU. The renderer requires Vulkan 1.3.";
+    const std::string driver_advice="Choose Automatic or System Vulkan in pt4droid settings. Turnip needs supported Adreno; PanVK is experimental for Mali on Android 15+. The renderer requires Vulkan 1.3 and BC texture support.";
 #else
     const std::string driver_advice = "Make sure your graphics driver provides Vulkan 1.3 (Mesa 23 or newer, or the NVIDIA driver) and that "
                                       "P.T. runs inside your desktop session.";
@@ -5553,7 +5576,7 @@ int main(int argc, char** argv) {
     const bool test_device_lost = std::getenv("PT_TEST_CRASH") && std::string(std::getenv("PT_TEST_CRASH")) == "devicelost";
     const bool renderer_ready = app.renderer.Init(app.window, settings);
     if (!renderer_ready) {
-        startup_failure("The graphics device could not be set up (Vulkan).", driver_advice);
+        startup_failure("The graphics device could not be set up (Vulkan). "+app.renderer.Context().init_error, driver_advice);
     }
     if (renderer_ready && test_device_lost) {
         app.renderer.Context().CheckDeviceLost(VK_ERROR_DEVICE_LOST, "PT_TEST_CRASH");
