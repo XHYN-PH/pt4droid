@@ -27,7 +27,7 @@
 
 This fork adds customizable touch controls, an Android settings menu, individual graphics options, custom Vulkan driver imports, display refresh-rate selection and further mobile performance work.
 
-> **Current test build: 0.2.1-test.5.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
+> **Current test build: 0.2.1-test.6.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
 
 ## Features
 
@@ -69,8 +69,8 @@ Automatic driver selection uses bundled Turnip on **Adreno 6xx/7xx** and the **s
 1. Download the `pt4droid-*.apk` from [Releases](https://github.com/XHYN-PH/pt4droid/releases) and install it.
 2. Open **pt4droid**. The first launch offers storage access for shared Download folders. Android 11+ opens its **All files access** screen; Android 10 asks for runtime storage permission. You can decline and still use file-picker imports.
 3. Choose **Choose your P.T. .pkg**.
-4. Select a fake PKG made from your own game dump and wait for extraction to finish.
-5. Open **Settings** to configure controls, graphics and drivers, then start the game.
+4. Select a fake PKG made from your own game dump and wait for extraction to finish, then tap **Enter menu**.
+5. Open **Settings** to configure controls, graphics and drivers, then choose **Start**.
 
 If your package is inside a `.zip`, `.rar` or `.7z` archive, extract it with a file manager before choosing it.
 
