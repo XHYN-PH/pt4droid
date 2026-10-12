@@ -27,7 +27,7 @@
 
 This fork adds customizable touch controls, an Android settings menu, individual graphics options, custom Vulkan driver imports, display refresh-rate selection and further mobile performance work.
 
-> **Current test build: 0.2.1-test.6.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
+> **Current test build: 0.2.1-test.7.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
 
 ## Features
 
@@ -112,7 +112,7 @@ The ending's voice input uses on-device speech recognition. If recognition does 
 
 ## Graphics and performance
 
-Open **Game graphics** from the launcher or Android settings during play.
+Open **Settings → Game graphics** from the launcher or Android settings during play.
 
 Available options include:
 
@@ -143,7 +143,9 @@ Additional options:
 
 For a starting performance configuration, use **Maximum performance**, keep **Optimized mobile bloom** enabled and leave logs Off. Increase render scale or effects gradually if your device has room.
 
-Renderer changes reduce repeated Vulkan state updates, unnecessary touch-input updates, screenshot copies and diagnostic work. **These changes are not a measured FPS guarantee.** Compare the same scene, camera position and settings after warmup when testing.
+Test.7 reduces repeated GPU barriers, reuses unchanged static shadow tiles, tightens static shadow bounds and skips fully occluded mirror captures. Particle lighting uses fixed storage, fully overwritten outputs discard old contents, and empty offscreen particle passes skip buffer preparation. GPU timing and shadow counters are also corrected. Your existing graphics settings and fixed render resolution are retained.
+
+**These changes are not a measured FPS guarantee.** Compare the same scene, camera position and settings after warmup when testing. See [the test.7 changelog](docs/releases/pt4droid-v0.2.1-test.7.md) for details.
 
 ### High-refresh displays
 
@@ -190,7 +192,7 @@ Driver-import diagnostics use `driver-import.log` in the app's data folder. Olde
 - Speech recognition may need the controller-trigger or touch-button fallback.
 - On dual-screen handhelds, the extra display can show the clock and subtitles. A connected TV may be treated as that display; change **Display → Second screen** if needed.
 
-See [the test.3 update details](docs/android-test3-update.md) for the fixes, verification and remaining device-testing limits.
+See [the test.7 update details](docs/android-test7-update.md) for the fixes, verification and remaining device-testing limits.
 
 ## Building from source
 
