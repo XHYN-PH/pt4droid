@@ -83,6 +83,12 @@ struct Draw {
     bool opaque = false;
 };
 
+inline bool BufferedEffect(const Draw& draw, bool liquid_scene = false) {
+    const bool effect_liquid = draw.refract && !draw.opaque && !liquid_scene;
+    return (!draw.refract || effect_liquid) &&
+           (draw.blend == BlendMode::Alpha || draw.blend == BlendMode::Add || draw.blend == BlendMode::Sub);
+}
+
 struct RenderList {
     std::vector<Quad> quads;
     std::vector<Draw> draws;
