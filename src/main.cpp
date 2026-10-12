@@ -50,6 +50,7 @@
 #include "engine/fs/vfs.h"
 #include "engine/physics/collision_world.h"
 #include "engine/platform/input.h"
+#include "engine/platform/frame_limit.h"
 #include "engine/platform/controller_speaker.h"
 #include "engine/platform/controller_feedback.h"
 #include "engine/platform/livesplit.h"
@@ -3764,6 +3765,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
     uint64_t frame = 0;
     uint64_t last_ticks = SDL_GetTicksNS();
     pt::InputState pending_input;
+#ifdef __ANDROID__
+    glm::vec2 tick_direct_look{0.0f};
+#endif
     float accumulator = 0.0f;
     pt::Camera tick_camera_from = game.ViewCamera();
     pt::Camera motion_camera_from = tick_camera_from;
@@ -4013,6 +4017,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     bool speaker_route_requested = false;
     constexpr std::array<uint32_t, 2> kLisaCryEvents{0xAD52F3C2u, 0x0CB2A9B7u};
     while (running) {
+        const auto frame_started = std::chrono::steady_clock::now();
         // VR: the headset is the view, a minimized window does not stop it; the frame wait paces the loop. While the runtime has
         // no running session (the headset asleep or not yet ready, its compositor restarting) the game holds as a window in the
         // background does
@@ -4408,6 +4413,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
             pt::InputState state = pending_input;
             script.Apply(frame, game, state);
             state = pt::game::GateEndingOutroInput(game.Controller().Step(), state);
+#ifdef __ANDROID__
+            tick_direct_look = !theater && !game.Paused() && !game.Demos().ControlsPlayer() &&
+                               !(game.GetPlayer().locks.Mask('B') & 2) ? state.mouse_look : glm::vec2(0.0f);
+#endif
             if (freecam) {
                 state = FreecamInput(state);
             }
@@ -4714,11 +4723,17 @@ int RunGame(App& app, pt::Vfs& vfs) {
         }
         // the weight of the state after the last tick for everything but the camera (1 without a window, after a cut)
         float blend = 1.0f;
+#ifdef __ANDROID__
+        float camera_blend = 1.0f;
+#endif
         if (paced && !theater) {
             const float t = std::clamp(accumulator / step, 0.0f, 1.0f);
             bool cut = false;
             if (tick_blend >= 1) {
                 camera = BlendCameras(tick_camera_from, camera, t, &cut);
+#ifdef __ANDROID__
+                camera_blend = cut ? 1.0f : t;
+#endif
             }
             blend = cut || tick_blend < 2 ? 1.0f : t;
             BlendDraws(tick_state, draw_items, blend, blended_skins);
@@ -4726,11 +4741,19 @@ int RunGame(App& app, pt::Vfs& vfs) {
         }
         const pt::game::TickBlend* light_blend = paced && !theater ? &tick_state.lights : nullptr;
         if (paced && !theater && !freecam && !pt::game::EndingOutroInputBlocked(game.Controller().Step()) &&
-            polled.prompts.device == pt::PromptDevice::Keyboard && !scripted_camera &&
+#ifndef __ANDROID__
+            polled.prompts.device == pt::PromptDevice::Keyboard &&
+#endif
+            !scripted_camera &&
             !game.Demos().ControlsPlayer() && !game.Paused() && !(game.GetPlayer().locks.Mask('B') & 2)) {
             const pt::Camera unturned = camera;
+#ifdef __ANDROID__
+            camera = pt::game::RenderDeltaLook(camera, tick_direct_look, pending_input.mouse_look, camera_blend,
+                                              game.Options().invert_x, game.Options().invert_y);
+#else
             camera = pt::game::RenderMouseLook(camera, game.ViewCamera(), pending_input.mouse_look,
                                               game.Options().invert_x, game.Options().invert_y);
+#endif
             camera = game.ThirdPersonTurn(unturned, camera);
             camera = game.PeepholeTurn(camera);
         }
@@ -5122,7 +5145,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
                             ui_ready && ui.MenuOpen() ? ", menu open" : "");
 #ifdef __ANDROID__
                 const auto& timings=app.scene.Stats();
-                pt::LogInfo("mobile passes: shadows {:.2f}, gbuffer {:.2f}, occlusion {:.2f}, lighting {:.2f}, compose {:.2f}, post {:.2f} ms; bloom {:.2f}, reflections {:.2f}, renderer CPU {:.2f} ms",
+                pt::LogInfo("mobile passes: shadows {:.2f}, mirror {:.2f}, gbuffer {:.2f}, lighting/AO {:.2f}, compose {:.2f}, post {:.2f} ms; bloom {:.2f}, reflections {:.2f}, renderer CPU {:.2f} ms",
                     timings.pass_ms[0],timings.pass_ms[1],timings.pass_ms[2],timings.pass_ms[3],timings.pass_ms[4],timings.pass_ms[5],timings.part_ms[5],timings.part_ms[3],timings.cpu_ms);
 #endif
                 status_start = status_now;
@@ -5137,7 +5160,6 @@ int RunGame(App& app, pt::Vfs& vfs) {
             // second; pt.ini [display] fps_limit caps everything else (0, the default, leaves it to v-sync). The photo mode flies
             // a camera and is not held.
             constexpr int kMenuFpsCap = 60;
-            static std::chrono::steady_clock::time_point frame_deadline{};
             const bool menu = ((ui_ready && ui.MenuOpen()) || show_settings || game.Paused()) && !photo_mode;
             int cap = app.settings.display.fps_limit;
 #ifdef __ANDROID__
@@ -5169,19 +5191,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
             if(app.renderer.Context().AndroidFramePacingActive())cap=0;
 #endif
             if (cap > 0) {
-                const auto period = std::chrono::nanoseconds(1000000000LL / cap);
-                const auto now = std::chrono::steady_clock::now();
-                // a frame that ran late starts the count again rather than letting the next frames catch up
-                if (frame_deadline.time_since_epoch().count() == 0 || now - frame_deadline > period) {
-                    frame_deadline = now;
-                }
-                frame_deadline += period;
-                const auto wait = std::chrono::duration_cast<std::chrono::nanoseconds>(frame_deadline - std::chrono::steady_clock::now());
-                if (wait.count() > 0) {
-                    SDL_DelayPrecise(static_cast<Uint64>(wait.count()));
-                }
-            } else {
-                frame_deadline = {};
+                const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - frame_started).count();
+                const int64_t wait = pt::FrameLimitWaitNs(elapsed, cap);
+                if (wait > 0) SDL_DelayPrecise(static_cast<Uint64>(wait));
             }
         }
         if ((options.headless && frame >= static_cast<uint64_t>(options.frames)) || game.QuitRequested()) {
