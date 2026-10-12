@@ -12,6 +12,7 @@
 #include <string>
 
 #include "engine/core/log.h"
+#include "engine/platform/android.h"
 #include "engine/fs/vfs.h"
 #include "engine/render/scene_renderer.h"
 
@@ -1464,6 +1465,9 @@ void SceneRenderer::RecordOcclusion(VkCommandBuffer cmd, const ViewSetup& view) 
     BeginPass(cmd, extent_, {{&ao_[0], false, {}}});
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, 0, 0, 0);
+#ifdef __ANDROID__
+    push.ids.y=android::PerformanceOptions().ao_quality;
+#endif
     push.f0 = glm::vec4(3.0f, 1.0f, 0.0f, 0.0f);
     push.f1 = glm::vec4(1.0f, 4.0f, 1.0f, 0.25f);
     // GrxLineSSAOParameters gainonStart 0.85, gainonRange 5, falloffRange 150 (0xE21CD0 copies them to the plugin, 0xDA39F0 makes
@@ -2166,6 +2170,9 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
                      {&refmap_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, 0, 0, 0);
+#ifdef __ANDROID__
+    push.ids.y=android::PerformanceOptions().reflection_quality;
+#endif
     push.f0 = glm::vec4(plane, kFarLimit);
     // PT_REFLECT_DEPTH_LEGACY=1: under a jittered view the march and the reflection layer interpolate the depth wherever the 2x2
     // texels lie within 5 % of each other, as before ReflectionPlanarDepth (reflection_mix.glsl), for A/B
@@ -2215,6 +2222,7 @@ void SceneRenderer::RecordReflections(VkCommandBuffer cmd, const ViewSetup& view
         BeginPass(cmd, refmap_.Extent(), {{&refmap_, false, {}}});
         Fullscreen(cmd, reflect_make_, push);
         vkCmdEndRendering(cmd);
+        push.ids.y=0; // Sampling quality belongs only to the march, not the later blend/history passes.
     }
 
     UseTargets(cmd, {{&refmap_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},

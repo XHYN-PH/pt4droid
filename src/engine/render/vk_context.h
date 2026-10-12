@@ -71,6 +71,8 @@ public:
     void DestroySwapchain();
     VkResult AcquireNextImage(VkSemaphore semaphore, uint32_t* index);
     VkResult QueuePresent(const VkPresentInfoKHR& info);
+    void SetAndroidFramePacing(int fps);
+    bool AndroidFramePacingActive() const { return swappy_active_; }
     const SwapchainHooks* SwapchainOwner() const { return swapchain_owner_; }
     VkImageLayout PresentLayout() const { return swapchain_owner_ ? swapchain_owner_->PresentLayout() : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; }
 
@@ -108,6 +110,7 @@ public:
     bool force_vsync_off = false;
     // the last CreateSwapchain failed in Vulkan (the surface or a swapchain hook refused it), not for want of a window size
     bool swapchain_refused = false;
+    std::string init_error;
 
     // Ray queries (the ray traced shadows PC option): set want_ray_query before Init to create the device with
     // VK_KHR_acceleration_structure, VK_KHR_ray_query, VK_KHR_deferred_host_operations and buffer device addresses
@@ -136,6 +139,8 @@ private:
     VkSurfaceCapabilitiesKHR surface_caps_{};
     VkExtent2D window_extent_{};
     bool suboptimal_logged_ = false;
+    bool swappy_ready_=false,swappy_attempted_=false,swappy_active_=false;
+    int swappy_frame_limit_=-1;
     SwapchainHooks* swapchain_owner_ = nullptr;
     // Android: the window and the native window the surface was made for. Android hands the app a new native window after
     // it comes back from the background; the surface is then made again (CreateSwapchain)

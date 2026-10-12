@@ -174,7 +174,17 @@ bool Renderer::InitImGui(SDL_Window* window) {
 
 bool Renderer::CreateTargets(uint32_t width, uint32_t height) {
     const VkExtent3D extent{width, height, 1};
-    if (!ctx_.CreateImage(scene_color_, SceneColorFormat(), extent,
+    VkExtent3D scene_extent=extent;
+#ifdef __ANDROID__
+    mobile_sgsr_=android::PerformanceOptions().sgsr;
+    if(mobile_sgsr_&&composite_layout_&&!sgsr_pipeline_&&!CreateCompositeShader(final_format_,"composite_sgsr.frag",sgsr_pipeline_))return false;
+    if(mobile_sgsr_&&window_&&render_extent_.width==0){
+        const float scale=android::RenderScale();
+        scene_extent.width=std::max(2u,static_cast<uint32_t>(width*scale)&~1u);
+        scene_extent.height=std::max(2u,static_cast<uint32_t>(height*scale)&~1u);
+    }
+#endif
+    if (!ctx_.CreateImage(scene_color_, SceneColorFormat(), scene_extent,
                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
         return false;
     }
@@ -272,7 +282,7 @@ bool Renderer::CreateCompositePipeline(VkFormat output_format) {
     final_set_ = sets[1];
     WriteCompositeSets();
 
-    VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64};
+    VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 80};
     VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout_info.setLayoutCount = 1;
     layout_info.pSetLayouts = &composite_set_layout_;
@@ -280,9 +290,19 @@ bool Renderer::CreateCompositePipeline(VkFormat output_format) {
     layout_info.pPushConstantRanges = &push;
     vkCreatePipelineLayout(ctx_.device, &layout_info, nullptr, &composite_layout_);
 
+    if(!CreateCompositeShader(output_format,"composite.frag",composite_pipeline_))return false;
+    if(final_format_!=output_format&&!CreateCompositeShader(final_format_,"composite.frag",final_composite_pipeline_))return false;
+    if(mobile_sgsr_&&!CreateCompositeShader(final_format_,"composite_sgsr.frag",sgsr_pipeline_))return false;
+    return true;
+}
+
+bool Renderer::CreateCompositeShader(VkFormat output_format,const char* fragment,VkPipeline& pipeline){
+
     VkShaderModule vert = vk::LoadShaderModule(ctx_.device, "fullscreen.vert");
-    VkShaderModule frag = vk::LoadShaderModule(ctx_.device, "composite.frag");
+    VkShaderModule frag = vk::LoadShaderModule(ctx_.device, fragment);
     if (!vert || !frag) {
+        if(vert)vkDestroyShaderModule(ctx_.device,vert,nullptr);
+        if(frag)vkDestroyShaderModule(ctx_.device,frag,nullptr);
         return false;
     }
     VkPipelineShaderStageCreateInfo stages[2] = {{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO},
@@ -329,12 +349,7 @@ bool Renderer::CreateCompositePipeline(VkFormat output_format) {
     info.pColorBlendState = &blend;
     info.pDynamicState = &dynamic;
     info.layout = composite_layout_;
-    bool ok = vk::Check(vk::CreateGraphicsPipelinesCached(ctx_.device, 1, &info, nullptr, &composite_pipeline_), "composite pipeline");
-    if (ok && final_format_ != output_format) {
-        rendering.pColorAttachmentFormats = &final_format_;
-        ok = vk::Check(vk::CreateGraphicsPipelinesCached(ctx_.device, 1, &info, nullptr, &final_composite_pipeline_),
-                       "composite intermediate pipeline");
-    }
+    bool ok = vk::Check(vk::CreateGraphicsPipelinesCached(ctx_.device, 1, &info, nullptr, &pipeline), "composite pipeline");
     vkDestroyShaderModule(ctx_.device, vert, nullptr);
     vkDestroyShaderModule(ctx_.device, frag, nullptr);
     return ok;
@@ -342,6 +357,7 @@ bool Renderer::CreateCompositePipeline(VkFormat output_format) {
 
 void Renderer::Shutdown() {
     if (!ctx_.device) {
+        ctx_.Shutdown();
         return;
     }
     vkDeviceWaitIdle(ctx_.device);
@@ -353,6 +369,7 @@ void Renderer::Shutdown() {
     }
     DestroyXr();
     if (final_composite_pipeline_) vkDestroyPipeline(ctx_.device, final_composite_pipeline_, nullptr);
+    if(sgsr_pipeline_)vkDestroyPipeline(ctx_.device,sgsr_pipeline_,nullptr);
     vkDestroyPipeline(ctx_.device, composite_pipeline_, nullptr);
     vkDestroyPipelineLayout(ctx_.device, composite_layout_, nullptr);
     vkDestroyDescriptorPool(ctx_.device, composite_pool_, nullptr);
@@ -384,7 +401,7 @@ void Renderer::Resize(uint32_t width, uint32_t height) {
 
 bool Renderer::BeginFrame(bool present) {
 #ifdef __ANDROID__
-    if (android::ConsumeRenderScaleChange()) swapchain_dirty_ = true;
+    if (android::ConsumeRenderScaleChange()||mobile_sgsr_!=android::PerformanceOptions().sgsr) swapchain_dirty_ = true;
 #endif
     Frame& frame = frames_[frame_index_];
     ctx_.CheckDeviceLost(vkWaitForFences(ctx_.device, 1, &frame.in_flight, VK_TRUE, UINT64_MAX), "frame fence wait");
@@ -489,7 +506,7 @@ void Renderer::Composite(VkCommandBuffer cmd, VkDescriptorSet set, float mode, V
     VkRect2D scissor{offset, extent};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    const VkPipeline pipeline = target_format == final_format_ && final_format_ != output_format_ ? final_composite_pipeline_ : composite_pipeline_;
+    const VkPipeline pipeline = mode<.5f&&mobile_sgsr_&&sgsr_pipeline_&&output_mode_==RendererOutputMode::Sdr ? sgsr_pipeline_ : target_format == final_format_ && final_format_ != output_format_ ? final_composite_pipeline_ : composite_pipeline_;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, composite_layout_, 0, 1, &set, 0, nullptr);
     const float brightness = std::clamp(brightness_override_ > 0.0f ? brightness_override_ : output_brightness, 0.1f, 4.0f);
@@ -497,9 +514,14 @@ void Renderer::Composite(VkCommandBuffer cmd, VkDescriptorSet set, float mode, V
     // texel shape in a wider or narrower window (composite.frag)
     /* The grain tiles three times across the original 16:9 frame; scaling by the window's width in 16:9 frames keeps the grain texel size on ultrawide. */
     const float across = extent.height ? (static_cast<float>(extent.width) / static_cast<float>(extent.height)) / (16.0f / 9.0f) : 1.0f;
-    const float push[16] = {exposure, brightness, mode, static_cast<float>(photo_filter), fade[0], fade[1], fade[2], fade[3],
+    float sharpness=0;
+#ifdef __ANDROID__
+    const auto mobile=android::PerformanceOptions();
+    if(mobile.sgsr&&mode<.5f&&output_mode_==RendererOutputMode::Sdr&&scene_color_.extent.width<extent.width)sharpness=mobile.sharpness;
+#endif
+    const float push[20] = {exposure, brightness, mode, static_cast<float>(photo_filter), fade[0], fade[1], fade[2], fade[3],
                             grain[0], grain[1], grain[2], grain[3], grain_offset[0], grain_offset[1], across,
-                            static_cast<float>(output_mode_)};
+                            static_cast<float>(output_mode_),1.f/std::max(scene_color_.extent.width,1u),1.f/std::max(scene_color_.extent.height,1u),sharpness,0};
     vkCmdPushConstants(cmd, composite_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), push);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
@@ -513,7 +535,7 @@ void Renderer::EndFrame(bool draw_ui) {
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     VkImage target_image = window_ ? (presenting_ ? ctx_.swapchain.images[image_index_] : VK_NULL_HANDLE) : output_.image;
     VkImageView target_view = window_ ? (presenting_ ? ctx_.swapchain.views[image_index_] : VK_NULL_HANDLE) : output_.view;
-    const VkExtent2D extent = RenderExtent();
+    const VkExtent2D extent = {final_.extent.width,final_.extent.height};
     const bool xr = std::exchange(xr_pending_, false);
     vk::ImageBarrier(cmd, final_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

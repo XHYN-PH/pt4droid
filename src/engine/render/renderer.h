@@ -100,6 +100,7 @@ private:
     bool CreateTargets(uint32_t width, uint32_t height);
     void DestroyTargets();
     bool CreateCompositePipeline(VkFormat output_format);
+    bool CreateCompositeShader(VkFormat output_format,const char* fragment,VkPipeline& pipeline);
     bool InitImGui(SDL_Window* window);
     void Composite(VkCommandBuffer cmd, VkDescriptorSet set, float mode, VkExtent2D extent, VkFormat target_format,
                    VkOffset2D offset = {0, 0});
@@ -116,6 +117,7 @@ private:
     uint32_t frame_index_ = 0;
     uint32_t image_index_ = 0;
     bool swapchain_dirty_ = false;
+    bool mobile_sgsr_ = false;
     bool imgui_ready_ = false;
     bool output_ready_ = false;
     bool final_ready_ = false;
@@ -136,6 +138,7 @@ private:
     VkDescriptorSet final_set_ = VK_NULL_HANDLE;
     VkPipelineLayout composite_layout_ = VK_NULL_HANDLE;
     VkPipeline composite_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline sgsr_pipeline_ = VK_NULL_HANDLE;
     VkPipeline final_composite_pipeline_ = VK_NULL_HANDLE;
 
     // VR (SetRenderExtent, SetXrFrame)

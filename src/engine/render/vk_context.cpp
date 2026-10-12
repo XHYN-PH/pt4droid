@@ -28,6 +28,12 @@
 #include "engine/core/log.h"
 #include "engine/render/hdr_output.h"
 #include "engine/render/pipeline_cache_store.h"
+#ifdef __ANDROID__
+#include <swappy/swappyVk.h>
+#include "engine/platform/mobile_frame_pacing.h"
+#include <SDL3/SDL_system.h>
+#include <jni.h>
+#endif
 
 namespace pt {
 extern bool g_checkpoints;
@@ -35,6 +41,15 @@ extern bool g_checkpoints;
 
 namespace pt::vk {
 namespace {
+#ifdef __ANDROID__
+VkInstance swappy_instance=VK_NULL_HANDLE;
+// Swappy must use exactly the loader owning our handles, including imported drivers.
+const SwappyVkFunctionProvider swappy_provider{
+    [](){return vkGetInstanceProcAddr!=nullptr;},
+    [](const char* name)->void*{return reinterpret_cast<void*>(vkGetInstanceProcAddr(swappy_instance,name));},
+    [](){}
+};
+#endif
 
 VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT,
                                              const VkDebugUtilsMessengerCallbackDataEXT* data, void*) {
@@ -160,6 +175,7 @@ std::string VulkanLibraryPath() {
 }
 
 bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
+    init_error.clear();
 #ifdef __APPLE__
     if (!loader) {
         loader = LoadVulkanLibrary(window);
@@ -230,6 +246,10 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
         return false;
     }
     volkLoadInstance(instance);
+#ifdef __ANDROID__
+    swappy_instance=instance;
+    SwappyVk_setFunctionProvider(&swappy_provider);
+#endif
 
     if (validation) {
         VkDebugUtilsMessengerCreateInfoEXT messenger_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
@@ -318,6 +338,7 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     }
     if (!physical) {
         LogError("vulkan: no Vulkan 1.3 device with a graphics queue");
+        init_error="No Vulkan 1.3 GPU with a graphics and presentation queue was found.";
         return false;
     }
     LogInfo("vulkan: using {} (driver {:X})", properties.deviceName, properties.driverVersion);
@@ -351,6 +372,8 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
         for (const auto& feature : needed) {
             if (!feature.value) {
                 LogError("vulkan: required feature {} is not available on {}", feature.name, properties.deviceName);
+                if(init_error.empty())init_error="The selected driver is missing: ";else init_error+=", ";
+                init_error+=feature.name;
                 complete = false;
             }
         }
@@ -390,6 +413,14 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     queue_info.queueCount = 1;
     queue_info.pQueuePriorities = &priority;
     std::vector<const char*> device_extensions;
+#ifdef __ANDROID__
+    uint32_t available_count=0;
+    vkEnumerateDeviceExtensionProperties(physical,nullptr,&available_count,nullptr);
+    std::vector<VkExtensionProperties> swappy_available(available_count);
+    vkEnumerateDeviceExtensionProperties(physical,nullptr,&available_count,swappy_available.data());
+    const auto swappy_extensions=android::FramePacingExtensions(physical,available_count,swappy_available.data(),SwappyVk_determineDeviceExtensions);
+    for(const auto& name:swappy_extensions)device_extensions.push_back(name.data());
+#endif
     if (surface) {
         device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     }
@@ -488,6 +519,9 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     }
     volkLoadDevice(device);
     vkGetDeviceQueue(device, queue_family, 0, &queue);
+#ifdef __ANDROID__
+    SwappyVk_setQueueFamilyIndex(device,queue,queue_family);
+#endif
     g_checkpoints = checkpoints && vkCmdSetCheckpointNV;
 
     const PipelineCacheIdentity cache_identity = PipelineCacheIdentityFor(properties);
@@ -608,6 +642,9 @@ void Context::Shutdown() {
         if (before_device_destroy) {
             before_device_destroy();
         }
+#ifdef __ANDROID__
+        SwappyVk_destroyDevice(device);
+#endif
         vkDestroyDevice(device, nullptr);
     }
     if (surface) {
@@ -621,6 +658,7 @@ void Context::Shutdown() {
     }
     device = VK_NULL_HANDLE;
     instance = VK_NULL_HANDLE;
+    surface=VK_NULL_HANDLE;messenger=VK_NULL_HANDLE;allocator=nullptr;upload_pool_=VK_NULL_HANDLE;
 }
 
 bool Context::CreateAndroidSurface() {
@@ -732,7 +770,8 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
         } else if (caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) {
             logical = {extent.height, extent.width};
         }
-        const float scale = android::RenderScale();
+        // Keep compositor upscaling as the fast default; full-size output is opt-in for SGSR.
+        const float scale = android::PerformanceOptions().sgsr?1.f:android::RenderScale();
         const VkExtent2D scaled{std::max(2u, static_cast<uint32_t>(logical.width * scale) & ~1u),
                                 std::max(2u, static_cast<uint32_t>(logical.height * scale) & ~1u)};
         extent.width = std::clamp(scaled.width, caps.minImageExtent.width, caps.maxImageExtent.width);
@@ -831,6 +870,11 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
 }
 
 void Context::DestroySwapchain() {
+#ifdef __ANDROID__
+    if(swappy_ready_&&swapchain.handle)SwappyVk_destroySwapchain(device,swapchain.handle);
+    swappy_ready_=swappy_attempted_=swappy_active_=false;
+    swappy_frame_limit_=-1;
+#endif
     for (VkImageView view : swapchain.views) {
         vkDestroyImageView(device, view, nullptr);
     }
@@ -904,7 +948,37 @@ VkResult Context::QueuePresent(const VkPresentInfoKHR& info) {
     if (swapchain_owner_) {
         return swapchain_owner_->QueuePresent(queue, info);
     }
+#ifdef __ANDROID__
+    if(swappy_active_)return SwappyVk_queuePresent(queue,&info);
+#endif
     return vkQueuePresentKHR(queue, &info);
+}
+
+void Context::SetAndroidFramePacing(int fps){
+#ifdef __ANDROID__
+    swappy_active_=false;
+    if(fps<=0||!android::PerformanceOptions().frame_pacing||!swapchain.handle||swapchain_owner_)return;
+    if(!swappy_attempted_){
+        swappy_attempted_=true;
+        auto* env=static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());auto activity=static_cast<jobject>(SDL_GetAndroidActivity());
+        uint64_t refresh=0;
+        if(env&&activity)swappy_ready_=SwappyVk_initAndGetRefreshCycleDuration(env,activity,physical,device,swapchain.handle,&refresh);
+        if(env&&env->ExceptionCheck()){env->ExceptionClear();swappy_ready_=false;}
+        if(env&&activity)env->DeleteLocalRef(activity);
+        if(swappy_ready_){
+            // DisplayRefresh owns the requested display rate. Do not let Swappy replace it with the FPS cap.
+            SwappyVk_setAutoSwapInterval(false);SwappyVk_setAutoPipelineMode(false);
+            SwappyVk_enableStats(swapchain.handle,false);
+        }
+    }
+    if(swappy_ready_){
+        if(swappy_frame_limit_!=fps){SwappyVk_setSwapIntervalNS(device,swapchain.handle,1000000000ULL/std::clamp(fps,1,240));swappy_frame_limit_=fps;}
+        bool enabled=false;
+        swappy_active_=SwappyVk_isEnabled(swapchain.handle,&enabled)&&enabled;
+    }
+#else
+    (void)fps;
+#endif
 }
 
 bool Context::CreateImage(Image& out, VkFormat format, VkExtent3D extent, VkImageUsageFlags usage, uint32_t mip_levels,
