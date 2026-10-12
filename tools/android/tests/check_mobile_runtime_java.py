@@ -87,12 +87,12 @@ public class StorageTest{
   StorageTest s=new StorageTest();s.promptFirstRunStorage();ok(dialogs==1&&s.prefs.asked,"first launch prompts and persists once");s.promptFirstRunStorage();ok(dialogs==1,"no prompt loop");AlertDialog.allow.accept(null,0);ok(s.waitingForAccess&&s.firstRunAccess&&s.lastIntent.action.equals("app")&&s.lastCode==ASK_STORAGE,"first-run opens the per-app system grant");
   s.finishStorageRequest();ok(!s.waitingForAccess&&!s.firstRunAccess&&welcome==1&&starts==0,"denial returns to import screen without launching");s.pickPackage();ok(s.lastCode==PICK_PKG&&s.lastIntent.action.equals("pick"),"file-picker import remains available without access");
   s.sharedGame=true;s.firstRunAccess=true;s.requestAllFilesAccess();Environment.granted=true;s.finishStorageRequest();ok(ready==1&&starts==0,"first-run grant refreshes launcher without auto-start");
-  s.requestAllFilesAccess();ok(starts==1,"manual extracted-files action can start after grant");
+  s.requestAllFilesAccess();ok(ready==2&&starts==0,"manual extracted-files action enters menu without auto-start");
   s.firstRunAccess=true;s.ownGame=false;s.sharedGame=false;s.requestAllFilesAccess();ok(!s.firstRunAccess&&welcome==2,"grant race consumes the first-run flag safely");
   Environment.granted=false;StorageTest blocked=new StorageTest();blocked.firstRunAccess=true;blocked.failSettings=2;blocked.requestAllFilesAccess();ok(!blocked.waitingForAccess&&!blocked.firstRunAccess&&android.widget.Toast.shown==1,"missing settings screen does not leave pending state");
   StorageTest fallback=new StorageTest();fallback.firstRunAccess=true;fallback.failSettings=1;fallback.requestAllFilesAccess();ok(fallback.lastIntent.action.equals("all")&&fallback.waitingForAccess,"global settings fallback works");fallback.finishStorageRequest();ok(!fallback.waitingForAccess,"cancelled settings returns cleanly");
-  Build.VERSION.SDK_INT=29;StorageTest legacy=new StorageTest();legacy.firstRunAccess=true;legacy.requestAllFilesAccess();ok(legacy.requests==1&&legacy.lastCode==ASK_STORAGE,"Android 10 requests runtime storage access");legacy.permission=0;legacy.sharedGame=true;legacy.finishStorageRequest();ok(!legacy.waitingForAccess&&ready==2,"Android 10 grant refreshes ready screen");
-  StorageTest own=new StorageTest();own.ownGame=true;own.firstRunAccess=true;own.requestAllFilesAccess();own.finishStorageRequest();ok(ready==3,"imported internal game works after denied shared access");
+  Build.VERSION.SDK_INT=29;StorageTest legacy=new StorageTest();legacy.firstRunAccess=true;legacy.requestAllFilesAccess();ok(legacy.requests==1&&legacy.lastCode==ASK_STORAGE,"Android 10 requests runtime storage access");legacy.permission=0;legacy.sharedGame=true;legacy.finishStorageRequest();ok(!legacy.waitingForAccess&&ready==3,"Android 10 grant refreshes ready screen");
+  StorageTest own=new StorageTest();own.ownGame=true;own.firstRunAccess=true;own.requestAllFilesAccess();own.finishStorageRequest();ok(ready==4,"imported internal game works after denied shared access");
   System.out.println("First-run storage and file-picker checks passed: "+checks);
  }
 }'''
