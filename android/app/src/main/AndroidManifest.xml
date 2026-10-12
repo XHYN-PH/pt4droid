@@ -31,7 +31,7 @@
         android:requestLegacyExternalStorage="true"
         android:hardwareAccelerated="true">
 
-        <!-- the first screen: starts the game when its files are in place, otherwise sets them up from the player's .pkg -->
+        <!-- the launcher offers Start when game files are ready, otherwise sets them up from the player's .pkg -->
         <activity android:name=".SetupActivity"
             android:label="${ptAppLabel}"
             android:theme="@style/AppTheme"
