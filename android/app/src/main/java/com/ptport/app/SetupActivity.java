@@ -32,9 +32,9 @@ import android.widget.ImageView;
 
 import java.io.File;
 
-/* The first screen: starts the game when its files are in place, otherwise sets them up. The player picks their P.T. .pkg
+/* The first screen: offers Start when the game files are in place, otherwise sets them up. The player picks their P.T. .pkg
    with Android's file picker (no storage permission needed for that), libptsetup.so takes the three game archives out of it
-   into the app's own folder (src/pkginstall), and the game starts. Players who already have the three files can put them in
+   into the app's own folder (src/pkginstall), then enters the launcher. Players who already have the three files can put them in
    Download instead, which needs All files access. Everything is reachable with a gamepad: the d-pad moves, A presses. */
 public class SetupActivity extends Activity {
     private static final int PICK_PKG = 1;
@@ -100,7 +100,7 @@ public class SetupActivity extends Activity {
     @Override protected void onDestroy(){cancelled=true;if(mobileSettings!=null)mobileSettings.detach();super.onDestroy();if(handoffToGame)android.os.Process.killProcess(android.os.Process.myPid());}
     private void showReady(){
         panel.removeAllViews();brand();
-        button("Continue",v->startGame()).requestFocus();
+        button("Start",v->startGame()).requestFocus();
         button("Settings",v->mobileSettings.show());
         button("Delete saves",v->mobileSettings.deleteSaves());
         button("GitHub • project & updates",v->openGithub());
@@ -163,8 +163,8 @@ public class SetupActivity extends Activity {
         panel.removeAllViews();
         title("Ready");
         text("P.T. is set up. The .pkg is not needed any more: deleting it frees about 1.3 GB.");
-        Button start = button("Start P.T.", v -> startGame());
-        button("Delete the .pkg and start", v -> {
+        Button enterMenu = button("Enter menu", v -> showReady());
+        button("Delete the .pkg and enter menu", v -> {
             boolean deleted = false;
             try {
                 deleted = DocumentsContract.deleteDocument(getContentResolver(), packageUri);
@@ -174,12 +174,12 @@ public class SetupActivity extends Activity {
                 panel.removeAllViews();
                 title("Ready");
                 text("The .pkg could not be deleted from here. You can remove it yourself with a file manager.");
-                button("Start P.T.", w -> startGame()).requestFocus();
+                button("Enter menu", w -> showReady()).requestFocus();
                 return;
             }
-            startGame();
+            showReady();
         });
-        start.requestFocus();
+        enterMenu.requestFocus();
     }
 
     // asked once, before the first game start: the ending listens for a word. The game works without it (both triggers).
@@ -313,7 +313,7 @@ public class SetupActivity extends Activity {
         if (storageGranted()) {
             if(firstRunAccess){firstRunAccess=false;if(gameInstalled())showReady();else showWelcome();return;}
             if (gameInstalled()) {
-                startGame();
+                showReady();
             } else {
                 showError("The three files were not found in Download. Check their names and that they finished copying.");
             }
@@ -348,7 +348,7 @@ public class SetupActivity extends Activity {
     private void finishStorageRequest(){
         if(!waitingForAccess)return;
         waitingForAccess=false;boolean first=firstRunAccess;firstRunAccess=false;
-        if(gameInstalled()){if(first)showReady();else startGame();}
+        if(gameInstalled())showReady();
         else if(first)showWelcome();
         else showError(storageGranted()?"The game files were not found in Download. Check the file names and wait for copying to finish.":"Storage access was not granted. You can still choose a PKG with the file picker.");
     }
