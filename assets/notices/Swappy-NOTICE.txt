@@ -1,0 +1,6 @@
+Android Frame Pacing (Swappy) 2.1.3
+Copyright Google LLC and Android Open Source Project contributors.
+Licensed under the Apache License, Version 2.0. See Swappy-LICENSE.txt.
+Source: https://android.googlesource.com/platform/frameworks/opt/gamesdk/
+Binary: androidx.games:games-frame-pacing:2.1.3
+SHA-256 of the official AAR: a9f83e0cf47d694ed2cea0ae995d5cf7411060d9d4b680610430d03d6b20ea27
