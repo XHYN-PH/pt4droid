@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <string>
+#include "engine/platform/mobile_performance.h"
 
 #include "engine/render/vk.h"
 
@@ -26,9 +27,13 @@ std::filesystem::path LogDir();
 float RenderScale();
 void SetRenderScale(float value);
 bool ConsumeRenderScaleChange();
+MobilePerformanceOptions PerformanceOptions();
+int EffectiveFrameLimit(int requested);
 int ConsumePerformanceProfile();
 int BloomPassLimit();
 void ConsumeLookDelta(float& dx, float& dy);
+void ConsumeGyroDelta(float& dx, float& dy);
+void SetGameplayLookEnabled(bool enabled);
 void SetTouchControlsMode(int mode);
 int TouchControlsMode(int fallback);
 void OpenMobileSettings();

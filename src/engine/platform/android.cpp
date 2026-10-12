@@ -104,7 +104,13 @@ void InstallLogFilter() {
 std::filesystem::path DataDir() {
     static const std::filesystem::path dir = [] {
         const char* external = SDL_GetAndroidExternalStoragePath();
-        if (external && *external) return std::filesystem::path(external);
+        if (external && *external){
+            std::error_code ec;std::filesystem::create_directories(external,ec);
+            std::string pattern=(std::filesystem::path(external)/".pt-storage-XXXXXX").string();
+            std::vector<char> name(pattern.begin(),pattern.end());name.push_back('\0');
+            const int fd=mkstemp(name.data());
+            if(fd>=0){close(fd);unlink(name.data());return std::filesystem::path(external);}
+        }
         const char* internal = SDL_GetAndroidInternalStoragePath();
         return std::filesystem::path(internal ? internal : ".");
     }();
@@ -320,9 +326,9 @@ std::string DriverChoice() {
 
 // Probe the system ICD without a surface or touching the renderer's global dispatch.
 // Unknown GPUs stay on their own driver; only the bundled driver's Adreno generation is selected automatically.
-bool AutoUsesTurnip() {
-    bool use=false;
-    void* library=dlopen("libvulkan.so",RTLD_NOW|RTLD_LOCAL);if(!library)return false;
+std::string SystemGpuName() {
+    std::string name;
+    void* library=dlopen("libvulkan.so",RTLD_NOW|RTLD_LOCAL);if(!library)return name;
     auto get=reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library,"vkGetInstanceProcAddr"));
     auto create=get?reinterpret_cast<PFN_vkCreateInstance>(get(VK_NULL_HANDLE,"vkCreateInstance")):nullptr;
     VkInstance instance=VK_NULL_HANDLE;
@@ -335,12 +341,13 @@ bool AutoUsesTurnip() {
         uint32_t count=0;
         if(enumerate && properties && enumerate(instance,&count,nullptr)==VK_SUCCESS && count>0 && count<32){
             std::vector<VkPhysicalDevice> devices(count);
-            if(enumerate(instance,&count,devices.data())==VK_SUCCESS){VkPhysicalDeviceProperties props{};properties(devices.front(),&props);use=PreferBundledTurnip(props.deviceName);}
+            if(enumerate(instance,&count,devices.data())==VK_SUCCESS){VkPhysicalDeviceProperties props{};properties(devices.front(),&props);name=props.deviceName;}
         }
         if(destroy)destroy(instance,nullptr);
     }
-    dlclose(library);return use;
+    dlclose(library);return name;
 }
+bool AutoUsesTurnip(){return PreferBundledTurnip(SystemGpuName());}
 
 PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     const std::string choice = DriverChoice();
@@ -360,14 +367,17 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     std::string driver_dir = hook_dir;
     std::string driver_file = "libvulkan_turnip.so";
     std::string label = "Mesa Turnip (bundled)";
-    if (lower.starts_with("imported/")) {
+    if(lower=="panvk"){
+        if(SDL_GetAndroidSDKVersion()<35||!IsMaliGpu(SystemGpuName())){name="system driver (experimental PanVK needs Mali and Android 15+)";return nullptr;}
+        driver_file="libvulkan_panfrost.so";label="PanVK Kbase RC3 (experimental Mali)";
+    }else if (lower.starts_with("imported/")) {
         std::error_code ec;
         const auto root = std::filesystem::weakly_canonical(std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "drivers", ec);
         const auto target = std::filesystem::weakly_canonical(root / choice.substr(9), ec);
         const auto relative = target.lexically_relative(root);
         if (!ec && !relative.empty() && *relative.begin() != ".." && std::filesystem::is_regular_file(target,ec)) {
             driver_dir = target.parent_path().string() + "/"; driver_file=target.filename().string(); label="imported " + driver_file;
-        } else LogWarn("android: imported driver unavailable; using bundled Turnip");
+        } else {name="system driver (imported driver unavailable)";return nullptr;}
     } else if (lower != "turnip" && lower!="auto") {
         const auto source = LogDir() / choice;
         const auto private_dir = std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / "drivers";
@@ -375,7 +385,7 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
         const auto target = private_dir / source.filename();
         if (std::filesystem::is_regular_file(source,ec) && std::filesystem::copy_file(source,target,std::filesystem::copy_options::overwrite_existing,ec)) {
             driver_dir=private_dir.string()+"/";driver_file=target.filename().string();label="custom "+driver_file;
-        } else LogWarn("android: legacy driver unavailable; using bundled Turnip");
+        } else {name="system driver (custom driver unavailable)";return nullptr;}
     }
     const char* cache = SDL_GetAndroidCachePath();
     void* handle = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, cache, hook_dir.c_str(), driver_dir.c_str(),

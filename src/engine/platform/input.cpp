@@ -707,11 +707,22 @@ InputState InputDevice::Poll(bool keyboard_free, MouseUse mouse, bool pads_free)
     float touch_dx=0.0f,touch_dy=0.0f;
 #ifdef __ANDROID__
     android::ConsumeLookDelta(touch_dx,touch_dy);
+    float gyro_dx=0,gyro_dy=0;android::ConsumeGyroDelta(gyro_dx,gyro_dy);
+    const auto mobile=android::PerformanceOptions();
 #endif
     if (mouse == MouseUse::Look) {
+#ifdef __ANDROID__
+        const auto look=CombineMobileLook(mouse_dx_,mouse_dy_,touch_dx,touch_dy,gyro_dx,gyro_dy,
+                                         settings.mouse_sensitivity,InputSettings{}.mouse_sensitivity,mobile);
+        state.mouse_look={look.x,look.y};
+#else
         state.mouse_look = glm::vec2(mouse_dx_+touch_dx, mouse_dy_+touch_dy) * settings.mouse_sensitivity;
+#endif
     }
     if (mouse != last_mouse_use_) {
+#ifdef __ANDROID__
+        android::SetGameplayLookEnabled(mouse==MouseUse::Look);
+#endif
         last_mouse_use_ = mouse;
         mouse_settle_ = kPromptMouseSettle;
     }
@@ -727,6 +738,9 @@ InputState InputDevice::Poll(bool keyboard_free, MouseUse mouse, bool pads_free)
     uint32_t pad_raw = 0;
     glm::vec2 left(0.0f);
     glm::vec2 right(0.0f);
+#ifdef __ANDROID__
+    bool right_virtual=false;
+#endif
     for (Pad& pad : pads_) {
         const uint32_t held = HeldRaw(pad) | pad.event_raw;
         const bool voice_chord = SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16383 &&
@@ -763,6 +777,9 @@ InputState InputDevice::Poll(bool keyboard_free, MouseUse mouse, bool pads_free)
         }
         if (glm::length(r) > glm::length(right)) {
             right = r;
+#ifdef __ANDROID__
+            if(mobile.controller_sensitivity!=1.f)right_virtual=SDL_IsJoystickVirtual(pad.id);
+#endif
         }
     }
     // the stronger of the keys and the sticks moves: an idle pad whose stick drifts past the dead zone (a tester's charging
@@ -774,6 +791,11 @@ InputState InputDevice::Poll(bool keyboard_free, MouseUse mouse, bool pads_free)
     }
     if (glm::length(right) > 0.0f) {
         state.right_stick = right;
+#ifdef __ANDROID__
+        // Preserve the original nonlinear stick curve and keep touch sensitivity independent.
+        state.gamepad_sensitivity=MobileControllerSensitivity(settings.gamepad_sensitivity,mobile,right_virtual);
+        if(mobile.invert_y)state.right_stick.y=-state.right_stick.y;
+#endif
         state.from_gamepad = true;
     }
     if (pad_raw) {

@@ -21,6 +21,7 @@ std::atomic<int> profile{-1}, bloom{6};
 std::once_flag loaded;
 std::mutex look_mutex;
 float look_x=0.0f,look_y=0.0f;
+float gyro_x=0.0f,gyro_y=0.0f;
 std::filesystem::path PrivateFile(const char* name) {
     const char* root=SDL_GetAndroidInternalStoragePath();
     return std::filesystem::path(root?root:".") / name;
@@ -69,6 +70,8 @@ bool ConsumeGameGraphicsChanges(){
 }
 std::filesystem::path GameGraphicsChangesFile(){return PrivateFile("game_graphics_applying.ini");}
 void ConsumeLookDelta(float& dx,float& dy){std::lock_guard lock(look_mutex);dx=look_x;dy=look_y;look_x=look_y=0.0f;}
+void ConsumeGyroDelta(float& dx,float& dy){std::lock_guard lock(look_mutex);dx=gyro_x;dy=gyro_y;gyro_x=gyro_y=0.0f;}
+void SetGameplayLookEnabled(bool enabled){Activity("setGameplayLookEnabled","(Z)V",[&](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m,static_cast<jboolean>(enabled));});}
 void SetTouchControlsMode(int mode){Activity("setTouchControlsMode","(I)V",[&](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m,std::clamp(mode,0,2));});}
 int TouchControlsMode(int fallback){int value=fallback;Activity("getTouchControlsMode","()I",[&](JNIEnv* e,jclass c,jmethodID m){value=e->CallStaticIntMethod(c,m);});return std::clamp(value,0,2);}
 void OpenMobileSettings(){Activity("openMobileSettings","()V",[](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m);});}
@@ -89,5 +92,9 @@ extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_TouchControls_nativeLookDe
     if(!std::isfinite(dx)||!std::isfinite(dy))return;
     std::lock_guard lock(pt::android::look_mutex);pt::android::look_x+=dx;pt::android::look_y+=dy;
 }
-extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_TouchControls_nativeClearLook(JNIEnv*,jclass){std::lock_guard lock(pt::android::look_mutex);pt::android::look_x=pt::android::look_y=0.0f;}
+extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_TouchControls_nativeClearLook(JNIEnv*,jclass){std::lock_guard lock(pt::android::look_mutex);pt::android::look_x=pt::android::look_y=pt::android::gyro_x=pt::android::gyro_y=0.0f;}
+extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_PTActivity_nativeGyroDelta(JNIEnv*,jclass,jfloat dx,jfloat dy){
+    if(!std::isfinite(dx)||!std::isfinite(dy))return;
+    std::lock_guard lock(pt::android::look_mutex);pt::android::gyro_x+=std::clamp(dx,-.5f,.5f);pt::android::gyro_y+=std::clamp(dy,-.5f,.5f);
+}
 #endif

@@ -6,6 +6,10 @@
 #include <string_view>
 
 namespace pt::android {
+inline bool IsMaliGpu(std::string_view device_name){
+    std::string name(device_name);std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    return name.find("mali")!=std::string::npos||name.find("immortalis")!=std::string::npos;
+}
 inline bool PreferBundledTurnip(std::string_view device_name) {
     std::string name(device_name);
     std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
