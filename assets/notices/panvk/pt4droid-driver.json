@@ -1,0 +1,12 @@
+{
+  "component": "PanVK Kbase Android",
+  "release": "panvk-kbase-v0.1.0-rc3",
+  "releaseUrl": "https://github.com/zenithblue-oss/panvk-kbase-android/releases/tag/panvk-kbase-v0.1.0-rc3",
+  "asset": "libvulkan_panfrost-android-aarch64.so",
+  "sha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445",
+  "buildId": "4ec75e25deca57c27fb1e0872fdbf58473d41527",
+  "minimumAndroidApi": 35,
+  "experimental": true,
+  "pt4droidDeviceTesting": "Not performed. GPU and kernel compatibility must be verified on a device.",
+  "metadataNote": "SOURCE.json, VALIDATION.json and MANIFEST.json are unmodified documents from the upstream RC3 adpkg archive. Some fields and test dates describe an older validation snapshot. Runtime feature checks, rather than those historical fields, decide whether the driver can run the game."
+}

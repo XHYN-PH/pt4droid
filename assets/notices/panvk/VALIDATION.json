@@ -1,0 +1,173 @@
+{
+  "profile": "g615-v11-csf",
+  "device": "Poco X6 Pro",
+  "gpuId": "0xb8a31030",
+  "kbaseUapi": "1.21",
+  "mesaCommit": "5a07217f034b3e50d8c7c7794f97a2df1742613b",
+  "patchSeriesId": "sha256:b6fc5e0fd3505f79f02f14b55c6205e591622c96412d9f2ac90bf763f9df138e",
+  "android": {
+    "enumeration": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-android-shell-gates-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.818484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "deviceCreate": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-android-shell-gates-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.818484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "compute10": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-android-shell-gates-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.818484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "offscreen": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-android-shell-gates-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.818484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "ahb": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-ahb-allocation-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.818484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "vulkanSurface": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-wsi-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.819484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "swapchain300": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-wsi-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.819484+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    },
+    "coldSecondLaunch": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-cold-second-launch-2026-09-19.txt",
+      "timestamp": "2026-09-19T00:00:00+00:00",
+      "binarySha256": "b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+    }
+  },
+  "glibc": {
+    "enumeration": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-glibc-runtime-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.819484+00:00",
+      "binarySha256": "43d4783f664f21843b2fb2d5a3fdf4646fadb942e42d320ccb0e7449bd8e352f"
+    },
+    "compute10": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-glibc-runtime-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.819484+00:00",
+      "binarySha256": "43d4783f664f21843b2fb2d5a3fdf4646fadb942e42d320ccb0e7449bd8e352f"
+    },
+    "offscreen": {
+      "status": "pass",
+      "evidenceFile": "validation/g615-v11-csf/beta3-phase8-glibc-runtime-2026-09-19.txt",
+      "timestamp": "2026-09-19T18:32:19.819484+00:00",
+      "binarySha256": "43d4783f664f21843b2fb2d5a3fdf4646fadb942e42d320ccb0e7449bd8e352f"
+    }
+  },
+  "runtimeFeatureMatrix": "validation/g615-v11-csf/beta3-phase8-runtime-feature-matrix.json",
+  "dxvk": {
+    "progress": "worklogs/g615-dxvk/PROGRESS.md",
+    "evidenceDir": "validation/g615-v11-csf/dxvk",
+    "files": [
+      "DEVICE-TEST-PLAN.md",
+      "DX0-BASELINE.md",
+      "DX1-REPORT.json",
+      "DX1-REPORT.md",
+      "DX10-TESSELLATION.md",
+      "DX2-REPORT.md",
+      "DX3-EVIDENCE.json",
+      "DX3-REPORT.md",
+      "DX5-GPU-PRERAST-VERTICAL-SLICE.md",
+      "DX5-RUNTIME.md",
+      "DX6-BC-GPU-DECODE.md",
+      "DX7-CLIP-CULL.md",
+      "DX7-FILL-MODE.md",
+      "DX7-GS.md",
+      "DX7-MULTIVIEWPORT.md",
+      "DX8-NATIVE-WORKLOAD.md",
+      "DX8-PIPELINE-STATS.md",
+      "DX9-TRANSFORM-FEEDBACK.md",
+      "SUBMIT-EXHAUSTION.md",
+      "cts-lock.json",
+      "cts/DX2-SETUP.md",
+      "cts/dx10-tess/geometry-query-drawparams-summary.txt",
+      "cts/dx10-tess/tessellation-summary.txt",
+      "dx0-capability-profile-snapshot.json",
+      "evidence-ledger.json",
+      "native/DX3-offscreen.log",
+      "native/DX3-stock-dxvk-headless.log",
+      "profile-evaluator-regressions/cases.json",
+      "source-build-lock.json",
+      "trace/DX3-gpu-trace.log"
+    ],
+    "complianceMatrix": "validation/g615-v11-csf/p23-dxvk-vkd3d-compliance-matrix.json",
+    "cts": {
+      "geometry": {
+        "pass": 193,
+        "fail": 0
+      },
+      "geometry_instanced": {
+        "pass": 20,
+        "fail": 0
+      },
+      "tessellation": {
+        "pass": 526,
+        "fail": 0
+      },
+      "transform_feedback": {
+        "pass": 15793,
+        "fail": 0,
+        "note": "2 intermittent DeviceLost"
+      },
+      "bc_subset": {
+        "pass": 1863,
+        "fail": 0
+      },
+      "copy_and_blit": {
+        "pass": 9620,
+        "fail": 0
+      },
+      "statistics_query": {
+        "pass": 15374,
+        "fail": 0
+      },
+      "multi_draw": {
+        "pass": 12704,
+        "fail": 0
+      },
+      "primitives_generated_query": {
+        "pass": 75206,
+        "fail": 0
+      },
+      "memory_priority": {
+        "pass": 224,
+        "fail": 0
+      },
+      "pageable_device_local_memory": {
+        "pass": 202,
+        "fail": 0
+      },
+      "api_info": {
+        "pass": 7799,
+        "fail": 0
+      },
+      "alpha_to_one": {
+        "pass": 123,
+        "fail": 0
+      }
+    }
+  },
+  "generatedAt": "2026-10-11T18:20:39.889685+00:00",
+  "generatedBy": "scripts/collect-validation.py"
+}
