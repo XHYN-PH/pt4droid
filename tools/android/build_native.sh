@@ -16,6 +16,8 @@ GLSLC="${GLSLC:-$(command -v glslc)}"
 # Mesa Turnip for Adreno 6xx/7xx (MIT), the KIMCHI build packaged for libadrenotools
 TURNIP_URL="https://github.com/K11MCH1/AdrenoToolsDrivers/releases/download/v26.0.0-rc08/Turnip_v26.0.0_R8.zip"
 TURNIP_SHA256="e634db0f929e2205e95511c769071817d0390180ec72c8e690bc76375e813715"
+PANVK_URL="https://github.com/zenithblue-oss/panvk-kbase-android/releases/download/panvk-kbase-v0.1.0-rc3/libvulkan_panfrost-android-aarch64.so"
+PANVK_SHA256="b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
 
 cmake -G Ninja -S "$ROOT" -B "$BUILD" \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
@@ -63,9 +65,15 @@ echo "$TURNIP_SHA256  $TURNIP_ZIP" | sha256sum -c
 driver="$(unzip -p "$TURNIP_ZIP" meta.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["libraryName"])')"
 # the package manager only unpacks lib*.so; the game asks libadrenotools for this name (src/engine/platform/android.cpp)
 unzip -p "$TURNIP_ZIP" "$driver" > "$LIBS/libvulkan_turnip.so"
+PANVK_LIB="$BUILD/panvk-rc3.so"
+if [ ! -f "$PANVK_LIB" ] || ! echo "$PANVK_SHA256  $PANVK_LIB" | sha256sum -c --status; then
+  curl -fsSL -o "$PANVK_LIB" "$PANVK_URL"
+fi
+echo "$PANVK_SHA256  $PANVK_LIB" | sha256sum -c
+cp "$PANVK_LIB" "$LIBS/libvulkan_panfrost.so"
 
 mkdir -p "$APP/assets/notices"
-cp "$ROOT"/assets/notices/* "$APP/assets/notices/"
+cp -R "$ROOT"/assets/notices/* "$APP/assets/notices/"
 cp "$BUILD"/shaders/*.spv "$APP/assets/shaders/"
 cp "$ROOT"/assets/fonts/*.ttf "$ROOT"/assets/fonts/OFL-*.txt "$APP/assets/fonts/"
 cp "$BUILD/voice/ggml-base.en-q5_1.bin" "$BUILD/voice/ggml-silero-v6.2.0.bin" "$APP/assets/voice/"
