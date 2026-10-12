@@ -17,6 +17,7 @@
 #include "engine/assets/fmdl.h"
 #include "engine/core/log.h"
 #include "engine/core/strcode.h"
+#include "engine/core/stable_top.h"
 #include "engine/data/fox2.h"
 #include "engine/core/memory_status.h"
 #include "engine/render/vfx_pass.h"
@@ -134,7 +135,7 @@ vfx::LightBlock LightBlockAt(const SceneLighting& lighting, const glm::vec3& cen
         float score = 0.0f;
         float cone = 1.0f;
     };
-    std::vector<Candidate> candidates;
+    StableTop<Candidate, 3> candidates;
     for (const SceneLight& l : lighting.lights) {
         if ((l.type != LightType::Point && l.type != LightType::Spot) || (l.hidden_views & 1u) != 0 || l.outer_range <= 0.0f) {
             continue;
@@ -153,10 +154,10 @@ vfx::LightBlock LightBlockAt(const SceneLighting& lighting, const glm::vec3& cen
         const float d = std::max(dist, l.inner_range);
         const float r = l.outer_range + radius;
         const float falloff = 1.0f / std::max(d * d, 1.0e-12f) - d * d / std::max(r * r * r * r, 1.0e-12f);
-        candidates.push_back({&l, glm::length(l.intensity) * cone * falloff, cone});
+        candidates.Insert(Candidate{&l, glm::length(l.intensity) * cone * falloff, cone},
+                          [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
     }
-    std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
-    for (size_t k = 0; k < 3 && k < candidates.size(); ++k) {
+    for (size_t k = 0; k < candidates.Size(); ++k) {
         const SceneLight& l = *candidates[k].light;
         const float range = l.outer_range + l.dimmer;
         block.position[block.count] = l.position;
@@ -164,27 +165,28 @@ vfx::LightBlock LightBlockAt(const SceneLighting& lighting, const glm::vec3& cen
         block.inv_r4[block.count] = 1.0f / std::max(range * range * range * range, 1.0e-12f);
         ++block.count;
     }
-    std::vector<const SceneProbe*> probes;
+    StableTop<const SceneProbe*, 3> probes;
+    size_t matching_probes = 0;
     for (const SceneProbe& p : lighting.probes) {
         const glm::vec3 q = glm::vec3(p.world_to_box * glm::vec4(center, 1.0f));
         if (glm::all(glm::lessThanEqual(glm::abs(q), glm::vec3(1.0f + 1.0e-3f)))) {
-            probes.push_back(&p);
+            ++matching_probes;
+            probes.Insert(&p, [](const SceneProbe* a, const SceneProbe* b) { return a->priority < b->priority; });
         }
     }
-    std::stable_sort(probes.begin(), probes.end(), [](const SceneProbe* a, const SceneProbe* b) { return a->priority < b->priority; });
     float weights[3] = {0.0f, 0.0f, 0.0f};
     float left = 1.0f;
     float total = 0.0f;
-    for (size_t k = 0; k < 3 && k < probes.size(); ++k) {
+    for (size_t k = 0; k < probes.Size(); ++k) {
         const SceneProbe& p = *probes[k];
         const glm::vec3 q = glm::vec3(p.world_to_box * glm::vec4(center, 1.0f));
         const glm::vec3 f = glm::min(glm::clamp((1.0f - q) * p.positive_scale, 0.0f, 1.0f), glm::clamp((1.0f + q) * p.negative_scale, 0.0f, 1.0f));
-        weights[k] = probes.size() == 1 ? 1.0f : left * p.weight * f.x * f.y * f.z;
+        weights[k] = matching_probes == 1 ? 1.0f : left * p.weight * f.x * f.y * f.z;
         left -= weights[k];
         total += weights[k];
     }
     if (total >= 1.0e-5f) {
-        for (size_t k = 0; k < 3 && k < probes.size(); ++k) {
+        for (size_t k = 0; k < probes.Size(); ++k) {
             const std::array<glm::vec3, 9>& sh = probes[k]->sh;
             block.sky += weights[k] / total * glm::max(sh[0] + sh[2] + 2.0f * sh[6], glm::vec3(0.0f));
         }
@@ -768,7 +770,8 @@ void VfxScene::PrepareList(Game& game, const Camera& camera, float aspect, Scene
         return;
     }
     const vfx::ViewInfo view = View(camera, aspect);
-    std::vector<vfx::LightOut> lights;
+    auto& lights = prepared_lights_;
+    lights.clear();
     const SceneLighting* scene = &lighting;
     auto probe = [scene](const glm::vec3& p, bool ambient) {
         vfx::LightingSample s;
@@ -798,7 +801,8 @@ void VfxScene::PrepareList(Game& game, const Camera& camera, float aspect, Scene
         preload_.erase(std::unique(preload_.begin(), preload_.end()), preload_.end());
         // the effects are read here; their textures are unpacked on a worker and uploaded when first drawn or by the pump in
         // VfxPass::Submit, whichever comes first (the next hallway copy's effects draw only once it is activated)
-        std::vector<std::string> ahead;
+        auto& ahead = prepared_textures_;
+        ahead.clear();
         const vfx::TextureResolver collect = [&ahead](const std::string& path) {
             ahead.push_back(path);
             return TextureManager::kWhite;

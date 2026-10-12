@@ -113,6 +113,8 @@ private:
     std::map<vfx::InstanceKey, std::string> demo_key_demo_;
     // effects of newly loaded stages and gimmicks, whose textures the next Prepare loads ahead of their first draw
     std::vector<std::string> preload_;
+    std::vector<vfx::LightOut> prepared_lights_;
+    std::vector<std::string> prepared_textures_;
     bool reader_set_ = false;
     bool test_spawned_ = false;
     uint64_t logged_frame_ = 0;
