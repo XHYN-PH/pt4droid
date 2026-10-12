@@ -19,6 +19,16 @@ public class PTActivity extends SDLActivity {
     private TouchControls touchControls;
     private static volatile PTActivity current;
     private MobileSettings mobileSettings;
+    private MobileRuntime mobileRuntime;
+    private GameSession gameSession;
+    private boolean returningToMenu;
+    private boolean menuOpened;
+    static native void nativeReloadPerformance();
+    static native void nativeThermalStatus(int status);
+    static native void nativeGyroDelta(float dx,float dy);
+    static void reloadPerformance(){final PTActivity a=current;if(a!=null){nativeReloadPerformance();if(a.mobileRuntime!=null)a.mobileRuntime.reload();}}
+    public static void setGameplayLookEnabled(boolean enabled){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.mobileRuntime!=null)a.mobileRuntime.allow(enabled);});}
+    static void setTouchLayoutEditing(boolean editing){final PTActivity a=current;if(a!=null&&a.mobileRuntime!=null)a.mobileRuntime.edit(editing);}
     static native float nativeGetRenderScale();
     static native void nativeSetRenderScale(float value);
     static native void nativeSetPerformanceProfile(int value);
@@ -43,10 +53,42 @@ public class PTActivity extends SDLActivity {
         });
     }
     @Override protected void onActivityResult(int request,int result,Intent data){if(mobileSettings!=null && mobileSettings.activityResult(request,result,data))return;super.onActivityResult(request,result,data);}
-    @Override protected void onResume(){super.onResume();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();}
-    @Override protected void onPause(){if(touchControls!=null)touchControls.releaseAll();super.onPause();}
-    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
-    @Override protected void onDestroy(){if(touchControls!=null)touchControls.releaseAll();if(mobileSettings!=null)mobileSettings.detach();if(current==this)current=null;super.onDestroy();}
+    @Override protected void onResume(){super.onResume();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
+    @Override protected void onPause(){if(mobileRuntime!=null)mobileRuntime.pause();if(touchControls!=null)touchControls.releaseAll();super.onPause();}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(mobileRuntime!=null)mobileRuntime.focus(focus);if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
+    void returnToMenu() {
+        if (returningToMenu || isFinishing()) return;
+        returningToMenu = true;
+        if (touchControls != null) touchControls.releaseAll();
+        if (mobileRuntime != null) mobileRuntime.pause();
+        DriverImportJob job=DriverImportJob.get();
+        if(job!=null && !job.done)job.cancel("Import cancelled before returning to menu");
+        // Wake SDL even if a dialog has paused it. SDLMain finishes us after native cleanup.
+        SDLActivity.nativeSendQuit();
+    }
+
+    @Override public void finish() {
+        runOnUiThread(() -> {
+            if (mSDLMainFinished && !menuOpened) {
+                menuOpened = true;
+                startActivity(new Intent(this, SetupActivity.class)
+                        .putExtra("returned_from_game", true)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            }
+            PTActivity.super.finish();
+        });
+    }
+
+    @Override protected void onDestroy(){
+        if(mobileRuntime!=null)mobileRuntime.pause();
+        if(touchControls!=null)touchControls.releaseAll();
+        if(mobileSettings!=null)mobileSettings.detach();
+        if(current==this)current=null;
+        super.onDestroy();
+        if(gameSession!=null)try{gameSession.close();}catch(java.io.IOException error){AppLog.w("pt","Could not release game save guard",error);}
+        // SDL and renderer globals cannot safely be reused for another SDL_main run.
+        if(isFinishing())android.os.Process.killProcess(android.os.Process.myPid());
+    }
 
 
     // from the game (src/engine/platform/android.cpp SetTouchControlsEnabled): the setting, any thread
@@ -100,11 +142,19 @@ public class PTActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         current = this;
+        try { gameSession = GameSession.start(this); }
+        catch (java.io.IOException error) {
+            android.widget.Toast.makeText(this,error.getMessage(),android.widget.Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+        DriverImportJob.cleanupAbandoned(this);
         secondScreen = new SecondScreen(this);
         // the on-screen controls over the game (TouchControls.java)
         touchControls = new TouchControls(this);
         touchControls.setMode(getTouchControlsMode());
         mobileSettings = new MobileSettings(this,touchControls);
+        mobileRuntime = new MobileRuntime(this);
         addContentView(touchControls, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 

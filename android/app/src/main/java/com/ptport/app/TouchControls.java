@@ -58,6 +58,7 @@ public class TouchControls extends View {
     private final RectF safe;
     private int selected;
     private float sensitivity;
+    private int moveStyle;
     private int lookStyle = 1;
     private float lookLastX, lookLastY;
     private static native void nativeLookDelta(float dx, float dy);
@@ -189,6 +190,7 @@ public class TouchControls extends View {
 
     private void load() {
         defaults();
+        moveStyle=Math.max(0, Math.min(1,prefs.getInt("move_style",0)));
         lookStyle=Math.max(0, Math.min(2,prefs.getInt("look_style",1)));
         int i = 0;
         while (true) {
@@ -391,7 +393,7 @@ public class TouchControls extends View {
         if(!isFingerEvent(event) || (mode==1 && !editing))return false;
         if(editing)return editEvent(event);
         removeCallbacks(hideIdle);if(!shown)setShown(true);
-        if(action==MotionEvent.ACTION_DOWN && settingsHit.contains(event.getX(),event.getY())) {
+        if((action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) && settingsHit.contains(event.getX(index),event.getY(index))) {
             releaseAll();PTActivity.openMobileSettings();return true;
         }
         if(action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
@@ -427,17 +429,25 @@ public class TouchControls extends View {
             }
         }
         int slot;
+        boolean invisibleMove=moveStyle==1 && x<safe.centerX() && safe.contains(x,y);
         boolean invisibleLook=lookStyle!=0 && x>=safe.centerX() && safe.contains(x,y);
-        if(invisibleLook)slot=6;
-        else if(floating)slot=x<safe.centerX()?5:6;
-        else if(controls[5].visible && controls[5].area.contains(x,y))slot=5;
-        else if(controls[6].visible && controls[6].area.contains(x,y))slot=6;
+        if(invisibleMove)slot=5;
+        else if(invisibleLook)slot=6;
+        else if(floating) {
+            if(x<safe.centerX() && moveStyle==0)slot=5;
+            else if(x>=safe.centerX() && lookStyle==0)slot=6;
+            else return;
+        }
+        else if(moveStyle==0 && controls[5].visible && controls[5].area.contains(x,y))slot=5;
+        else if(lookStyle==0 && controls[6].visible && controls[6].area.contains(x,y))slot=6;
         else return;
         Control c=controls[slot];Stick stick=slot==5?move:look;
-        if((!c.visible && !invisibleLook) || stick.pointer>=0)return;
-        if(floating || invisibleLook || c.area.contains(x,y)) {
-            stick.pointer=id;stick.originX=floating||invisibleLook?x:c.area.centerX();
-            stick.originY=floating||invisibleLook?y:c.area.centerY();stick.x=x;stick.y=y;
+        boolean invisible=slot==5?invisibleMove:invisibleLook;
+        if((!c.visible && !invisible) || stick.pointer>=0)return;
+        if(floating || invisible || c.area.contains(x,y)) {
+            // Keep this pointer's role and origin until it lifts, even across the centre.
+            stick.pointer=id;stick.originX=floating||invisible?x:c.area.centerX();
+            stick.originY=floating||invisible?y:c.area.centerY();stick.x=x;stick.y=y;
             if(slot==6){lookLastX=x;lookLastY=y;}
         }
     }
@@ -506,6 +516,7 @@ public class TouchControls extends View {
     void beginEdit() {
         releaseAll();
         this.editing = true;
+        PTActivity.setTouchLayoutEditing(true);
         this.selected = -1;
         this.editPointer = -1;
         this.toolbarPressed = -1;
@@ -531,6 +542,7 @@ public class TouchControls extends View {
             load();
         }
         this.editing = false;
+        PTActivity.setTouchLayoutEditing(false);
         this.editPointer = -1;
         setMode(this.mode);
         setShown(this.mode != 1);
@@ -579,7 +591,8 @@ public class TouchControls extends View {
                 }
             });
             CheckBox checkBox = new CheckBox(getContext());
-            checkBox.setText("Show this control");
+            checkBox.setText(this.selected >= 5 ? "Show joystick in visible mode" : "Show this control");
+            checkBox.setEnabled(!((this.selected == 5 && moveStyle != 0) || (this.selected == 6 && lookStyle != 0)));
             checkBox.setChecked(control.visible);
             checkBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() { // from class: com.ptport.app.TouchControls$$ExternalSyntheticLambda2
                 @Override // android.widget.CompoundButton.OnCheckedChangeListener
@@ -699,7 +712,7 @@ public class TouchControls extends View {
                 break;
             }
             Control control = controlArr[i3];
-            if ((i3 != 6 || lookStyle == 0 || editing) && (control.visible || this.editing)) {
+            if ((i3 != 5 || moveStyle == 0 || editing) && (i3 != 6 || lookStyle == 0 || editing) && (control.visible || this.editing)) {
                 int i4 = control.visible ? iRound : i;
                 this.ring.setAlpha(i4);
                 this.label.setAlpha(i4);

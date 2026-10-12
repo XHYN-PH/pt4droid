@@ -2,6 +2,7 @@ package com.ptport.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -27,6 +28,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.ImageView;
 
 import java.io.File;
 
@@ -37,6 +39,7 @@ import java.io.File;
 public class SetupActivity extends Activity {
     private static final int PICK_PKG = 1;
     private static final int ASK_MICROPHONE = 2;
+    private static final int ASK_STORAGE = 3;
     private static final long NEEDED_BYTES = 1_400_000_000L;
     private static final String[] SHARED_GAME_DIRS = {
         "/storage/emulated/0/Download/CUSA01127", "/storage/emulated/0/Download/PT", "/storage/emulated/0/Download",
@@ -46,13 +49,20 @@ public class SetupActivity extends Activity {
     private volatile boolean cancelled;
     private long lastUiUpdate;
     private boolean waitingForAccess;
+    private boolean firstRunAccess;
     private MobileSettings mobileSettings;
+    private boolean handoffToGame;
 
     private native String nativeExtract(int fd, String destination);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if(GameSession.isActive(this) && !getIntent().getBooleanExtra("returned_from_game",false)){
+            launchGame();
+            return;
+        }
+        if(savedInstanceState!=null){waitingForAccess=savedInstanceState.getBoolean("waiting_storage",false);firstRunAccess=savedInstanceState.getBoolean("first_storage",false);}
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         mobileSettings = new MobileSettings(this,null);
         FrameLayout root = new FrameLayout(this);
@@ -64,10 +74,11 @@ public class SetupActivity extends Activity {
         int pad = dp(24);
         panel.setPadding(pad, pad, pad, pad);
         scroll.addView(panel, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.min(dp(600), getResources().getDisplayMetrics().widthPixels),
-                ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.min(dp(640), getResources().getDisplayMetrics().widthPixels),
+                ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL);
         root.addView(scroll, lp);
         setContentView(root);
+        root.post(this::promptFirstRunStorage);
         if (gameInstalled()) {
             showReady();
             return;
@@ -81,35 +92,31 @@ public class SetupActivity extends Activity {
         super.onResume();
         DisplayRefresh.apply(this,null);
         if(mobileSettings!=null)mobileSettings.resumeImport();
-        // back from Android's permission screen: the files in Download are readable now
-        if (waitingForAccess && gameInstalled()) {
-            waitingForAccess = false;
-            startGame();
-        }
     }
 
     // ---- screens
 
-    @Override protected void onDestroy(){if(mobileSettings!=null)mobileSettings.detach();super.onDestroy();}
+    @Override protected void onSaveInstanceState(Bundle state){state.putBoolean("waiting_storage",waitingForAccess);state.putBoolean("first_storage",firstRunAccess);super.onSaveInstanceState(state);}
+    @Override protected void onDestroy(){cancelled=true;if(mobileSettings!=null)mobileSettings.detach();super.onDestroy();if(handoffToGame)android.os.Process.killProcess(android.os.Process.myPid());}
     private void showReady(){
-        panel.removeAllViews();title("pt4droid");
-        text("P.T. • Android");
+        panel.removeAllViews();brand();
         button("Continue",v->startGame()).requestFocus();
         button("Settings",v->mobileSettings.show());
-        button("Game graphics",v->GameGraphicsSettings.open(this));
         button("Delete saves",v->mobileSettings.deleteSaves());
+        button("GitHub • project & updates",v->openGithub());
         button("Quit",v->finish());
         TextView version=text("pt4droid • "+versionName());version.setTextSize(11);version.setPadding(0,dp(18),0,0);
     }
     private String versionName(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception ignored){return "test";}}
     private void showWelcome() {
         panel.removeAllViews();
-        title("pt4droid");
+        brand();
         text("This app needs your own copy of the game.\n\n"
                 + "Choose your P.T. .pkg file (a fake PKG made from your own dump). The setup takes the game files out of it "
                 + "once, which takes a minute or two and needs about 1.4 GB of free space. After that you can start the game from the launcher.");
         Button pick = button("Choose your P.T. .pkg", v -> pickPackage());
         button("I already have the extracted files", v -> showExtractedFiles());
+        button("GitHub • project & updates", v -> openGithub());
         button("Quit", v -> finish());
         pick.requestFocus();
     }
@@ -119,7 +126,7 @@ public class SetupActivity extends Activity {
         title("Extracted files");
         text("Copy these three files from your CUSA01127 dump into the Download folder (loose, or in a CUSA01127 folder "
                 + "inside it):\n\n    chunk1.psarc\n    texture.qar\n    pathid_list_ps4.bin\n\n"
-                + "Then allow P.T. \"All files access\" so it can read them there.");
+                + "Then allow pt4droid \"All files access\" so it can read them there.");
         Button allow = button("Allow access", v -> requestAllFilesAccess());
         button("Back", v -> showWelcome());
         allow.requestFocus();
@@ -208,6 +215,7 @@ public class SetupActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == ASK_MICROPHONE) launchGame();
+        if (requestCode == ASK_STORAGE) finishStorageRequest();
     }
 
     // ---- actions
@@ -227,14 +235,18 @@ public class SetupActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if(mobileSettings!=null && mobileSettings.activityResult(requestCode,resultCode,data))return;
         super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==ASK_STORAGE){finishStorageRequest();return;}
         if (requestCode != PICK_PKG || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         extract(data.getData());
     }
 
     private void extract(Uri uri) {
-        File destination = new File(getExternalFilesDir(null), "game/CUSA01127");
-        destination.mkdirs();
-        long free = new StatFs(destination.getAbsolutePath()).getAvailableBytes();
+        File destination = new File(GameStorage.dataRoot(this), "game/CUSA01127");
+        long free;
+        try{
+            if(!destination.isDirectory()&&!destination.mkdirs())throw new java.io.IOException("Cannot create the game folder");
+            free=new StatFs(destination.getAbsolutePath()).getAvailableBytes();
+        }catch(Exception error){showError("Could not prepare storage for the game: "+error.getMessage());return;}
         if (free < NEEDED_BYTES) {
             showError("There is not enough free space: the game files need about 1.4 GB, and " + (free / 1_000_000) + " MB are free.");
             return;
@@ -266,6 +278,7 @@ public class SetupActivity extends Activity {
             }
             final String result = error;
             runOnUiThread(() -> {
+                if(isFinishing()||isDestroyed())return;
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 if (result == null) {
                     showDone(uri);
@@ -297,7 +310,8 @@ public class SetupActivity extends Activity {
     }
 
     private void requestAllFilesAccess() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()) {
+        if (storageGranted()) {
+            if(firstRunAccess){firstRunAccess=false;if(gameInstalled())showReady();else showWelcome();return;}
             if (gameInstalled()) {
                 startGame();
             } else {
@@ -306,19 +320,51 @@ public class SetupActivity extends Activity {
             return;
         }
         waitingForAccess = true;
+        if(Build.VERSION.SDK_INT<Build.VERSION_CODES.R){
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},ASK_STORAGE);return;
+        }
         try {
             Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
             intent.setData(Uri.parse("package:" + getPackageName()));
-            startActivity(intent);
+            startActivityForResult(intent,ASK_STORAGE);
         } catch (Exception e) {
-            startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            try{startActivityForResult(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),ASK_STORAGE);}
+            catch(Exception unavailable){waitingForAccess=false;firstRunAccess=false;android.widget.Toast.makeText(this,"Storage settings are unavailable. You can still import with the file picker.",android.widget.Toast.LENGTH_LONG).show();}
         }
     }
 
+    private boolean storageGranted(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.R?Environment.isExternalStorageManager():checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)==PackageManager.PERMISSION_GRANTED;}
+    private void promptFirstRunStorage(){
+        if(isFinishing()||isDestroyed())return;
+        SharedPreferences setup=getSharedPreferences("setup",MODE_PRIVATE);
+        if(setup.getBoolean("asked_storage",false))return;
+        setup.edit().putBoolean("asked_storage",true).apply();
+        if(storageGranted())return;
+        AlertDialog d=new AlertDialog.Builder(this).setTitle("Storage access")
+            .setMessage("Allow storage access to read game files in Download. Android 11 and later opens an All files access screen. You can also import a PKG or driver ZIP with the file picker without this permission.")
+            .setPositiveButton("Allow access",(dialog,which)->{firstRunAccess=true;requestAllFilesAccess();})
+            .setNegativeButton("Use file picker",null).create();d.show();MenuStyle.styleDialog(d);
+    }
+    private void finishStorageRequest(){
+        if(!waitingForAccess)return;
+        waitingForAccess=false;boolean first=firstRunAccess;firstRunAccess=false;
+        if(gameInstalled()){if(first)showReady();else startGame();}
+        else if(first)showWelcome();
+        else showError(storageGranted()?"The game files were not found in Download. Check the file names and wait for copying to finish.":"Storage access was not granted. You can still choose a PKG with the file picker.");
+    }
+    private void openGithub(){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/XHYN-PH/pt4droid")));}catch(Exception unavailable){android.widget.Toast.makeText(this,"No browser is available to open GitHub.",android.widget.Toast.LENGTH_LONG).show();}}
+    private void brand(){
+        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.pt_logo);logo.setContentDescription("P.T. logo");logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams image=new LinearLayout.LayoutParams(-1,dp(120));image.setMargins(0,0,0,dp(6));panel.addView(logo,image);
+        title("pt4droid");
+        TextView subtitle=text("THE HALLWAY IS WAITING");subtitle.setTextSize(11);subtitle.setLetterSpacing(.18f);subtitle.setGravity(Gravity.CENTER);
+    }
+
     private boolean gameInstalled() {
-        File own = new File(getExternalFilesDir(null), "game/CUSA01127");
-        if (hasGameFiles(own)) return true;
-        boolean canReadShared = Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager();
+        File external=getExternalFilesDir(null);
+        if(external!=null&&hasGameFiles(new File(external,"game/CUSA01127")))return true;
+        if(hasGameFiles(new File(getFilesDir(),"game/CUSA01127")))return true;
+        boolean canReadShared = storageGranted();
         if (!canReadShared) return false;
         for (String dir : SHARED_GAME_DIRS) {
             if (hasGameFiles(new File(dir))) return true;
@@ -331,6 +377,15 @@ public class SetupActivity extends Activity {
     }
 
     private void startGame() {
+        if(GameSession.isActive(this)){
+            android.widget.Toast.makeText(this,"The game is still closing. Please try again in a moment.",android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        DriverImportJob job=DriverImportJob.get();
+        if(job!=null && !job.done){
+            android.widget.Toast.makeText(this,"Wait for the driver import to finish or cancel it before starting the game.",android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (shouldAskMicrophone()) {
             showMicrophone();
             return;
@@ -340,6 +395,7 @@ public class SetupActivity extends Activity {
 
     private void launchGame() {
         startActivity(new Intent(this, PTActivity.class));
+        handoffToGame = true;
         finish();
     }
 
@@ -371,7 +427,7 @@ public class SetupActivity extends Activity {
         view.setTextColor(Color.rgb(222, 218, 208));
         view.setTextSize(34);
         view.setTypeface(Typeface.create("serif", Typeface.NORMAL));
-        view.setGravity(Gravity.START);
+        view.setGravity(text.equals("pt4droid")?Gravity.CENTER:Gravity.START);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0, dp(12), 0, dp(18));
         panel.addView(view, lp);

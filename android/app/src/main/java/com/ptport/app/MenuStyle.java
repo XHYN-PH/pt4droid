@@ -30,7 +30,7 @@ final class MenuStyle {
     }
     private static GradientDrawable row(Context c,boolean active,boolean disabled){
         GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,active?new int[]{Color.rgb(115,26,28),Color.rgb(60,21,23),Color.rgb(19,15,18)}:new int[]{Color.rgb(22,23,26),Color.rgb(15,16,19)});
-        d.setCornerRadius(dp(c,3));d.setStroke(dp(c,1),active?RED:Color.rgb(40,40,43));if(disabled)d.setAlpha(100);return d;
+        d.setCornerRadius(dp(c,10));d.setStroke(dp(c,1),active?RED:Color.rgb(52,51,53));if(disabled)d.setAlpha(100);return d;
     }
     static ColorStateList accent(){return ColorStateList.valueOf(RED);}
     static void section(android.widget.LinearLayout parent,String label){
