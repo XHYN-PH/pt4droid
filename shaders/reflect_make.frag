@@ -74,8 +74,10 @@ void main() {
     bool terminated = false;
     bool behind_previous = false;
     int hit = -1;
-    for (int k = 0; k < 16; ++k) {
-        float s = k == 0 && pass.f1.w < 0.5 ? 1.0 : 1.0 + 25.0 * (float(k) + offset);
+    const int steps=pass.ids.y>0u?8:16;
+    const float step_size=pass.ids.y>0u?50.0:25.0;
+    for (int k = 0; k < steps; ++k) {
+        float s = k == 0 && pass.f1.w < 0.5 ? 1.0 : 1.0 + step_size * (float(k) + offset);
         vec2 suv = 0.5 * (start + s * stride) + 0.5;
         float sz = SceneZ(suv);
         terminated = terminated || behind_previous || far_limit < sz || Outside(suv);
@@ -90,13 +92,13 @@ void main() {
         return;
     }
 
-    float lo = hit == 0 && pass.f1.w < 0.5 ? 1.0 : 1.0 + 25.0 * (float(hit) + offset);
-    float hi = 1.0 + 25.0 * (float(hit + 1) + offset);
+    float lo = hit == 0 && pass.f1.w < 0.5 ? 1.0 : 1.0 + step_size * (float(hit) + offset);
+    float hi = 1.0 + step_size * (float(hit + 1) + offset);
     float best_error = 999.0;
     float best_step = 0.0;
     vec2 best_uv = vec2(0.0);
     bool invalid = false;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < (pass.ids.y>0u?4:6); ++i) {
         float mid = (hi - lo) * 0.5 + lo;
         vec2 muv = 0.5 * (start + mid * stride) + 0.5;
         float mz = SceneZ(muv);

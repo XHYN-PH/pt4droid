@@ -52,8 +52,15 @@ void main() {
     outer += 0.156523 * Pair(z, LinearDepth(v, in_uv + d1 * radius_b), LinearDepth(v, in_uv - d1 * radius_b), 0.5164734, pass.f1.y, pass.f1.w);
     inner += 0.176937 * Pair(z, LinearDepth(v, in_uv + d2 * radius_a), LinearDepth(v, in_uv - d2 * radius_a), 0.5775443, pass.f1.x, pass.f1.z);
     outer += 0.176937 * Pair(z, LinearDepth(v, in_uv + d2 * radius_b), LinearDepth(v, in_uv - d2 * radius_b), 0.5775443, pass.f1.y, pass.f1.w);
-    inner += 0.132698 * Pair(z, LinearDepth(v, in_uv + d3 * radius_a), LinearDepth(v, in_uv - d3 * radius_a), 0.75592875, pass.f1.x, pass.f1.z);
-    outer += 0.132698 * Pair(z, LinearDepth(v, in_uv + d3 * radius_b), LinearDepth(v, in_uv - d3 * radius_b), 0.75592875, pass.f1.y, pass.f1.w);
+    if(pass.ids.y==0u){
+        inner += 0.132698 * Pair(z, LinearDepth(v, in_uv + d3 * radius_a), LinearDepth(v, in_uv - d3 * radius_a), 0.75592875, pass.f1.x, pass.f1.z);
+        outer += 0.132698 * Pair(z, LinearDepth(v, in_uv + d3 * radius_b), LinearDepth(v, in_uv - d3 * radius_b), 0.75592875, pass.f1.y, pass.f1.w);
+    }else{
+        // Renormalize the two remaining pairs so unoccluded surfaces stay unoccluded.
+        const float normalization=(0.156523+0.176937+0.132698)/(0.156523+0.176937);
+        inner=0.0338425+(inner-0.0338425)*normalization;
+        outer=0.0338425+(outer-0.0338425)*normalization;
+    }
     float occlusion = Saturate(Saturate(2.0 * inner - 1.0) + Saturate(2.0 * outer - 1.0));
     // the original's gain on (m_localParam[0].zw) and fade (m_localParam[3].xy, 0xDA39F0): 0 up to gainonStart, 1 from
     // gainonStart + gainonRange, falling over falloffRange to 0 at f2.z
