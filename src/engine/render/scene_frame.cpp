@@ -911,6 +911,7 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
         LogInfo("probe at: blend ({:.4f} {:.4f} {:.4f})", blend.x, blend.y, blend.z);
     }
     BuildShadowViews(lighting, camera.position);
+    PrepareShadowCasters();
     // PT_LIGHT_CHANGES=1: each frame where a light enters or leaves the frame, or gains or loses its shadow, with the eye and
     // the light's diffuse scale, so a light that comes and goes while the player walks names itself at the frame it happens
     if (static const bool light_changes = std::getenv("PT_LIGHT_CHANGES") != nullptr; light_changes) {
@@ -1393,18 +1394,10 @@ void SceneRenderer::InvalidateShadowCache() {
     for (auto& tile : shadow_cache_) tile.Invalidate();
 }
 
-void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
-    stats_.shadow_tiles_reused = stats_.shadow_tiles_rendered = stats_.shadow_draws = 0;
-    if (rt_active_ || rt_reflections_ || rt_ao_active_ || rt_contact_active_) {
-        RecordRayTracing(cmd);
-    }
-    Stamp(cmd, 12);
-    if (rt_active_) {
-        return;
-    }
-    if (shadow_views_.empty()) {
-        return;
-    }
+void SceneRenderer::PrepareShadowCasters() {
+    shadow_shared_.fill(false);
+    stats_.shadow_tiles_shared = 0;
+    if (rt_active_ || shadow_views_.empty()) return;
     static const bool cache_enabled = [] {
         const char* value = std::getenv("PT_SHADOW_CACHE");
         return !value || std::string_view(value) != "0";
@@ -1414,14 +1407,9 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         return !value || std::string_view(value) != "0";
     }();
     const uint32_t tile_size = shadow_.Extent().width / kShadowTiles;
-    std::array<bool, 16> dirty{};
-    uint32_t dirty_count = 0;
-    // A tile's exact view and accepted caster states are compared, without a hash
-    // collision risk. Tile reassignment naturally invalidates it. Skinned and
-    // alpha-tested maps still render every frame.
-    uint32_t rows = 0;
+    // Previous-frame reuse requires exact caster state. Skin remains dynamic;
+    // sharing within this frame compares the actual Draw pointers instead.
     for (const ShadowView& sv : shadow_views_) {
-        rows = std::max(rows, static_cast<uint32_t>(sv.rect.offset.y) + sv.rect.extent.height);
         const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
         ShadowMapState& state = shadow_states_[tile];
         const auto& view = frame_->views[sv.view];
@@ -1438,6 +1426,7 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         state.casters.clear();
         auto& accepted = shadow_casters_[tile];
         accepted.clear();
+        shadow_indices_[tile] = 0;
         for (const Draw& d : draws_) {
             if (!d.sub->shadow || (d.hidden_views & sv.casters) != 0) {
                 continue;
@@ -1466,21 +1455,108 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
                 continue;
             }
             accepted.push_back(&d);
-            const uint32_t material_flags = textures_->MaterialFlags(d.material);
+            shadow_indices_[tile] += d.sub->index_count;
             state.reusable = state.reusable && !d.sub->skinned && d.skin_base == gpu::kInvalid;
             if (state.reusable) {
                 state.casters.push_back({reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
                                          d.material, uint32_t(d.sub->shadow_double_sided), d.transform, textures_->ShadowAlphaState(d.material)});
             }
         }
-        dirty[tile] = !shadow_cache_[tile].Reuse(state);
-        if (dirty[tile]) ++dirty_count;
-        else ++stats_.shadow_tiles_reused;
     }
-    if (!dirty_count) return;
+
+    static const bool share = [] { const char* v = std::getenv("PT_SHADOW_SHARE"); return !v || std::string_view(v) != "0"; }();
+    if (!share) return;
+    auto end_of = [&](size_t first) {
+        size_t end = first + 1;
+        while (end < shadow_views_.size() && shadow_views_[end].light == shadow_views_[first].light) ++end;
+        return end;
+    };
+    auto tile_of = [&](const ShadowView& v) {
+        return uint32_t(v.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(v.rect.offset.y) / tile_size);
+    };
+    // Redirect whole lights, including both point-light hemispheres. A single
+    // matching hemisphere cannot safely redirect a two-tile lookup rectangle.
+    for (size_t first = 0; first < shadow_views_.size();) {
+        const size_t end = end_of(first);
+        if (end - first <= 2) {
+            for (size_t other = 0; other < first; other = end_of(other)) {
+                const size_t other_end = end_of(other);
+                const auto& a = shadow_views_[first];
+                const auto& b = shadow_views_[other];
+                if (other_end - other != end - first || shadow_shared_[tile_of(b)] || a.casters == b.casters ||
+                    light_sources_[a.light] != light_sources_[b.light]) continue;
+                bool equal = true;
+                for (size_t i = 0; i < end - first; ++i) {
+                    const uint32_t ta = tile_of(shadow_views_[first + i]), tb = tile_of(shadow_views_[other + i]);
+                    equal &= SameShadowProjection(shadow_states_[ta], shadow_states_[tb]) && shadow_casters_[ta] == shadow_casters_[tb] &&
+                             shadow_views_[first + i].rect.extent.width == shadow_views_[other + i].rect.extent.width &&
+                             shadow_views_[first + i].rect.extent.height == shadow_views_[other + i].rect.extent.height;
+                }
+                if (!equal) continue;
+                auto& receiver = frame_->lights[a.light];
+                const auto& source = frame_->lights[b.light];
+                receiver.info.x = source.info.x;
+                receiver.shadow_rect = source.shadow_rect;
+                for (size_t i = first; i < end; ++i) {
+                    const uint32_t tile = tile_of(shadow_views_[i]);
+                    shadow_shared_[tile] = true;
+                    shadow_cache_[tile].Invalidate();
+                    ++stats_.shadow_tiles_shared;
+                }
+                break;
+            }
+        }
+        first = end;
+    }
+}
+
+void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
+    stats_.shadow_tiles_reused = stats_.shadow_tiles_rendered = stats_.shadow_draws = stats_.shadow_cache_redraws = 0;
+    if (rt_active_ || rt_reflections_ || rt_ao_active_ || rt_contact_active_) {
+        RecordRayTracing(cmd);
+    }
+    Stamp(cmd, 12);
+    if (rt_active_) {
+        return;
+    }
+    if (shadow_views_.empty()) {
+        return;
+    }
+    const uint32_t tile_size = shadow_.Extent().width / kShadowTiles;
+    std::array<bool, 16> dirty{};
+    uint32_t dirty_count = 0, active_count = 0, rows = 0;
+    uint64_t total_draws = 0, dirty_draws = 0, total_indices = 0, dirty_indices = 0;
+    for (const ShadowView& sv : shadow_views_) {
+        const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
+        if (shadow_shared_[tile]) continue;
+        ++active_count;
+        rows = std::max(rows, uint32_t(sv.rect.offset.y) + sv.rect.extent.height);
+        total_draws += shadow_casters_[tile].size();
+        total_indices += shadow_indices_[tile];
+        dirty[tile] = !shadow_cache_[tile].Reuse(shadow_states_[tile]);
+        if (dirty[tile]) { ++dirty_count; dirty_draws += shadow_casters_[tile].size(); dirty_indices += shadow_indices_[tile]; }
+    }
+    if (!dirty_count) { stats_.shadow_tiles_reused = active_count; return; }
+    static const bool adaptive = [] {
+        if (const char* v = std::getenv("PT_SHADOW_ADAPTIVE")) return std::string_view(v) != "0";
+#ifdef __ANDROID__
+        return true;
+#else
+        return false;
+#endif
+    }();
+    if (adaptive && PreferFullShadowClear(active_count, dirty_count, total_draws, dirty_draws, total_indices, dirty_indices)) {
+        for (const ShadowView& sv : shadow_views_) {
+            const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
+            dirty[tile] = !shadow_shared_[tile];
+        }
+        dirty_count = active_count;
+        stats_.shadow_cache_redraws = 1;
+    }
+    stats_.shadow_tiles_reused = active_count - dirty_count;
     // All dirty: retain the original cheap loadOp clear. Partial updates clear
     // only the changed rectangles; untouched tiles keep their depth contents.
-    const bool clear_all = dirty_count == shadow_views_.size();
+    const bool clear_all = dirty_count == active_count;
     if (clear_all) InvalidateShadowCache();
     UseTargets(cmd, {{&shadow_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();

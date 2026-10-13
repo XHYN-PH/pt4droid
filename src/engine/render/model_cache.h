@@ -67,6 +67,9 @@ private:
     uint32_t missing_textures_ = 0;
 };
 
+struct MaterialTextureRead { std::string path; bool raw = false; };
+std::vector<MaterialTextureRead> MaterialTextureReads(const FmdlMaterial& material);
+
 RenderPass ClassifyMaterial(const FmdlMaterial& material);
 uint32_t MaterialKindOf(const FmdlMaterial& material);
 

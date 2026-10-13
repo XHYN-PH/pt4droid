@@ -193,6 +193,7 @@ void TextureManager::Shutdown() {
     }
     decode_workers_.clear();
     decoding_.clear();
+    prepared_.clear();
     decode_order_.clear();
     if (!ctx_) {
         return;
@@ -427,28 +428,27 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
             }
         }
     }
-    FtexTexture ftex;
+    FtexTexture owned;
+    std::shared_ptr<const FtexTexture> prepared;
     bool read = false;
-    if (auto it = decoding_.find(stem); it != decoding_.end() && !raw) {
-        const std::shared_ptr<FtexTexture> decoded = it->second.get();
+    if (auto it = prepared_.find(stem); it != prepared_.end()) {
+        prepared = it->second;
+        read = prepared != nullptr;
+    } else if (auto it = decoding_.find(stem); it != decoding_.end() && !raw) {
+        prepared = it->second.get();
         decoding_.erase(it);
-        if (decoded) {
-            ftex = std::move(*decoded);
-            read = true;
-        }
+        read = prepared != nullptr;
     } else {
         const auto started = std::chrono::steady_clock::now();
-        read = LoadFtex(qar, stem, ftex);
+        read = LoadFtex(qar, stem, owned);
         read_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
+    const FtexTexture& ftex = prepared ? *prepared : owned;
     if (!read || ftex.Format() == VK_FORMAT_UNDEFINED || ftex.depth > 1) {
         if (ok) {
             *ok = false;
         }
         return kWhite;
-    }
-    if (raw) {
-        ftex.flags &= ~2u;
     }
     uint32_t first_level = 0;
     while (first_level < ftex.mip_count && ftex.mips[first_level].empty()) {
@@ -471,7 +471,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     }
     const auto upload_started = std::chrono::steady_clock::now();
     const double upload_before=upload_ms_;
-    const uint32_t index = Create(key, ftex.Format(), mips, ftex.faces, ftex.faces == 6);
+    const uint32_t index = Create(key, ftex.Format(raw), mips, ftex.faces, ftex.faces == 6);
     upload_ms_ = upload_before+std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_started).count();
     if (index != kWhite && !raw && EnhancedTextureEligible(stem, ftex)) {
         fox_sources_[index] = stem;
@@ -514,18 +514,16 @@ void TextureManager::DecodeAhead(const QarArchive& qar, const std::vector<std::s
 
 bool TextureManager::AdoptDecoded(const std::string& path, std::shared_ptr<FtexTexture> decoded) {
     std::string stem = FtexStem(path);
-    if (mods::Active() || stem.empty() || by_name_.contains(stem) || decoding_.contains(stem)) {
+    if (mods::Active() || stem.empty() || !decoded || prepared_.contains(stem) || decoding_.contains(stem)) {
         return false;
     }
-    std::promise<std::shared_ptr<FtexTexture>> promise;
-    promise.set_value(std::move(decoded));
-    decoding_.emplace(std::move(stem), promise.get_future().share());
+    prepared_.emplace(std::move(stem), std::move(decoded));
     return true;
 }
 
 void TextureManager::DropDecoded(const std::vector<std::string>& paths) {
     for (const std::string& path : paths) {
-        decoding_.erase(FtexStem(path));
+        prepared_.erase(FtexStem(path));
     }
 }
 

@@ -29,6 +29,24 @@ struct ShadowMapState {
     bool reusable = true;
     bool operator==(const ShadowMapState&) const = default;
 };
+
+// The caster masks may differ for camera and mirror views. Sharing is safe
+// only after their accepted Draw pointers also compare equal this frame.
+inline bool SameShadowProjection(const ShadowMapState& a, const ShadowMapState& b) {
+    return a.view_projection == b.view_projection && a.view == b.view && a.projection_param == b.projection_param &&
+           a.eye == b.eye && a.shadow == b.shadow && a.bias_constant == b.bias_constant &&
+           a.bias_slope == b.bias_slope && a.cull == b.cull;
+}
+
+// A small cached tile need not force a depth LOAD of the entire render area.
+// Keep reuse when it saves appreciable draw work or most active tiles.
+inline bool PreferFullShadowClear(uint32_t active, uint32_t dirty, uint64_t total_draws, uint64_t dirty_draws,
+                                  uint64_t total_indices = 0, uint64_t dirty_indices = 0) {
+    if (!dirty || dirty >= active || dirty_draws > total_draws || dirty_indices > total_indices) return false;
+    return uint64_t(dirty) * 4 >= uint64_t(active) * 3 &&
+           (total_draws - dirty_draws) <= total_draws / 8 &&
+           (total_indices - dirty_indices) <= total_indices / 8;
+}
 class ShadowTileCache {
 public:
     bool Reuse(const ShadowMapState& state) const { return valid_ && state.reusable && state == previous_; }

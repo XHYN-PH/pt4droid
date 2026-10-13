@@ -130,14 +130,19 @@ uint32_t ModelCache::LoadTexture(const std::string& path, uint32_t fallback, boo
     return index;
 }
 
-MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flags) {
+namespace {
+MaterialGpu BuildMaterialGpu(const FmdlMaterial& m, uint32_t alpha_flags,
+                             const std::function<uint32_t(const std::string&, uint32_t, bool)>& loader,
+                             const std::function<bool(const FmdlMaterial&)>& reflection,
+                             const std::function<uint32_t(uint32_t)>& cube_slot) {
+    auto load = [&](const std::string& path, uint32_t fallback, bool raw = false) { return loader(path, fallback, raw); };
     MaterialGpu gpu;
     gpu.kind = MaterialKindOf(m);
     gpu.normal = TextureManager::kFlatNormal;
     gpu.specular = TextureManager::kBlack;
     auto texture = [&](std::string_view prefix, uint32_t fallback, bool raw = false) {
         const std::string* path = FindTexture(m, prefix);
-        return path ? LoadTexture(*path, fallback, raw) : fallback;
+        return path ? load(*path, fallback, raw) : fallback;
     };
     // the deferred slots: a slot the material names whose file is not in texture.qar takes Fox's default texture, the grey of
     // TextureManager::kGrey (P.T. ships no file for the ending's plant shsb_flpl001, utility pole shsb_utpl002, catwalk
@@ -145,7 +150,7 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
     // street lamp shone white where the capture shows it dark)
     auto deferred = [&](std::string_view prefix, uint32_t absent, uint32_t missing) {
         const std::string* path = FindTexture(m, prefix);
-        return path ? LoadTexture(*path, missing) : absent;
+        return path ? load(*path, missing) : absent;
     };
     auto scalar = [&](std::string_view name, float fallback) { return HasVector(m, name) ? m.Vector(name).x : fallback; };
     gpu.indices = glm::vec4(scalar("MatParamIndex_0", 0.0f), scalar("MatParamIndex_1", 0.0f), scalar("MatParamIndex_2", 0.0f),
@@ -170,7 +175,7 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
     case gpu::kKindGlass:
         gpu.albedo = texture("Base_Tex", TextureManager::kWhite, true);
         if (const std::string* path = FindTexture(m, "NormalMap_Tex")) {
-            gpu.normal = LoadTexture(*path, TextureManager::kFlatNormal);
+            gpu.normal = load(*path, TextureManager::kFlatNormal);
             gpu.flags |= gpu::kMatNormalMap;
         }
         gpu.albedo_factor = m.Vector("GlassColor", glm::vec4(1.0f));
@@ -180,7 +185,7 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
         if (m.shader.find("commonref") != std::string::npos) {
             gpu.flags |= gpu::kMatCommonReflection;
         } else if (const std::string* path = FindTexture(m, "GlassReflection_Tex")) {
-            const uint32_t slot = textures_.CubeSlot(LoadTexture(*path, TextureManager::kBlack, true));
+            const uint32_t slot = cube_slot(load(*path, TextureManager::kBlack, true));
             gpu.aux0 = slot == TextureManager::kNoCube ? 0 : slot;
         }
         return gpu;
@@ -192,7 +197,7 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
         gpu.albedo = texture("Base_Tex", TextureManager::kWhite, true);
         gpu.aux0 = texture("Height_Tex", TextureManager::kBlack, true);
         gpu.aux1 = texture("Mask_Tex", TextureManager::kWhite, true);
-        gpu.aux2 = LoadTexture(kMirrorDirt, TextureManager::kBlack, true);
+        gpu.aux2 = load(kMirrorDirt, TextureManager::kBlack, true);
         gpu.params.z = scalar("HeightScale", 0.0f);
         gpu.params.w = gpu.aux2 != TextureManager::kBlack ? 1.0f : 0.0f;
         return gpu;
@@ -222,7 +227,7 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
     gpu.specular = deferred("SpecularMap_Tex", TextureManager::kBlack, TextureManager::kGrey);
     if (m.shader.starts_with("fox_3ddc")) {
         gpu.flags |= gpu::kMatDecal;
-    } else if (ViewReflection(m)) {
+    } else if (reflection(m)) {
         gpu.flags |= gpu::kMatViewReflection;
     }
     if (m.technique.find("_NC_") != std::string::npos || m.technique.ends_with("_NC")) {
@@ -243,7 +248,7 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
     }
     const bool layer = m.shader.starts_with("fox_3ddf_layer") && m.technique.find("MaskUV") != std::string::npos && !MaterialLegacy();
     if (const std::string* path = FindTexture(m, "SubNormalMap_Tex")) {
-        gpu.aux1 = LoadTexture(*path, TextureManager::kGrey);
+        gpu.aux1 = load(*path, TextureManager::kGrey);
         gpu.aux2 = deferred("SubNormalMask_Tex", TextureManager::kWhite, TextureManager::kGrey);
         gpu.extra = glm::vec4(scalar("SubNormal_Blend", 0.0f), scalar("URepeat_UV", 1.0f), scalar("VRepeat_UV", 1.0f), 0.0f);
         if (layer) {
@@ -332,6 +337,29 @@ MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& m, uint32_t alpha_flag
         gpu.params.z = scalar("HeightScale", 0.0f);
     }
     return gpu;
+}
+
+}  // namespace
+
+MaterialGpu ModelCache::BuildMaterial(const FmdlMaterial& material, uint32_t alpha_flags) {
+    return BuildMaterialGpu(material, alpha_flags,
+                            [this](const std::string& path, uint32_t fallback, bool raw) { return LoadTexture(path, fallback, raw); },
+                            [this](const FmdlMaterial& m) { return ViewReflection(m); },
+                            [this](uint32_t index) { return textures_.CubeSlot(index); });
+}
+
+std::vector<MaterialTextureRead> MaterialTextureReads(const FmdlMaterial& material) {
+    std::vector<MaterialTextureRead> reads;
+    // Run the same material selection without uploading or reading reflection metadata.
+    // Returning each slot's fallback preserves the builder's texture-selection branches.
+    BuildMaterialGpu(material, 0,
+                     [&](const std::string& path, uint32_t fallback, bool raw) {
+                         if (!path.empty()) reads.push_back({path, raw});
+                         return fallback;
+                     },
+                     [](const FmdlMaterial&) { return false; },
+                     [](uint32_t) { return TextureManager::kNoCube; });
+    return reads;
 }
 
 std::unordered_set<std::string> ModelCache::Paths() const {

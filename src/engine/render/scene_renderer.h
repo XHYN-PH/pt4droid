@@ -169,6 +169,8 @@ struct RenderStats {
     uint32_t shadow_views = 0;
     uint32_t shadow_tiles_reused = 0;
     uint32_t shadow_tiles_rendered = 0;
+    uint32_t shadow_tiles_shared = 0;
+    uint32_t shadow_cache_redraws = 0;
     uint32_t shadow_draws = 0;
     uint32_t mirrors_occluded = 0;
     uint64_t gpu_sample = 0;
@@ -338,6 +340,7 @@ private:
 
     void PrepareFrame(const Camera& camera, const std::vector<DrawItem>& items, const SceneLighting& lighting);
     void BuildShadowViews(const SceneLighting& lighting, const glm::vec3& eye);
+    void PrepareShadowCasters();
     void UploadFrame(FrameSlot& slot);
     void SetTppFog(const TppAtmosphereSettings& tpp);
     void ReadMeasurements(FrameSlot& slot, float dt, const ExposureSettings& settings);
@@ -463,6 +466,8 @@ private:
     std::array<ShadowTileCache, 16> shadow_cache_;
     std::array<ShadowMapState, 16> shadow_states_;
     std::array<std::vector<const Draw*>, 16> shadow_casters_;
+    std::array<bool, 16> shadow_shared_{};
+    std::array<uint64_t, 16> shadow_indices_{};
     RenderTarget ao_[2];
     RenderTarget refmap_;
     RenderTarget hdr_copy_;

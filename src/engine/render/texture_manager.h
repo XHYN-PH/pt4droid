@@ -162,6 +162,8 @@ private:
     void StopEnhancedWorker();
     // DecodeAhead: the decodes by texture stem (nullptr when the file could not be read), their queue order, the workers
     std::unordered_map<std::string, std::shared_future<std::shared_ptr<FtexTexture>>> decoding_;
+    // Stage-owned preparation stays immutable until every raw/sRGB use has loaded.
+    std::unordered_map<std::string, std::shared_ptr<const FtexTexture>> prepared_;
     std::deque<std::string> decode_order_;
     std::vector<std::future<void>> decode_workers_;
     struct PendingUpload{VkImage image;std::vector<VkBufferImageCopy> regions;};
