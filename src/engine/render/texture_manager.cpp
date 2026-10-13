@@ -186,14 +186,28 @@ bool TextureManager::Init(vk::Context& ctx) {
     return true;
 }
 
-void TextureManager::Shutdown() {
-    StopEnhancedWorker();
+TextureManager::~TextureManager() { StopDecodeWorkers(); }
+
+void TextureManager::StopDecodeWorkers() {
+    if (decode_queue_) {
+        { std::lock_guard lock(decode_queue_->mutex); decode_queue_->stop = true; decode_queue_->jobs.clear(); }
+        decode_queue_->ready.notify_all();
+    }
     for (std::future<void>& worker : decode_workers_) {
         worker.wait();
     }
     decode_workers_.clear();
+    decode_queue_.reset();
+}
+
+void TextureManager::Shutdown() {
+    StopEnhancedWorker();
+    StopDecodeWorkers();
+    worker_prepared_.clear();
+    read_stats_ = {};
     decoding_.clear();
     prepared_.clear();
+    prepared_variants_.clear();
     decode_order_.clear();
     if (!ctx_) {
         return;
@@ -434,12 +448,20 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     if (auto it = prepared_.find(stem); it != prepared_.end()) {
         prepared = it->second;
         read = prepared != nullptr;
-    } else if (auto it = decoding_.find(stem); it != decoding_.end() && !raw) {
+        ++read_stats_.prepared;
+    } else if (auto it = decoding_.find(stem); it != decoding_.end()) {
         prepared = it->second.get();
         decoding_.erase(it);
         read = prepared != nullptr;
-    } else {
+        if (read) {
+            prepared_.emplace(stem, prepared);
+            worker_prepared_.insert(stem);
+            ++read_stats_.ahead;
+        }
+    }
+    if (!read) {
         const auto started = std::chrono::steady_clock::now();
+        ++read_stats_.direct;
         read = LoadFtex(qar, stem, owned);
         read_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
@@ -472,6 +494,19 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     const auto upload_started = std::chrono::steady_clock::now();
     const double upload_before=upload_ms_;
     const uint32_t index = Create(key, ftex.Format(raw), mips, ftex.faces, ftex.faces == 6);
+    if (auto it = prepared_variants_.find(stem); it != prepared_variants_.end()) {
+        const uint8_t resident = uint8_t(by_name_.contains(stem)) | (uint8_t(by_name_.contains(stem + "#raw")) << 1);
+        if ((resident & it->second) == it->second) {
+            prepared_.erase(stem);
+            prepared_variants_.erase(it);
+        }
+    }
+    // A worker result can serve either upload order without rereading or changing
+    // flags. Reclaim its budget after both variants are resident.
+    if (worker_prepared_.contains(stem) && by_name_.contains(stem) && by_name_.contains(stem + "#raw")) {
+        worker_prepared_.erase(stem);
+        prepared_.erase(stem);
+    }
     upload_ms_ = upload_before+std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_started).count();
     if (index != kWhite && !raw && EnhancedTextureEligible(stem, ftex)) {
         fox_sources_[index] = stem;
@@ -484,32 +519,53 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
 }
 
 void TextureManager::DecodeAhead(const QarArchive& qar, const std::vector<std::string>& paths) {
-    if (mods::Active()) {
-        return;
-    }
-    std::vector<std::pair<std::string, std::promise<std::shared_ptr<FtexTexture>>>> jobs;
-    for (const std::string& path : paths) {
-        std::string stem = FtexStem(path);
-        if (stem.empty() || by_name_.contains(stem) || decoding_.contains(stem)) {
-            continue;
+    if (mods::Active() || paths.empty()) return;
+    const bool new_reads = std::any_of(paths.begin(), paths.end(), [&](const std::string& path) {
+        const std::string stem = FtexStem(path);
+        return !stem.empty() && !by_name_.contains(stem) && !prepared_.contains(stem) && !decoding_.contains(stem);
+    });
+    if (!new_reads) return;
+    // Uploaded payloads may serve raw/sRGB within a preparation set. A new
+    // set releases that cache so old CPU copies cannot starve the bounded pool.
+    for (const auto& stem : worker_prepared_) prepared_.erase(stem);
+    worker_prepared_.clear();
+    if (!decode_queue_) {
+        decode_queue_ = std::make_shared<DecodeQueue>();
+        for (int i = 0; i < 2; ++i) {
+            decode_workers_.push_back(std::async(std::launch::async, [queue = decode_queue_] {
+                for (;;) {
+                    DecodeJob job;
+                    {
+                        std::unique_lock lock(queue->mutex);
+                        queue->ready.wait(lock, [&] { return queue->stop || !queue->jobs.empty(); });
+                        if (queue->stop) return;
+                        job = std::move(queue->jobs.front());
+                        queue->jobs.pop_front();
+                    }
+                    // The lease lasts exactly as long as the immutable payload.
+                    auto lease = std::make_shared<TextureReadBudget>(96ull * 1024 * 1024, queue->budget);
+                    auto ftex = std::shared_ptr<FtexTexture>(new FtexTexture,
+                        [budget = queue->budget, lease](FtexTexture* value) { delete value; });
+                    if (!LoadFtex(*job.qar, job.stem, *ftex, lease.get())) ftex.reset();
+                    job.promise.set_value(std::move(ftex));
+                }
+            }));
         }
-        std::promise<std::shared_ptr<FtexTexture>> promise;
-        decoding_.emplace(stem, promise.get_future().share());
-        decode_order_.push_back(stem);
-        jobs.emplace_back(std::move(stem), std::move(promise));
     }
-    if (jobs.empty()) {
-        return;
-    }
-    decode_workers_.push_back(std::async(std::launch::async, [&qar, jobs = std::move(jobs)]() mutable {
-        for (auto& [stem, promise] : jobs) {
-            auto ftex = std::make_shared<FtexTexture>();
-            if (!LoadFtex(qar, stem, *ftex)) {
-                ftex.reset();
-            }
-            promise.set_value(std::move(ftex));
+    {
+        std::lock_guard lock(decode_queue_->mutex);
+        for (const std::string& path : paths) {
+            std::string stem = FtexStem(path);
+            if (stem.empty() || by_name_.contains(stem) || prepared_.contains(stem) || decoding_.contains(stem)) continue;
+            DecodeJob job;
+            job.qar = &qar;
+            job.stem = stem;
+            decoding_.emplace(stem, job.promise.get_future().share());
+            decode_order_.push_back(stem);
+            decode_queue_->jobs.push_back(std::move(job));
         }
-    }));
+    }
+    decode_queue_->ready.notify_all();
 }
 
 bool TextureManager::AdoptDecoded(const std::string& path, std::shared_ptr<FtexTexture> decoded) {
@@ -524,6 +580,7 @@ bool TextureManager::AdoptDecoded(const std::string& path, std::shared_ptr<FtexT
 void TextureManager::DropDecoded(const std::vector<std::string>& paths) {
     for (const std::string& path : paths) {
         prepared_.erase(FtexStem(path));
+        prepared_variants_.erase(FtexStem(path));
     }
 }
 
@@ -548,10 +605,10 @@ uint32_t TextureManager::PumpDecoded(const QarArchive& qar, uint32_t count) {
         }
         const std::string stem = decode_order_.front();
         decode_order_.pop_front();
+        if (!it->second.get()) { decoding_.erase(it); continue; }
         LoadFox(qar, stem);
         ++uploaded;
     }
-    std::erase_if(decode_workers_, [](std::future<void>& worker) { return worker.wait_for(std::chrono::seconds(0)) == std::future_status::ready; });
     return uploaded;
 }
 

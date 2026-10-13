@@ -9,6 +9,7 @@
 #include <atomic>
 #include <future>
 #include <mutex>
+#include <condition_variable>
 #include <memory>
 #include <span>
 #include <string>
@@ -48,6 +49,7 @@ struct MaterialGpu {
 
 class TextureManager {
 public:
+    ~TextureManager();
     static constexpr uint32_t kMaxTextures = 8192;
     static constexpr uint32_t kMaxMaterials = 16384;
     static constexpr uint32_t kWhite = 0;
@@ -82,9 +84,12 @@ public:
     // mod is active. Unlike DecodeAhead's, an adopted decode is not uploaded by PumpDecoded: DropDecoded drops the ones not taken.
     bool AdoptDecoded(const std::string& path, std::shared_ptr<FtexTexture> decoded);
     void DropDecoded(const std::vector<std::string>& paths);
+    void SetPreparedVariants(const std::string& path, uint8_t variants) { prepared_variants_[FtexStem(path)] = variants; }
     std::unordered_set<std::string> Names() const;
     // milliseconds the calling (main) thread spent reading .ftex files and uploading textures, for the slow load logs
     double ReadMs() const { return read_ms_; }
+    struct ReadStats { uint64_t prepared = 0, ahead = 0, direct = 0; };
+    ReadStats Reads() const { return read_stats_; }
     double UploadMs() const { return upload_ms_; }
     uint32_t AddMaterial(const MaterialGpu& material);
     void UpdateMaterial(uint32_t index, const MaterialGpu& material);
@@ -164,8 +169,25 @@ private:
     std::unordered_map<std::string, std::shared_future<std::shared_ptr<FtexTexture>>> decoding_;
     // Stage-owned preparation stays immutable until every raw/sRGB use has loaded.
     std::unordered_map<std::string, std::shared_ptr<const FtexTexture>> prepared_;
+    std::unordered_map<std::string, uint8_t> prepared_variants_;
     std::deque<std::string> decode_order_;
+    struct DecodeJob {
+        const QarArchive* qar = nullptr;
+        std::string stem;
+        std::promise<std::shared_ptr<FtexTexture>> promise;
+    };
+    struct DecodeQueue {
+        std::mutex mutex;
+        std::condition_variable ready;
+        std::deque<DecodeJob> jobs;
+        bool stop = false;
+        std::shared_ptr<TextureReadBudget> budget = std::make_shared<TextureReadBudget>(96ull * 1024 * 1024);
+    };
+    void StopDecodeWorkers();
+    std::shared_ptr<DecodeQueue> decode_queue_;
     std::vector<std::future<void>> decode_workers_;
+    std::unordered_set<std::string> worker_prepared_;
+    ReadStats read_stats_;
     struct PendingUpload{VkImage image;std::vector<VkBufferImageCopy> regions;};
     vk::Buffer upload_staging_;VkDeviceSize upload_used_=0;std::vector<PendingUpload> upload_pending_;uint32_t upload_batch_depth_=0;uint64_t fallback_bytes_=0;
     struct FormatSupport{VkFormatProperties properties{};VkImageFormatProperties image{};bool valid=false;};

@@ -27,6 +27,8 @@ public:
     uint32_t Cube(const std::string& path);
     // takes the list and hands back the previous one, cleared with its capacity kept, for the next frame's build
     void Submit(vfx::RenderList& list);
+    void BeginTextureBatch() { if (textures_) textures_->BeginUploadBatch(); }
+    void EndTextureBatch() { if (textures_) textures_->EndUploadBatch(); }
     void RecordForward(const SceneVfxContext& context);
     void RecordFilter(const SceneFilterContext& context);
     const vfx::RenderList& List() const { return list_; }

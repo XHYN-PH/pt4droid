@@ -193,7 +193,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         push.f0.y = 0.0f;
         push.f0.w = 0.0f;
     }
-    Fullscreen(cmd, tonemap_, push);
+    Fullscreen(cmd, tonemap_base_ ? tonemap_base_ : tonemap_, push);
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&ldr_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
 
@@ -223,7 +223,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         gpu::PassPush lut;
         lut.ids = glm::uvec4(ldr_index(current), 1, 0, post_view_);
         lut.f0 = glm::vec4(0.0f, lut_blend, 1.0f, 1.0f);
-        run(tonemap_, lut);
+        run(tonemap_grade_ ? tonemap_grade_ : tonemap_, lut);
     }
 
     const bool blur = toggles.full_screen_blur && screen.full_screen_blur && lighting.valid;

@@ -126,6 +126,15 @@ VkPipeline CreateGraphicsPipeline(VkDevice device, const PipelineDesc& desc) {
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     stages[1].module = frag;
     stages[1].pName = "main";
+    std::vector<VkSpecializationMapEntry> constant_map;
+    std::vector<uint32_t> constant_values;
+    for (const auto& [id, value] : desc.fragment_constants) {
+        constant_map.push_back({id, uint32_t(constant_values.size() * sizeof(uint32_t)), sizeof(uint32_t)});
+        constant_values.push_back(value);
+    }
+    const VkSpecializationInfo specialization{uint32_t(constant_map.size()), constant_map.data(),
+                                             constant_values.size() * sizeof(uint32_t), constant_values.data()};
+    if (!constant_map.empty()) stages[1].pSpecializationInfo = &specialization;
     VkVertexInputBindingDescription binding{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
     const VkVertexInputAttributeDescription attributes[] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},

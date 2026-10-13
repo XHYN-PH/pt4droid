@@ -47,9 +47,17 @@ inline bool PreferFullShadowClear(uint32_t active, uint32_t dirty, uint64_t tota
            (total_draws - dirty_draws) <= total_draws / 8 &&
            (total_indices - dirty_indices) <= total_indices / 8;
 }
+enum class ShadowMiss : uint8_t { None, Cold, Dynamic, Projection, Casters };
 class ShadowTileCache {
 public:
-    bool Reuse(const ShadowMapState& state) const { return valid_ && state.reusable && state == previous_; }
+    ShadowMiss Miss(const ShadowMapState& state) const {
+        if (!state.reusable) return ShadowMiss::Dynamic;
+        if (!valid_) return ShadowMiss::Cold;
+        if (!SameShadowProjection(state, previous_) || state.caster_views != previous_.caster_views) return ShadowMiss::Projection;
+        if (state.casters != previous_.casters) return ShadowMiss::Casters;
+        return ShadowMiss::None;
+    }
+    bool Reuse(const ShadowMapState& state) const { return Miss(state) == ShadowMiss::None; }
     void Recorded(const ShadowMapState& state) {
         valid_ = state.reusable;
         if (valid_) previous_ = state;
