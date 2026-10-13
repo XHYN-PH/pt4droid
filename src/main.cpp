@@ -58,6 +58,7 @@
 #include "engine/render/renderer.h"
 #include "engine/render/scene_renderer.h"
 #include "engine/render/render_timing.h"
+#include "engine/render/frame_diagnostics.h"
 #include "engine/render/texture_manager.h"
 #include "engine/render/upscale/frame_generation.h"
 #include "engine/render/upscale/streamline.h"
@@ -4018,7 +4019,13 @@ int RunGame(App& app, pt::Vfs& vfs) {
     std::string last_speaker_error;
     bool speaker_route_requested = false;
     constexpr std::array<uint32_t, 2> kLisaCryEvents{0xAD52F3C2u, 0x0CB2A9B7u};
+    pt::FrameDiagnostics frame_diagnostics;
+    auto diagnostic_last_present = std::chrono::steady_clock::time_point{};
+    bool diagnostic_logging = false;
+    int diagnostic_state = -1;
     while (running) {
+        std::array<float, 5> diagnostic_parts{};
+        bool diagnostic_rendered = false;
         const auto frame_started = std::chrono::steady_clock::now();
         // VR: the headset is the view, a minimized window does not stop it; the frame wait paces the loop. While the runtime has
         // no running session (the headset asleep or not yet ready, its compositor restarting) the game holds as a window in the
@@ -5020,6 +5027,12 @@ int RunGame(App& app, pt::Vfs& vfs) {
             last_render_frame = frame;
             const auto part_t5 = std::chrono::steady_clock::now();
             app.renderer.EndFrame(app.window != nullptr);
+            if (pt::LogEnabled()) {
+                const auto part_t6 = std::chrono::steady_clock::now();
+                diagnostic_parts = {parts_row[0], parts_row[1], parts_row[2],
+                    parts_ms(part_t5 - part_t4).count(), parts_ms(part_t6 - part_t5).count()};
+                diagnostic_rendered = true;
+            }
             if (parts_csv && pt::LogEnabled()) {
                 parts_row[3] = parts_ms(part_t5 - part_t4).count();
                 parts_last_end = std::chrono::steady_clock::now();
@@ -5122,6 +5135,16 @@ int RunGame(App& app, pt::Vfs& vfs) {
             static pt::RenderTimingWindow timings;
             static bool diagnostics_active = false;
             const bool diagnostics = pt::LogEnabled();
+            const int current_state = int(ui_ready && ui.MenuOpen()) | (int(was_focused) << 1);
+            if (diagnostic_state != current_state || diagnostic_logging != diagnostics) {
+                frame_diagnostics.Clear();
+                status_start = std::chrono::steady_clock::now();
+                status_frames = 0;
+                timings.Clear();
+                diagnostic_last_present = {};
+                diagnostic_state = current_state;
+                diagnostic_logging = diagnostics;
+            }
             if (diagnostics != diagnostics_active) {
                 status_start = std::chrono::steady_clock::now();
                 status_frames = 0;
@@ -5148,6 +5171,23 @@ int RunGame(App& app, pt::Vfs& vfs) {
                         }
                     }
                     const VkExtent2D render_extent = app.renderer.RenderExtent();
+                    int effective_cap = app.settings.display.fps_limit;
+#ifdef __ANDROID__
+                    effective_cap = pt::android::EffectiveFrameLimit(effective_cap);
+#endif
+                    const bool cap_menu = ((ui_ready && ui.MenuOpen()) || show_settings || game.Paused()) && !photo_mode;
+                    if (cap_menu) effective_cap = effective_cap > 0 ? std::min(effective_cap, 60) : 60;
+                    const auto percentiles = frame_diagnostics.Percentiles();
+                    pt::LogInfo("frame pacing: {} samples, interval p50 {:.2f}, p95 {:.2f}, p99 {:.2f}, worst {:.2f} ms, >33ms {}, effective cap {}, foreground {}",
+                        frame_diagnostics.samples, percentiles[0], percentiles[1], percentiles[2], frame_diagnostics.worst_ms,
+                        frame_diagnostics.over_33ms, effective_cap, was_focused);
+                    pt::LogInfo("frame CPU avg: acquire/fence wait {:.2f}, scene {:.2f}, VFX {:.2f}, recording {:.2f}, submit/present {:.2f} ms",
+                        frame_diagnostics.Mean(0), frame_diagnostics.Mean(1), frame_diagnostics.Mean(2), frame_diagnostics.Mean(3), frame_diagnostics.Mean(4));
+#ifdef __ANDROID__
+                    pt::LogInfo("mobile pacing: thermal status {}, sustained {}, frame pacing {}", pt::android::ThermalStatus(),
+                        pt::android::PerformanceOptions().sustained, app.renderer.Context().AndroidFramePacingActive());
+#endif
+                    frame_diagnostics.Clear();
                     pt::LogInfo("status: {:.0f} fps, gpu {:.2f} ms, vram {:.0f} of {:.0f} MB, {}x{}, upscaler {} {}, frame generation {}, vsync {}, "
                                 "fps limit {}, floor {}{}",
                                 status_frames / status_seconds, timings.GpuMean(timings.gpu_ms), used / 1048576.0,
@@ -5164,6 +5204,11 @@ int RunGame(App& app, pt::Vfs& vfs) {
                     } else {
                         pt::LogInfo("mobile passes: GPU timings unavailable; renderer CPU avg {:.2f} ms", timings.CpuMean(timings.cpu_ms));
                     }
+                    if (timings.gpu_samples) pt::LogInfo("mobile lighting avg: AO {:.2f}, probes/resolve {:.2f}, direct lights {:.2f} ms",
+                        timings.GpuMean(timings.lighting[0]), timings.GpuMean(timings.lighting[1]), timings.GpuMean(timings.lighting[2]));
+                    pt::LogInfo("mobile shadow misses avg: cold {:.2f}, dynamic/disabled {:.2f}, projection/view {:.2f}, casters/material {:.2f}",
+                        timings.CpuMean(timings.shadow_misses[0]), timings.CpuMean(timings.shadow_misses[1]),
+                        timings.CpuMean(timings.shadow_misses[2]), timings.CpuMean(timings.shadow_misses[3]));
                     pt::LogInfo("mobile work avg: shadow tiles reused {:.1f}, rendered {:.1f}, shadow draws {:.1f}, mirrors occluded {:.2f}",
                         timings.CpuMean(timings.reused), timings.CpuMean(timings.rendered), timings.CpuMean(timings.shadow_draws), timings.CpuMean(timings.mirrors_occluded));
                     pt::LogInfo("mobile shadow sharing avg: shared tiles {:.1f}, cache redraws {:.2f}",
@@ -5221,6 +5266,15 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 const int64_t wait = pt::FrameLimitWaitNs(elapsed, cap);
                 if (wait > 0) SDL_DelayPrecise(static_cast<Uint64>(wait));
             }
+        }
+        if (diagnostic_rendered && pt::LogEnabled()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (diagnostic_last_present.time_since_epoch().count()) {
+                frame_diagnostics.Add(std::chrono::duration<float, std::milli>(now - diagnostic_last_present).count(), diagnostic_parts);
+            }
+            diagnostic_last_present = now;
+        } else {
+            diagnostic_last_present = {};
         }
         if ((options.headless && frame >= static_cast<uint64_t>(options.frames)) || game.QuitRequested()) {
             const glm::vec3 feet = game.GetPlayer().Feet();
