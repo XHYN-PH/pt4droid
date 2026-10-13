@@ -133,7 +133,7 @@ int main() {
     assert(TargetAccessScope(VK_IMAGE_LAYOUT_GENERAL).stages==VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
     // Averages accept each completed GPU sample once; stale/unavailable samples
     // and logging restarts do not bias the totals toward zero or repeat frames.
-    struct Stats { bool gpu_timing_valid=true; uint64_t gpu_sample=1; float gpu_ms=21,ray_setup_ms=1,cpu_ms=2; float pass_ms[6]={2,3,4,5,3,3},part_ms[6]={}; int shadow_tiles_reused=2,shadow_tiles_rendered=1,shadow_draws=3,mirrors_occluded=0; } stats;
+    struct Stats { bool gpu_timing_valid=true; uint64_t gpu_sample=1; float gpu_ms=21,ray_setup_ms=1,cpu_ms=2; float pass_ms[6]={2,3,4,5,3,3},part_ms[6]={}; int shadow_tiles_reused=2,shadow_tiles_rendered=1,shadow_tiles_shared=2,shadow_cache_redraws=1,shadow_draws=3,mirrors_occluded=0; } stats;
     RenderTimingWindow timing; timing.AddGpu(stats); timing.AddGpu(stats); assert(timing.gpu_samples==1);
     stats.gpu_timing_valid=false; stats.gpu_sample=2; timing.AddGpu(stats); assert(timing.gpu_samples==1);
     stats.gpu_timing_valid=true; timing.AddGpu(stats); assert(timing.gpu_samples==2 && timing.GpuMean(timing.gpu_ms)==21);
