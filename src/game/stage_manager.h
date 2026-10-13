@@ -205,7 +205,7 @@ private:
         std::unordered_set<std::string> textures;
         std::unordered_set<std::string> geoms;
     };
-    static ParsedStage Parse(Vfs& vfs, const std::string& fpk_path, const KnownAssets* known = nullptr);
+    static ParsedStage Parse(Vfs& vfs, const std::string& fpk_path, const KnownAssets* known = nullptr, bool prepare_textures = true);
     uint32_t load_count_ = 0;
     std::string deferred_prefetch_;
     void StartPrefetch(const std::string& fpk_path);

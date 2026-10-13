@@ -738,7 +738,11 @@ void VfxScene::Prepare(Game& game, const Camera& camera, float aspect, SceneLigh
     const auto started = std::chrono::steady_clock::now();
     const ThreadCost cost_before = QueryThreadCost();
     preload_ms_ = build_ms_ = 0.0;
+    pass.BeginTextureBatch();
     PrepareList(game, camera, aspect, lighting, pass, blend);
+    const auto upload_started = std::chrono::steady_clock::now();
+    pass.EndTextureBatch();
+    const double upload_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_started).count();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     const ThreadCost cost_after = QueryThreadCost();
     prepare_seconds_ += seconds;
@@ -747,8 +751,9 @@ void VfxScene::Prepare(Game& game, const Camera& camera, float aspect, SceneLigh
         // rest (light conversion, sort and hand-over in VfxPass::Submit)
         // with the thread's cycles (millions) and the process's page faults over the call: a stall with the cycles of a normal
         // frame was the thread waiting, not working
-        LogInfo("vfx: prepare took {:.1f} ms at frame {} ({} instances; preload {:.1f}, build {:.1f}, {} quads; {:.1f} Mcycles, {} page faults)",
-                seconds * 1000.0, game.Frame(), system_.InstanceCount(), preload_ms_, build_ms_, pass.List().quads.size(),
+        LogInfo("vfx: prepare took {:.1f} ms at frame {} ({} instances; preload {:.1f}, build {:.1f}, upload wait {:.1f}, handover/other {:.1f}, {} quads; {:.1f} Mcycles, {} page faults)",
+                seconds * 1000.0, game.Frame(), system_.InstanceCount(), preload_ms_, build_ms_, upload_ms,
+                std::max(0.0, seconds * 1000.0 - preload_ms_ - build_ms_ - upload_ms), pass.List().quads.size(),
                 static_cast<double>(cost_after.cycles - cost_before.cycles) * 1e-6, cost_after.page_faults - cost_before.page_faults);
     }
     ++prepares_;
