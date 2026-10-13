@@ -11,6 +11,7 @@ layout(push_constant) uniform PassPush {
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 out_color;
+layout(constant_id = 0) const uint COMPOSE_TPP = 0xFFFFFFFFu;
 
 float BloomAlpha(vec3 color) {
     float r = Luma709(color) / 32.0;
@@ -54,7 +55,7 @@ vec3 TppShoulder(vec3 x) {
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     float depth = ImgFetch(IMG_DEPTH, pixel).x;
-    uint tpp = pass.ids.z;
+    uint tpp = COMPOSE_TPP == 0xFFFFFFFFu ? pass.ids.z : COMPOSE_TPP;
     View v = frame.views[pass.ids.x];
     vec3 color = vec3(0.0);
     float z = 1.0e9;
