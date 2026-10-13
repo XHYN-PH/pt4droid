@@ -6,6 +6,7 @@
 #include <chrono>
 #include <format>
 #include <thread>
+#include <atomic>
 
 #include "engine/assets/fmdl.h"
 #include "engine/core/log.h"
@@ -111,6 +112,7 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
     stage->file_root = stage->main->has_root ? stage->main->root : glm::mat4(1.0f);
     if (known) {
         std::unordered_set<std::string> stems;
+        std::vector<std::string> texture_paths;
         for (const auto& file : stage->files) {
             for (const auto& placement : file->static_models) {
                 if (placement.model_file.empty() || known->models.contains(placement.model_file) || parsed.models.contains(placement.model_file)) {
@@ -126,10 +128,7 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                         for (const auto& [slot, path] : m.textures) {
                             std::string stem = FtexStem(path);
                             if (!path.empty() && !known->textures.contains(stem) && stems.insert(stem).second) {
-                                auto ftex = std::make_shared<FtexTexture>();
-                                if (LoadFtex(vfs.Textures(), stem, *ftex)) {
-                                    parsed.textures.emplace_back(path, std::move(ftex));
-                                }
+                                texture_paths.push_back(path);
                             }
                         }
                     }
@@ -137,6 +136,11 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                 parsed.models.emplace(placement.model_file, std::move(model));
             }
         }
+        parsed.textures.resize(texture_paths.size());std::atomic<uint64_t> prepared_bytes{0};
+        auto texture_reads=std::async(std::launch::async,[&]{ParallelChunks(texture_paths.size(),2,[&](size_t,size_t begin,size_t end){
+            for(size_t i=begin;i<end;++i){if(prepared_bytes.load()>=96ull*1024*1024)continue;auto ftex=std::make_shared<FtexTexture>();if(!LoadFtex(vfs.Textures(),texture_paths[i],*ftex))continue;
+                uint64_t bytes=0;for(const auto& mip:ftex->mips)bytes+=mip.size();const uint64_t before=prepared_bytes.fetch_add(bytes);if(before+bytes>96ull*1024*1024){prepared_bytes.fetch_sub(bytes);continue;}parsed.textures[i]={texture_paths[i],std::move(ftex)};}
+        });});
         // the geoms after the models: a new geom's line checks are over its model's positions
         std::unordered_map<std::string, std::shared_ptr<FmdlModel>> position_models;
         for (const auto& file : stage->files) {
@@ -176,6 +180,7 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                 parsed.geoms.emplace(placement.geom_file, std::move(geom));
             }
         }
+        texture_reads.get();std::erase_if(parsed.textures,[](const auto& entry){return !entry.second;});
     }
     parsed.stage = std::move(stage);
     return parsed;
@@ -235,7 +240,9 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
         prefetch_path_.clear();
     } else {
         DropPrefetch();
-        parsed = Parse(vfs_, fpk_path);
+        KnownAssets known{models_.Paths(),models_.Textures().Names(),{}};
+        for(const auto& [geom,lines]:line_cache_)known.geoms.insert(geom);
+        parsed=Parse(vfs_,fpk_path,&known);
     }
     const auto parsed_at = clock::now();
     for (const std::string& error : parsed.errors) {
@@ -262,6 +269,7 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
             adopted.push_back(path);
         }
     }
+    models_.Textures().BeginUploadBatch();
     const uint32_t models_before = models_.Loaded() + models_.Failed();
     const double read_before = models_.Textures().ReadMs();
     const double upload_before = models_.Textures().UploadMs();
@@ -312,6 +320,7 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
             }
         }
     }
+    models_.Textures().EndUploadBatch();
     models_.Textures().DropDecoded(adopted);
     // the main thread's share of a stage load (the hitch at the clock when the loaded package is new): the parse unless the
     // prefetch had it, the models with their textures, the collision pieces
