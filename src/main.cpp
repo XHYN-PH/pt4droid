@@ -5166,6 +5166,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
                     }
                     pt::LogInfo("mobile work avg: shadow tiles reused {:.1f}, rendered {:.1f}, shadow draws {:.1f}, mirrors occluded {:.2f}",
                         timings.CpuMean(timings.reused), timings.CpuMean(timings.rendered), timings.CpuMean(timings.shadow_draws), timings.CpuMean(timings.mirrors_occluded));
+                    pt::LogInfo("mobile shadow sharing avg: shared tiles {:.1f}, cache redraws {:.2f}",
+                        timings.CpuMean(timings.shared), timings.CpuMean(timings.cache_redraws));
                     pt::LogInfo("mobile quality: shadow level {}, ray shadows {}, ray reflections {}, ray AO {}, ray contact {}",
                         app.settings.graphics.shadow_quality, app.settings.ray_tracing.shadows, app.settings.ray_tracing.reflections,
                         app.settings.ray_tracing.ambient_occlusion, app.settings.ray_tracing.contact_shadows);
