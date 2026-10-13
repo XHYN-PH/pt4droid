@@ -43,7 +43,7 @@ struct SceneRenderer {
     struct View {glm::mat4 view_projection{1},view{1};glm::vec4 projection_param{0},eye{0},shadow{0};};
     struct Frame {std::array<View,32> views;} data; Frame* frame_=&data;
     struct Stats {uint32_t shadow_tiles_reused=0,shadow_tiles_rendered=0,shadow_draws=0;} stats_;
-    struct Textures {uint32_t flags=0;uint32_t MaterialFlags(uint32_t)const{return flags;}} texture; Textures* textures_=&texture;
+    struct Textures {uint32_t flags=0;uint32_t MaterialFlags(uint32_t)const{return flags;} uint64_t alpha=0;std::array<uint64_t,3> ShadowAlphaState(uint32_t)const{return {flags,0,alpha};}} texture; Textures* textures_=&texture;
     struct Light {uint64_t id=0;std::string name;} light; std::vector<const Light*> light_sources_{&light};
     struct MeshState {void Reset(){}} mesh_draw_state_;
     bool rt_active_=false,rt_reflections_=false,rt_ao_active_=false,rt_contact_active_=false;
@@ -79,7 +79,8 @@ int main(int argc,char**) {
     assert(full_clears==2&&r.stats_.shadow_tiles_rendered==2);
     r.shadow_views_={c};r.draws_[0].transform=glm::mat4(1);draw_calls=0;r.RecordShadows(nullptr);assert(draw_calls==1);
     // Alpha streaming and skin never use a cached map.
-    r.texture.flags=gpu::kMatAlphaTest;draw_calls=0;r.RecordShadows(nullptr);r.RecordShadows(nullptr);assert(draw_calls==2);
+    r.texture.flags=gpu::kMatAlphaTest;draw_calls=0;r.RecordShadows(nullptr);r.RecordShadows(nullptr);assert(draw_calls==1);
+    ++r.texture.alpha;draw_calls=0;r.RecordShadows(nullptr);assert(draw_calls==1);
     r.texture.flags=0;mesh.submeshes[0].skinned=true;draw_calls=0;r.RecordShadows(nullptr);r.RecordShadows(nullptr);assert(draw_calls==2);
     mesh.submeshes[0].skinned=false;r.RecordShadows(nullptr);draw_calls=0;r.RecordShadows(nullptr);assert(draw_calls==0);
     // Removing a caster clears its map to zero instead of preserving a ghost.
