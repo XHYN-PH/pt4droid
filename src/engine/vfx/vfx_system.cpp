@@ -162,7 +162,9 @@ std::shared_ptr<const EffectDef> System::Load(const std::string& path) {
     std::string error;
     if (ParseFile(*bytes, file, &error)) {
         const size_t slash = path.find_last_of('/');
-        def = CompileEffect(file, path.substr(slash == std::string::npos ? 0 : slash + 1));
+        auto compiled = CompileEffect(file, path.substr(slash == std::string::npos ? 0 : slash + 1));
+        if (compiled) FoldEffectConstants(*compiled);
+        def = std::move(compiled);
     } else {
         LogWarn("vfx: {}: {}", path, error);
     }
@@ -778,6 +780,7 @@ glm::vec4 System::Eval(const EvalContext& c, int32_t index) const {
     if (index < 0) {
         return glm::vec4(0.0f);
     }
+    if (size_t(index) < c.def->constants.size() && c.def->constants[index]) return *c.def->constants[index];
     const Expr& e = c.def->exprs[index];
     switch (e.op) {
     case ExprOp::Zero:

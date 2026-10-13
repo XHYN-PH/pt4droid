@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -218,6 +219,8 @@ struct FlareDef {
 };
 
 struct EffectDef {
+    // Only pure constant expression subgraphs are folded; random/time/view inputs stay live.
+    std::vector<std::optional<glm::vec4>> constants;
     std::string name;
     uint32_t all_frame = 1;
     uint32_t play_mode = 0;
@@ -234,6 +237,7 @@ struct EffectDef {
     float Length() const { return static_cast<float>(all_frame) / kFrameRate; }
 };
 
+void FoldEffectConstants(EffectDef& def);
 std::shared_ptr<EffectDef> CompileEffect(const File& file, std::string name);
 
 }
