@@ -27,7 +27,7 @@
 
 This fork adds customizable touch controls, an Android settings menu, individual graphics options, custom Vulkan driver imports, display refresh-rate selection and further mobile performance work.
 
-> **Current test build: 0.2.1-test.7.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
+> **Current test build: 0.2.1-test.8.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
 
 ## Features
 
@@ -62,7 +62,7 @@ The launcher uses a dark theme with serif text and red highlights. Gamepad, keyb
 
 Automatic driver selection uses bundled Turnip on **Adreno 6xx/7xx** and the **system driver** on other GPUs, including Adreno 8xx. Imported Turnip drivers must support your specific Adreno GPU and Android version.
 
-**Mali support is experimental.** Bundled PanVK Kbase RC3 requires **Android 15+**, a compatible Mali v9–v13 GPU and `mali_kbase` kernel interface. It is never selected automatically. Driver loading and feature checks are implemented; pt4droid gameplay and performance on Mali still need device testing. The system driver or an imported package must also supply the required compressed-texture formats and other Vulkan features.
+**Mali support is experimental.** Bundled PanVK Kbase RC3 requires **Android 15+**, a compatible Mali v9–v13 GPU and `mali_kbase` kernel interface. It is never selected automatically. Driver loading and feature checks are implemented; pt4droid gameplay and performance on Mali still need device testing. Test 8 can decode unsupported BC1, BC2, BC3, BC4, BC5 and BC7 textures to supported uncompressed formats within memory limits. Supported formats keep native compressed uploads, including compatible Adreno drivers. Other Vulkan requirements still apply; Mali and Xclipse gameplay remain unverified on physical devices.
 
 ## Getting started
 
@@ -145,7 +145,9 @@ For a starting performance configuration, use **Maximum performance**, keep **Op
 
 Test.7 reduces repeated GPU barriers, reuses unchanged static shadow tiles, tightens static shadow bounds and skips fully occluded mirror captures. Particle lighting uses fixed storage, fully overwritten outputs discard old contents, and empty offscreen particle passes skip buffer preparation. GPU timing and shadow counters are also corrected. Your existing graphics settings and fixed render resolution are retained.
 
-**These changes are not a measured FPS guarantee.** Compare the same scene, camera position and settings after warmup when testing. See [the test.7 changelog](docs/releases/pt4droid-v0.2.1-test.7.md) for details.
+Test.8 extends this work with stable shadow-atlas slots and unchanged alpha-tested shadow reuse, tighter spot-light screen bounds and early light rejection, lighter rain preparation and index sorting, bounded parallel texture reads and batched uploads, and lazy optional effect targets. Fog coefficients shared across pixels are computed once per frame. Existing graphics settings and fixed resolution are preserved.
+
+**These changes are not a measured FPS guarantee.** Compare the same scene, camera position and settings after warmup when testing. See [the test.8 changelog](docs/releases/pt4droid-v0.2.1-test.8.md) for details.
 
 ### High-refresh displays
 
@@ -192,7 +194,7 @@ Driver-import diagnostics use `driver-import.log` in the app's data folder. Olde
 - Speech recognition may need the controller-trigger or touch-button fallback.
 - On dual-screen handhelds, the extra display can show the clock and subtitles. A connected TV may be treated as that display; change **Display → Second screen** if needed.
 
-See [the test.7 update details](docs/android-test7-update.md) for the fixes, verification and remaining device-testing limits.
+See [the test.8 update details](docs/android-test8-update.md), [implementation audit](docs/android-test8-audit.md) and [verified build record](docs/android-test8-build-validation.md). All 19 host regression suites and native/Android release compilation passed. Release lint has zero errors and 73 existing warnings. Physical-device rendering, performance and sustained compatibility still need testing.
 
 ## Building from source
 
