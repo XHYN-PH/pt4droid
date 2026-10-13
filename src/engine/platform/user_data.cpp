@@ -23,6 +23,10 @@ namespace pt::platform {
 namespace {
 
 constexpr const char* kMarker = ".pt-user-data-migration-v1";
+// Android shared storage may reject renameat2 and hard links even when ordinary
+// file creation succeeds. mkdir publishes an empty completion marker atomically
+// without either operation. Keep accepting the older file marker on upgrades.
+constexpr const char* kDirectoryMarker = ".pt-user-data-migration-v1.done";
 std::atomic<unsigned long long> g_temp_counter{0};
 
 std::string PathText(const std::filesystem::path& path) {
@@ -145,6 +149,35 @@ bool IsValidMarker(const std::filesystem::path& marker, bool& exists,
     return true;
 }
 
+bool IsValidDirectoryMarker(const std::filesystem::path& marker, bool& exists,
+                            UserDataReport& report) {
+    exists = false;
+    std::error_code ec;
+    const auto status = std::filesystem::symlink_status(marker, ec);
+    if (ec == std::errc::no_such_file_or_directory) return true;
+    if (ec) {
+        AddError(report, "Cannot inspect migration completion directory", marker, ec);
+        return false;
+    }
+    if (status.type() == std::filesystem::file_type::not_found) return true;
+    exists = true;
+    if (std::filesystem::is_symlink(status) || IsReparsePoint(marker) ||
+        !std::filesystem::is_directory(status)) {
+        report.errors.push_back("Migration completion marker must be a real directory: '" + PathText(marker) + "'");
+        return false;
+    }
+    const bool empty = std::filesystem::is_empty(marker, ec);
+    if (ec) {
+        AddError(report, "Cannot read migration completion directory", marker, ec);
+        return false;
+    }
+    if (!empty) {
+        report.errors.push_back("Migration completion directory must be empty: '" + PathText(marker) + "'");
+        return false;
+    }
+    return true;
+}
+
 bool MakeTempFile(const std::filesystem::path& parent, std::filesystem::path& temp,
                   std::error_code& ec) {
     for (int attempt = 0; attempt != 64; ++attempt) {
@@ -201,6 +234,11 @@ bool PublishFile(const std::filesystem::path& source, const std::filesystem::pat
 }
 
 bool WriteMarker(const std::filesystem::path& destination, std::error_code& ec) {
+#ifdef __ANDROID__
+    if (std::filesystem::create_directory(destination / kDirectoryMarker, ec)) return true;
+    if (!ec) ec = std::make_error_code(std::errc::file_exists);
+    return false;
+#else
     const auto target = destination / kMarker;
     std::filesystem::path temp;
     if (!MakeTempFile(destination, temp, ec)) return false;
@@ -227,6 +265,7 @@ bool WriteMarker(const std::filesystem::path& destination, std::error_code& ec) 
     std::error_code cleanup_error;
     std::filesystem::remove(temp, cleanup_error);
     return false;
+#endif
 }
 
 bool ProbeWritable(const std::filesystem::path& destination, std::error_code& ec) {
@@ -296,6 +335,10 @@ void CopyTree(const std::filesystem::path& source, const std::filesystem::path& 
             AddError(report, "Cannot inspect legacy entry", from, ec);
             ec.clear();
             continue;
+        }
+        if (relative == kDirectoryMarker) {
+            it.disable_recursion_pending();
+            continue; // A legacy completion marker never completes this destination.
         }
         if (std::filesystem::is_symlink(status) || IsReparsePoint(from)) {
             report.warnings.push_back("Skipped linked legacy path: '" + PathText(from) + "'");
@@ -379,6 +422,12 @@ UserDataReport PrepareUserDataDirectory(const std::filesystem::path& destination
         report.success = true;
         return report;
     }
+    const auto directoryMarker = destination / kDirectoryMarker;
+    if (!IsValidDirectoryMarker(directoryMarker, markerExists, report)) return report;
+    if (markerExists) {
+        report.success = true;
+        return report;
+    }
 
     bool legacy_exists = false;
     if (!legacy.empty()) {
@@ -416,12 +465,17 @@ UserDataReport PrepareUserDataDirectory(const std::filesystem::path& destination
 
     if (!WriteMarker(destination, ec)) {
         bool appeared = false;
-        if (IsValidMarker(marker, appeared, report) && appeared) {
+        if ((IsValidMarker(marker, appeared, report) && appeared) ||
+            (report.errors.empty() && IsValidDirectoryMarker(directoryMarker, appeared, report) && appeared)) {
             report.success = true;
             return report;
         }
         if (!report.errors.empty()) return report;
+#ifdef __ANDROID__
+        AddError(report, "Cannot write user data migration marker", directoryMarker, ec);
+#else
         AddError(report, "Cannot write user data migration marker", marker, ec);
+#endif
         return report;
     }
     report.success = true;
