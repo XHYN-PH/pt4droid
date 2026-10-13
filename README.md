@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.10">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -23,190 +23,65 @@
 
 ---
 
-**pt4droid** is an unofficial Android fork of [LoreanXavier's native P.T. PC port](https://github.com/LoreanXavier/pt-pc), built on [StoneColdOS's Android port](https://github.com/StoneColdOS/pt-pc). It runs native C++ code with a Vulkan renderer.
+An unofficial native Android port of **P.T.**, with customizable touch controls, graphics settings and Vulkan driver support.
 
-This fork adds customizable touch controls, an Android settings menu, individual graphics options, custom Vulkan driver imports, display refresh-rate selection and further mobile performance work.
+**Current build: [0.2.1-test.10](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.10)** · ARM64 · Android 10+
 
-> **Current test build: 0.2.1-test.9.** Game files are not included. Device compatibility, visual quality and sustained performance still need testing.
-
-## Features
-
-| Feature | What you can change |
-| --- | --- |
-| **Customizable touch controls** | Button positions, sizes, mappings, visibility and opacity, plus stick preferences and saved layouts. |
-| **Invisible movement** | Touch and drag on the left half without a visible movement stick; hold to walk and lift to stop. |
-| **Button-free looking** | Swipe on the right side of the screen, or choose a visible or hidden look joystick. |
-| **Look sensitivity** | Adjust swipe and joystick sensitivity from **0.25× to 3.00×**. |
-| **More input options** | Separate mouse/controller sensitivity, invert vertical look, and optional gyro look with its own sensitivity. |
-| **Graphics settings** | Choose a preset or adjust individual game settings from the launcher or during play. |
-| **Performance choices** | Cheaper AO/reflection sampling, optional Android frame pacing, and optional sustained performance/heat management. Resolution stays fixed. |
-| **Sharper upscaling** | Optional SGSR1 at reduced render scale, with adjustable sharpness. Off preserves the fast compositor path. |
-| **Vulkan drivers** | Automatic selection, bundled Turnip, System, experimental bundled PanVK for Mali, or a compatible imported ZIP. |
-| **Display refresh rate** | Request the highest supported rate automatically, or choose a rate reported by your device. |
-| **Save management** | Delete game save slots without clearing the app's data. |
-| **Return to menu** | Leave the game from the in-game settings or Android settings, then start again from the launcher. |
-| **Optional logging** | App diagnostics are **Off by default** and can be enabled when reporting a problem. |
-
-The launcher uses a dark theme with serif text and red highlights. Gamepad, keyboard and mouse input are also available; the touch overlay lets physical mouse input pass through.
-
-**Game graphics** is inside **Settings**. The launcher keeps one Settings entry, and the logo has a transparent background.
-
-## Device requirements
-
-| Requirement | Details |
-| --- | --- |
-| **Android** | Android 10 or newer. |
-| **Architecture** | ARM64; a 64-bit Android installation is required. |
-| **Graphics** | The selected driver must provide Vulkan 1.3 and the engine's required features and texture formats. |
-| **Storage** | Allow at least about 1.4 GB for extracted game files, plus space for your source package and setup files. |
-
-Automatic driver selection uses bundled Turnip on **Adreno 6xx/7xx** and the **system driver** on other GPUs, including Adreno 8xx. Imported Turnip drivers must support your specific Adreno GPU and Android version.
-
-**Mali support is experimental.** Bundled PanVK Kbase RC3 requires **Android 15+**, a compatible Mali v9–v13 GPU and `mali_kbase` kernel interface. It is never selected automatically. Driver loading and feature checks are implemented; pt4droid gameplay and performance on Mali still need device testing. Unsupported drivers can decode unsupported BC1, BC2, BC3, BC4, BC5 and BC7 textures to supported uncompressed formats within memory limits. Supported formats keep native compressed uploads, including compatible Adreno drivers. Other Vulkan requirements still apply; Mali and Xclipse gameplay remain unverified on physical devices.
+Game files are not included. You need your own P.T. game dump. This is an experimental test build; compatibility and performance vary by device.
 
 ## Getting started
 
-1. Download the `pt4droid-*.apk` from [Releases](https://github.com/XHYN-PH/pt4droid/releases) and install it.
-2. Open **pt4droid**. The first launch offers storage access for shared Download folders. Android 11+ opens its **All files access** screen; Android 10 asks for runtime storage permission. You can decline and still use file-picker imports.
-3. Choose **Choose your P.T. .pkg**.
-4. Select a fake PKG made from your own game dump and wait for extraction to finish, then tap **Enter menu**.
-5. Open **Settings** to configure controls, graphics and drivers, then choose **Start**.
+1. Download **`pt4droid-v0.2.1-test.10-arm64.apk`** from the [Test 10 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.10) and install it.
+2. Open **pt4droid** and choose **Choose your P.T. .pkg**.
+3. Select a fake PKG made from your own game dump. Extract ZIP/RAR/7z archives first; encrypted PlayStation Store packages are unsupported.
+4. Wait for extraction, then tap **Enter menu**.
+5. Open **Settings** to configure controls and graphics, then choose **Start**.
 
-If your package is inside a `.zip`, `.rar` or `.7z` archive, extract it with a file manager before choosing it.
+Already have extracted files? Choose **I already have the extracted files**, place `chunk1.psarc`, `texture.qar` and `pathid_list_ps4.bin` in Downloads, loose or inside `CUSA01127`, and allow storage access. The US release **CUSA01127** is the reference data.
 
-Alternatively, choose **I already have the extracted files** and supply:
+**Updating:** install over the matching Test 9 or earlier test app to keep game files, saves, settings and touch layouts. Avoid uninstalling first.
 
-- `chunk1.psarc`
-- `texture.qar`
-- `pathid_list_ps4.bin`
+## Device compatibility
 
-Place these in your Download folder, either loose or inside a `CUSA01127` folder, and allow **All files access** when requested. The US release, **CUSA01127**, is the reference game data. Compatibility with other regions needs testing.
+| Requirement | Details |
+| --- | --- |
+| Android | Android 10 or newer, with a 64-bit ARM64 installation |
+| Graphics | Vulkan 1.3 plus the renderer's required features |
+| Storage | About 1.4 GB for extracted game data, plus space for the APK and source package |
 
-Encrypted PlayStation Store packages are not supported.
+**Automatic** uses bundled Turnip on Adreno 6xx/7xx and the system driver on other GPUs, including Adreno 8xx.
 
-**Updating an existing test installation:** install over the previous P.T. Test/pt4droid build when Android accepts the matching package and signing certificate. This release uses `com.ptport.app.test`. Keeping the existing installation retains its game files, saves and settings.
+**Mali and Xclipse support is experimental.** Some system drivers lack required Vulkan features and cannot start the game. Bundled PanVK requires Android 15+ and compatible Mali hardware; it does not support Android 14. Test 10 does not remove these requirements.
+
+To import a compatible driver, use **Settings → Vulkan drivers → Import driver ZIP**, then fully close and reopen the game. If it causes problems, select **Automatic** or **System Vulkan driver** and restart.
 
 ## Controls
 
-Use **Settings → Touch controls** to select **Auto**, **Always show** or **Off**.
-
-For a clear screen, select **Movement control → Invisible left-half movement** and **Look control → Swipe to look • no button**, then tap **Apply**. Touch and drag on the left to move, hold to keep walking, and lift to stop. Swipe on the right to look around. Both work at the same time; action buttons and Settings take priority. Each finger keeps its original role even if dragged across the middle.
-
-**Visible joystick** remains the default movement option. Invisible movement always starts at your touch position, including when **Floating sticks** is off. Joystick size and dead zone still affect movement. The layout editor shows both stick guides so they remain adjustable.
-
-| Look mode | Behavior |
-| --- | --- |
-| **Swipe to look • no button** | Drag on the right side to look around without a visible look stick. |
-| **Visible joystick** | A visible look stick controls turning. |
-| **Hidden joystick** | An invisible stick keeps turning while held away from its touch origin. |
-
-Adjust **Look sensitivity** in Settings. To rearrange buttons, start the game and open **Android settings → Customize touch layout**. Save the layout when finished, or cancel to restore it.
-
-Mouse and controller sensitivity are separate multipliers. **Invert vertical look** also applies to touch and gyro. **Gyroscope look** is optional, requires a gyroscope, and runs only during focused gameplay; it stops in menus and when the app loses focus.
-
-To leave a session, open the in-game settings page or **Android settings**, choose **Return to menu** and confirm. The game finishes its normal shutdown before returning to the launcher. Progress follows the game's existing save points; returning does not create an extra checkpoint. You can start the game again, change settings, delete saves or quit from the launcher.
-
-A built-in, USB or Bluetooth gamepad can also be used. Allow the nearby-device permission when requested for Bluetooth controllers.
-
-The ending's voice input uses on-device speech recognition. If recognition does not work, **hold both controller triggers**, or use the touch **Name** control. The app does not require an internet connection.
+- **Touch:** configure movement, look mode and sensitivity in **Settings**. Invisible left-half movement and right-side swipe look are available.
+- **Layout:** during play, open **Android settings → Customize touch layout** to move, resize or hide buttons.
+- **Gamepad, keyboard and mouse:** supported; mouse and controller sensitivity are separate settings.
+- **Ending voice input:** uses on-device recognition. If needed, use the touch **Name** control or hold both controller triggers.
+- **Return to menu:** available in the in-game settings. **Delete saves** on the launcher clears the game save slots.
 
 ## Graphics and performance
 
-Open **Settings → Game graphics** from the launcher or Android settings during play.
+Use **Settings → Game graphics** for presets, frame limit, textures, shadows and effects. Start with **Balanced**, or choose **Maximum performance** for lower detail and render scale.
 
-Available options include:
+Render scale, display refresh rate, Android frame pacing and heat management are separate Settings options. A higher display rate does not guarantee higher game FPS. Keep logs Off during normal play.
 
-- Frame limit, VSync and letterbox.
-- Texture detail, anisotropic filtering and shadow resolution.
-- Ambient occlusion and local reflections.
-- Bloom, depth of field, motion blur, lens distortion and flare ghosts.
-- Film grain and clarity.
-- Ray-traced effects and ray quality **when supported by the active Vulkan device**.
+Test 10 refines texture preparation, lighting, shadows, VFX and composition, and adds more useful frame-timing logs. See the [changelog](docs/releases/pt4droid-v0.2.1-test.10.md). Phone performance comparisons still need testing.
 
-**Settings** also provides scene render scale and an optimized mobile bloom option.
+## Reporting a problem
 
-Additional options:
+Enable logs in **Settings**, tap **Apply**, and reproduce the issue. [Open an issue](https://github.com/XHYN-PH/pt4droid/issues) with:
 
-- **AO / Screen reflections → Performance:** fewer samples or march steps, preserving the effects with reduced detail. These sampling choices are independent of the base graphics preset.
-- **Android frame pacing:** optional Swappy presentation for capped gameplay. Uncapped gameplay uses the existing path, and unsupported pacing falls back to the existing limiter. Off by default.
-- **SGSR1 sharper upscaling:** an optional quality pass at fixed reduced resolution. It adds GPU work and uses full-size output; leave it Off for maximum speed. Off by default.
-- **Sustained performance / heat management:** requests Android's supported sustained mode and lowers the effective FPS ceiling when hot (45/30/20 FPS). It does not change your saved frame limit or resolution. Off by default.
+- Device, Android version, GPU and APK version.
+- Selected driver, graphics settings and steps to reproduce.
+- New logs from **Download/PT-logs-test** (or the app-data folder if shared storage is unavailable).
 
-**Dynamic resolution is not included.** Render scale changes only when you change it yourself. No new quality pass or thermal FPS limit is enabled automatically.
+## For developers
 
-| Preset | Behavior |
-| --- | --- |
-| **Custom** | Keep your individual game graphics choices. |
-| **Maximum performance** | Reduce texture detail, shadows and effects, turn VSync off, remove the gameplay frame cap and limit scene render scale to 50%. |
-| **Balanced** | Apply the balanced graphics profile with a gameplay cap of up to 60 FPS. |
-| **Original (PS4)** | Restore the game's Original graphics preset. Render scale, frame cap and touch settings are configured separately. |
-
-For a starting performance configuration, use **Maximum performance**, keep **Optimized mobile bloom** enabled and leave logs Off. Increase render scale or effects gradually if your device has room.
-
-Test.9 reduces unused texture preparation and shares prepared data between raw and sRGB uploads. Shadow clearing adapts to the work worth retaining, and equivalent main/mirror light maps can share exact matching captures. Rain preparation uses compact scratch entries and skips offscreen payload work. The Android migration marker startup failure is also fixed. Existing graphics settings, fixed resolution and native supported BC uploads are retained.
-
-**These changes are not a measured FPS guarantee.** Compare the same scene, camera position and settings after warmup when testing. See [the test.9 changelog](docs/releases/pt4droid-v0.2.1-test.9.md) for details.
-
-### High-refresh displays
-
-Open **Settings → Display refresh rate** and choose **Highest supported • automatic**, or a rate such as **120 Hz** when your device reports it. Set the gameplay frame limit separately in **Game graphics**.
-
-A 120 Hz screen does not guarantee 120 rendered FPS. Menus and paused gameplay remain capped at 60 rendered FPS, and Android may lower the display rate for battery, temperature or vendor policy.
-
-### Custom Vulkan drivers
-
-1. Open **Settings → Vulkan drivers → Import driver ZIP**.
-2. Choose a compatible AdrenoTools-style ZIP containing `meta.json` and its ARM64 driver library.
-3. Wait for the import result. A successful import selects the driver.
-4. **Fully close and reopen the game** to load it.
-
-To switch drivers later, open **Vulkan drivers**, choose the driver and press **Select**. If an import times out, copy the ZIP to local Downloads and try again. Import progress can be cancelled.
-
-Driver compatibility depends on the GPU, Android version and driver build. If a custom driver causes problems, switch back to **Automatic** or **System Vulkan driver** and restart.
-
-For Mali, select **PanVK Kbase RC3 • experimental**, or import an Android/Bionic PanVK package. Linux/glibc packages are rejected. Missing imported files fall back to System rather than loading an Adreno-only driver on another GPU. A successful ZIP import confirms installation, not game compatibility; startup reports missing required driver features even with logs Off.
-
-## Starting a new save
-
-Close the game, then choose **Delete saves** on the launcher and confirm.
-
-This deletes the **two game save slots**. Game files, settings, touch layouts, drivers, caches and Extras unlocks are retained.
-
-## Logs and bug reports
-
-**Enable logs** is Off by default. To report a problem:
-
-1. Turn it on in **Settings**, press **Apply**, and reproduce the problem.
-2. Attach the new reports from **Download/PT-logs-test**, or the app-data fallback if that folder is unavailable.
-3. Include your device, Android version, GPU, APK version, selected driver, graphics settings and steps to reproduce.
-
-Driver-import diagnostics use `driver-import.log` in the app's data folder. Older reports are retained when you turn logging off. Android's own crash reporting and vendor diagnostics are outside the app's logging switch.
-
-[Open an issue](https://github.com/XHYN-PH/pt4droid/issues) with these details.
-
-## Limitations
-
-- This is an experimental build; individual devices, drivers and scenes can still have issues.
-- Ray-traced options require supported Vulkan ray queries. Unsupported options are disabled.
-- HDR, VR, desktop upscalers, enhanced texture generation and frame generation are unavailable in this Android build.
-- Speech recognition may need the controller-trigger or touch-button fallback.
-- On dual-screen handhelds, the extra display can show the clock and subtitles. A connected TV may be treated as that display; change **Display → Second screen** if needed.
-
-See [the test.9 update details](docs/android-test9-update.md) and [verified build record](docs/android-test9-build-validation.md). All 22 host regression scripts and native ARM64 Release compilation passed. Physical-device rendering, performance and sustained compatibility still need testing.
-
-## Building from source
-
-The test-release build uses **JDK 17**, **Android SDK 35**, **NDK r27 or newer**, **CMake 3.28+**, **Ninja** and **glslc**.
-
-Configure your Android SDK and `ANDROID_NDK_HOME`, then set `PT_KEYSTORE` to your persistent signing key and `PT_STORE_PASSWORD` to its password. From the repository root, run:
-
-```bash
-bash tools/android/build_test_release.sh
-```
-
-Keep the signing key for compatible future updates. Use a higher `PT_VERSION_CODE` for each new release; `PT_VERSION` sets its version name. Both can be supplied as environment variables.
-
-The inherited GitHub Actions workflow targets the upstream Android branch/tag conventions; a push to `pt4droid` alone does not enable an automatic release. Build locally or adapt [the workflow](.github/workflows/android.yml) for your fork.
+[Android build instructions](docs/android.md) · [Test 10 implementation](docs/android-test10-update.md) · [Build validation](docs/android-test10-build-validation.md) · [Earlier releases](https://github.com/XHYN-PH/pt4droid/releases)
 
 ## Credits
 
