@@ -111,18 +111,14 @@ float g_contact_reach = 0.0;
 bool g_contact_legacy = false;
 #endif
 
-bool EvaluateLight(Light l, View v, Surface s, bool shadows, vec2 frag, out vec3 diffuse, out vec3 specular) {
-    // the shadow taps' dither takes the frame with the pixel, so a temporal renderer can rotate its sample pattern
-    const vec3 dither_frag = vec3(frag, v.exposure.w);
-    diffuse = vec3(0.0);
-    specular = vec3(0.0);
+bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radiance, out float shadow_cone, out float d) {
     if (l.info.z == 1) {
-        vec3 q = (l.area * vec4(s.world, 1.0)).xyz;
+        vec3 q = (l.area * vec4(world, 1.0)).xyz;
         if (1.0 - max(abs(q.z), max(abs(q.x), abs(q.y))) < 0.0) {
             return false;
         }
     } else if (l.info.z == 2) {
-        vec4 q = l.area * vec4(s.world, 1.0);
+        vec4 q = l.area * vec4(world, 1.0);
         if (q.w <= 0.0) {
             return false;
         }
@@ -133,14 +129,14 @@ bool EvaluateLight(Light l, View v, Surface s, bool shadows, vec2 frag, out vec3
     }
     bool spot = l.position.w > 0.5;
     vec3 light_pos = (v.view * vec4(l.position.xyz, 1.0)).xyz;
-    vec3 lv = light_pos - s.P;
+    vec3 lv = light_pos - P;
     float dist = length(lv);
-    vec3 L = lv / max(dist, 1.0e-6);
-    float d = spot ? max(l.range.y, dist + l.range.x) : max(l.range.y, dist) + l.range.x;
+    L = lv / max(dist, 1.0e-6);
+    d = spot ? max(l.range.y, dist + l.range.x) : max(l.range.y, dist) + l.range.x;
     float d2 = d * d;
     float att = max(0.0, 1.0 / d2 - d2 * l.range.z);
-    vec3 radiance = l.color.rgb * att * v.exposure.x;
-    float shadow_cone = 1.0;
+    radiance = l.color.rgb * att * v.exposure.x;
+    shadow_cone = 1.0;
     if (spot) {
         vec3 axis = mat3(v.view) * l.direction.xyz;
         float cos_a = dot(axis, -L);
@@ -152,6 +148,10 @@ bool EvaluateLight(Light l, View v, Surface s, bool shadows, vec2 frag, out vec3
     if (length(radiance) <= 1.0e-4) {
         return false;
     }
+    return true;
+}
+bool ShadeLight(Light l,View v,Surface s,bool shadows,vec2 frag,vec3 L,vec3 radiance,float shadow_cone,float d,out vec3 diffuse,out vec3 specular){
+    diffuse=vec3(0.0);specular=vec3(0.0);const vec3 dither_frag=vec3(frag,v.exposure.w);bool spot=l.position.w>0.5;
     float shadow = 1.0;
     if (l.info.x >= 0 && shadows) {
 #ifdef PT_RT_SHADOWS
@@ -222,4 +222,9 @@ bool EvaluateLight(Light l, View v, Surface s, bool shadows, vec2 frag, out vec3
     diffuse = radiance * l.scales.y * diff * vis * mask;
     specular = radiance * l.scales.x * s.specular * mat0.rgb * spec * vis * mask;
     return true;
+}
+bool EvaluateLight(Light l,View v,Surface s,bool shadows,vec2 frag,out vec3 diffuse,out vec3 specular){
+    vec3 L,radiance;float shadow_cone,d;diffuse=vec3(0.0);specular=vec3(0.0);
+    if(!PrepareLight(l,v,s.world,s.P,L,radiance,shadow_cone,d))return false;
+    return ShadeLight(l,v,s,shadows,frag,L,radiance,shadow_cone,d,diffuse,specular);
 }

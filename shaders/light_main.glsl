@@ -28,6 +28,8 @@ void main() {
     Surface s;
     s.P = ViewPosition(v, PixelNdc(v, gl_FragCoord.xy), depth);
     s.world = (v.inv_view * vec4(s.P, 1.0)).xyz;
+    vec3 L,radiance;float shadow_cone,d;
+    if(!PrepareLight(l,v,s.world,s.P,L,radiance,shadow_cone,d))discard;
     vec4 g_normal = ImgFetch(IMG_NORMAL, pixel);
     vec4 g_material = ImgFetch(IMG_MATERIAL, pixel);
     s.N = DecodeNormal(g_normal.xyz);
@@ -41,7 +43,7 @@ void main() {
     g_contact_reach = pass.f0.x;
     g_contact_legacy = pass.f0.y > 0.5;
 #endif
-    if (!EvaluateLight(l, v, s, pass.ids.z != 0u, gl_FragCoord.xy, diffuse, specular)) {
+    if (!ShadeLight(l,v,s,pass.ids.z!=0u,gl_FragCoord.xy,L,radiance,shadow_cone,d,diffuse,specular)) {
         discard;
     }
     out_diffuse = vec4(diffuse, 1.0);

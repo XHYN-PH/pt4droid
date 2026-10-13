@@ -31,9 +31,9 @@ void TppFog(vec3 eye, vec3 point, out vec3 inscatter, out float transmittance) {
     float depth = (amount * 100.0 - 100.0 * amount * exp(-height)) / height;
     float rayleigh_phase = 0.059683103 * cos_theta * cos_theta + 0.059683103;
     float m = 1.0 - cos_theta * mie.w;
-    float mie_phase = 0.07957747 * (1.0 - mie.w * mie.w) / (m * m);
-    vec3 sigma = mie.rgb + ray.rgb;
-    vec3 directional = ray.w * (mie.rgb * mie_phase + ray.rgb * rayleigh_phase) / max(vec3(1.0e-6), sigma);
+    float mie_phase=frame.fog[4].w/(m*m);
+    vec3 sigma=frame.fog[4].rgb;
+    vec3 directional=ray.w*(mie.rgb*mie_phase+ray.rgb*rayleigh_phase)*frame.fog[5].rgb;
     float opacity = 1.0 - exp(-depth);
     vec3 color = g1.rgb + directional * (1.0 - exp(-depth * sigma));
     // No area box term: VolFog_TppVolFog_Area (ps adf9aadf6beb2a36) runs its box code only for the froxels whose ray misses the
