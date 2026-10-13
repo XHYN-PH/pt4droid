@@ -1,65 +1,34 @@
-# Android
+# Android build instructions
 
-An experimental arm64 build for Snapdragon (Adreno 6xx/7xx) devices, developed for the AYN Thor. It is the same game as the PC
-port, built as `libmain.so` for SDL's Android activity, with Mesa Turnip bundled as the Vulkan driver.
+For installation, controls and device requirements, see the [README](../README.md).
 
-## Installing
+## Toolchain
 
-1. Download `PT-Android.apk` from the `android-latest` release of this fork and install it.
-2. Start P.T. The setup screen (`SetupActivity`) asks for the player's P.T. fake PKG through Android's file picker and takes
-   the three archives out of it into `Android/data/com.ptport.app/files/game/CUSA01127/` with `libptsetup.so`
-   (`src/pkginstall`, the C++ counterpart of the desktop installers' extraction helper). No storage permission is needed.
-3. Or: `chunk1.psarc`, `texture.qar` and `pathid_list_ps4.bin` in the Download folder (loose or in `CUSA01127`), with
-   "All files access" allowed.
+- JDK 17.
+- Android SDK/platform and build-tools 35.
+- Android NDK r27 or newer.
+- CMake 3.28+, Ninja and `glslc` on `PATH`.
 
-`tools/pkg_extract_cli.cpp` runs the same extractor from a desktop terminal for testing; on the CUSA01127 fake PKG its
-output matches the desktop installer byte for byte.
+Set `ANDROID_HOME` to your SDK and `ANDROID_NDK_HOME` to your NDK. The native build stages ARM64 libraries, shaders and assets before Gradle packages the APK.
 
-## Files
+## Signed test release
 
-- `Download/PT-logs/pt.log`: the log, with `pt-crash.txt` (and `pt-java-crash.txt`) after a crash. Send these when something
-  goes wrong; `adb pull /storage/emulated/0/Download/PT-logs` copies them to a computer. The same lines go to logcat
-  under the tag `pt`. Without All files access they are in `Android/data/com.ptport.app/files/data/` instead.
-- `Download/PT-logs/render_scale.txt`: the render size against the screen, `0.667` by default (`0.5` faster, `1` sharpest).
-- `Android/data/com.ptport.app/files/data/pt.ini`: settings and saves, as on PC.
-- `Download/PT-logs/driver.txt`: the Vulkan driver. `turnip` (default, the bundled Mesa Turnip), `system` (the device's
-  own Qualcomm driver), or the file name of another driver's `.so` (from an AdrenoTools driver zip) put in the same folder.
+Set `PT_KEYSTORE` to your persistent signing keystore and `PT_STORE_PASSWORD` to its password. Set `PT_KEY_ALIAS` and `PT_KEY_PASSWORD` if different from the defaults. Keep credentials outside the repository.
 
-## Second screen
+From the repository root:
 
-On a dual-screen handheld (AYN Thor and the like) the bottom screen shows a frozen 23:59 clock, near-white in a blue glow,
-with the loop the player is on and, by default, the subtitle line playing now (the radio included, whether or not
-subtitles are on in the game; only the line now, never older ones). It is drawn with Android's Canvas (`SecondScreen.java`), not the game's GPU. The game's
-settings page offers Display > Second screen (`display.second_screen` in pt.ini: 0 clock and subtitles, 1 clock, 2 dim clock, 3 off) only on a
-device with a second display. The game sends the setting, the loop and the line through `SetSecondScreenMode` and
-`UpdateSecondScreen` (`src/engine/platform/android.cpp`). The typewriter face is Special Elite (Apache-2.0,
-`third_party/second_screen_notices/`).
+```bash
+bash tools/android/build_test_release.sh
+```
 
-## Performance
+The script defaults to version `0.2.1-test.10`, version code `52`, package `com.ptport.app.test`, and app label `pt4droid`. Override `PT_VERSION` and `PT_VERSION_CODE` for a future release, increasing the code each time. Reuse the signing key to allow upgrades that retain user data.
 
-On the AYN Thor (Snapdragon 8 Gen 2, Adreno 740) at the default render scale the game holds about 60 fps in the start room
-and 45-60 in the hallway.
+Output: `android/app/build/outputs/apk/release/app-release.apk`. The script also runs release lint, which stops the build on errors.
 
-## Controls
+## Validation and releases
 
-A built-in or connected gamepad works as the PS4 pad. The voice part (saying "Jack") goes through the microphone, as on PC: whisper.cpp and its
-CPU backends (libwhisper.so, libggml*.so, one libggml-cpu-*.so per ARM level ggml builds for Android) are in the APK's lib
-folder, where VoiceRecognizer finds them next to libmain.so, and the base.en and Silero VAD models are assets unpacked into
-the app's files (voice/). The small.en second opinion stays out of the APK (180 MB). SetupActivity asks for RECORD_AUDIO
-once before the first start; holding both triggers still works either way.
+Host regression scripts are in `tools/android/tests`. Some need JDK 17, GLM/Vulkan headers, historical repository tags, and the importer fixtures specified in the [build validation record](android-test10-build-validation.md).
 
-## Known gaps
+Before publishing, check the APK signature, package/version, staged assets and libraries, and 16 KB alignment. Host checks do not replace testing rendering, startup and sustained performance on Android hardware.
 
-- No speech recognition yet; use the trigger chord.
-- The PC upscalers, ray tracing, VR, enhanced textures and loop previews are not available.
-
-## Releases
-
-Every push to `android-port` updates the rolling `android-latest` test build. A numbered release comes from
-`android/release-version.txt`: put a new version in it (`v0.2.0`) and push, and that build publishes `android-v0.2.0` with
-`PT-Android-v0.2.0.apk` and the notes in `docs/android-release-notes.md`. Pushing a tag `android-v0.2.0` does the same.
-
-## Building
-
-`.github/workflows/android.yml` builds the APK on every push to `android-port`. Locally: `tools/android/build_native.sh` with
-`ANDROID_NDK_HOME` set, then `./gradlew assembleRelease` in `android/`.
+The inherited [GitHub Actions workflow](../.github/workflows/android.yml) targets upstream `android-port` and `android-*` release conventions. A push to this fork's `pt4droid` branch does not publish a Test release automatically.
