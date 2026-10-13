@@ -1,4 +1,5 @@
 #include "engine/vfx/vfx_system.h"
+#include "engine/vfx/quad_visibility.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -1132,6 +1133,11 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
     lit_refs.clear();
     const bool block_lit = m.kind == MaterialKind::Lit && static_cast<bool>(light_block_);
     items.reserve(state.particles.size());
+    const bool rain=m.kind==MaterialKind::Scroll;
+    const uint32_t rain_texture=rain && !m.rain_texture.empty() && textures?textures(m.rain_texture):kNoTexture;
+    const glm::vec2 rain_angle=rain?m.rain_angle+m.rain_swing*glm::sin(state.rain_phase):glm::vec2(0);
+    const glm::vec4 rain_rotation=rain?glm::vec4(std::sin(rain_angle.x),std::cos(rain_angle.x),std::sin(rain_angle.y),std::cos(rain_angle.y)):glm::vec4(0);
+    const glm::vec4 rain_extra=rain?glm::vec4(m.texture_scale*.5f,std::sin(m.texture_angle),std::cos(m.texture_angle)):glm::vec4(0);
     for (size_t pi = 0; pi < state.particles.size(); ++pi) {
         const Particle& p = state.particles[pi];
         c.particle = &p;
@@ -1287,11 +1293,10 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
         q.extra = glm::vec4(m.reflection, m.kind == MaterialKind::Liquid && !m.opaque ? 2.0f * m.refraction : m.refraction, m.roughness, unlit.b);
         q.info = glm::uvec4(texture, flags, cube, glm::packHalf2x16(glm::vec2(unlit.r, unlit.g)));
         if (m.kind == MaterialKind::Scroll) {
-            q.info.z = m.rain_texture.empty() ? kNoTexture : textures(m.rain_texture);
-            const glm::vec2 angle = m.rain_angle + m.rain_swing * glm::sin(state.rain_phase);
-            q.rain_rotation = glm::vec4(std::sin(angle.x), std::cos(angle.x), std::sin(angle.y), std::cos(angle.y));
+            q.info.z=rain_texture;
+            q.rain_rotation=rain_rotation;
             q.luminance = glm::vec4(m.rain_scale, state.rain_offset);
-            q.extra = glm::vec4(m.texture_scale * 0.5f, std::sin(m.texture_angle), std::cos(m.texture_angle));
+            q.extra=rain_extra;
         }
         const float depth = glm::dot(world_pos - view.position, view.forward);
         if (mesh) {
@@ -1332,7 +1337,9 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             }
             continue;
         }
-        items.push_back({depth, q});
+        static const bool cull_quads=[] {const char* v=std::getenv("PT_VFX_CULL");return !v || std::string_view(v)!="0";}();
+        const bool visible=!cull_quads || !rain || draw.layer!=Layer::World || QuadVisible(view.view_projection,q.corner);
+        items.push_back({depth,q,visible});
         if (block_lit) {
             lit_refs.back().last = items.size();
         }
@@ -1382,11 +1389,10 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
         }
     }
     if ((shape.sort_mode != 0 || shape.separate_draw) && draw.blend == BlendMode::Alpha) {
-        std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.depth > b.depth; });
-    }
-    for (const Item& it : items) {
-        out.quads.push_back(it.quad);
-    }
+        build_order_.resize(items.size());for(size_t i=0;i<items.size();++i)build_order_[i]=i;
+        std::sort(build_order_.begin(),build_order_.end(),[&](size_t a,size_t b){return items[a].depth>items[b].depth;});
+        for(size_t i:build_order_)if(items[i].visible)out.quads.push_back(items[i].quad);
+    }else{for(const Item& it:items)if(it.visible)out.quads.push_back(it.quad);}
     draw.count = static_cast<uint32_t>(out.quads.size()) - draw.first;
     out.draws.push_back(draw);
 }

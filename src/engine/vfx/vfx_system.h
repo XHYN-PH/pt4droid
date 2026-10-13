@@ -351,6 +351,7 @@ private:
     struct BuildItem {
         float depth;
         Quad quad;
+        bool visible=true;
     };
     struct BuildLitRef {
         size_t first = 0;
@@ -359,6 +360,7 @@ private:
         glm::vec3 position{0.0f};
     };
     mutable std::vector<BuildItem> build_items_;
+    mutable std::vector<size_t> build_order_;
     mutable std::vector<BuildLitRef> build_lit_refs_;
 };
 
