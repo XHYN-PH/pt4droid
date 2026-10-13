@@ -53,16 +53,17 @@ bool ReadChunked(const std::vector<uint8_t>& file, size_t block, uint32_t unpack
 
 }
 
-VkFormat FtexTexture::Format() const {
+VkFormat FtexTexture::Format(bool raw) const {
+    const bool srgb = Srgb() && !raw;
     switch (pixel_format) {
-    case 0: return Srgb() ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+    case 0: return srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
     case 1: return VK_FORMAT_R8_UNORM;
-    case 2: return Srgb() ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
-    case 3: return Srgb() ? VK_FORMAT_BC2_SRGB_BLOCK : VK_FORMAT_BC2_UNORM_BLOCK;
-    case 4: return Srgb() ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+    case 2: return srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+    case 3: return srgb ? VK_FORMAT_BC2_SRGB_BLOCK : VK_FORMAT_BC2_UNORM_BLOCK;
+    case 4: return srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
     case 5: return VK_FORMAT_BC5_UNORM_BLOCK;
     case 6: return VK_FORMAT_R32_SFLOAT;
-    case 8: return Srgb() ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+    case 8: return srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
     default: return VK_FORMAT_UNDEFINED;
     }
 }
@@ -80,7 +81,7 @@ std::optional<std::vector<uint8_t>> ReadTextureFile(const QarArchive& qar, const
     return qar.Read(PathCode64(name));
 }
 
-bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out) {
+bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out, TextureReadBudget* budget) {
     const std::string stem = FtexStem(path);
     // a mod's .ftex brings its own .ftexs: the game's streams belong to the game's header
     auto header = mods::ReadOverride(stem + ".ftex");
@@ -101,6 +102,12 @@ bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out) {
     out.flags = Read<uint32_t>(*header, 0x1C);
     out.faces = out.Cube() ? 6 : 1;
     const uint32_t entries = out.mip_count * out.faces;
+    if (budget) {
+        if (!entries || 0x40 + uint64_t(entries) * 16 > header->size()) return false;
+        uint64_t bytes = 0;
+        for (uint32_t i = 0; i < entries; ++i) bytes += Read<uint32_t>(*header, 0x40 + size_t(i) * 16 + 4);
+        if (!budget->Reserve(bytes)) return false;
+    }
     std::map<uint8_t, std::optional<std::vector<uint8_t>>> files;
     out.mips.assign(entries, {});
     for (uint32_t i = 0; i < entries; ++i) {

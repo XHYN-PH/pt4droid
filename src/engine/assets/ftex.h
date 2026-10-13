@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "engine/fs/qar.h"
+#include "engine/assets/texture_read_budget.h"
 
 namespace pt {
 
@@ -28,7 +29,7 @@ struct FtexTexture {
     bool Srgb() const { return (flags & 2) != 0; }
     bool Cube() const { return (flags & 4) != 0; }
     bool NormalMap() const { return (flags & 8) != 0; }
-    VkFormat Format() const;
+    VkFormat Format(bool raw = false) const;
     uint32_t MipWidth(uint32_t level) const { return std::max(1u, width >> level); }
     uint32_t MipHeight(uint32_t level) const { return std::max(1u, height >> level); }
 };
@@ -36,7 +37,7 @@ struct FtexTexture {
 std::string FtexStem(std::string_view path);
 // a file of texture.qar by its name ("/Assets/.../x.ftex"), a mod's copy in its place (docs/modding.md)
 std::optional<std::vector<uint8_t>> ReadTextureFile(const QarArchive& qar, const std::string& name);
-bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out);
+bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out, TextureReadBudget* budget = nullptr);
 // RGBA8 pixels of one level of a texture in the formats P.T. keeps pictures in (0 BGRA8, 2 BC1, 3 BC2, 4 BC3); false for others
 bool DecodeFtexLevel(const FtexTexture& ftex, uint32_t level, std::vector<uint8_t>& rgba);
 // One 4 x 4 block of RGBA8 pixels (row by row) as opaque BC1, or as the alpha half of BC3
