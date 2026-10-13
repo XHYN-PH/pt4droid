@@ -10,6 +10,7 @@ dependencies {
 android {
     namespace = "com.ptport.app"
     compileSdkVersion 35
+    buildToolsVersion "35.0.0"
     defaultConfig {
         applicationId project.findProperty("ptApplicationId") ?: "com.ptport.app.test"
         manifestPlaceholders = [ptAppLabel: project.findProperty("ptAppLabel") ?: "pt4droid"]
