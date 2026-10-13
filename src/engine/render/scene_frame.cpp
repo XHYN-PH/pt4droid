@@ -15,6 +15,7 @@
 #include "engine/platform/android.h"
 #include "engine/fs/vfs.h"
 #include "engine/render/scene_renderer.h"
+#include "engine/render/light_scissor.h"
 
 namespace pt {
 namespace {
@@ -1112,18 +1113,27 @@ void SceneRenderer::BuildShadowViews(const SceneLighting& lighting, const glm::v
         }
         return false;
     };
-    for (const Candidate& c : candidates) {
+    std::vector<StableShadowAtlas::Request> atlas;
+    std::vector<Candidate> packed;
+    uint32_t reserved_views=view_count_;
+    for(const Candidate& c:candidates){
+        const bool spot=frame_->lights[c.light].position.w>0.5f;
+        if(reserved_views+2>gpu::kMaxViews)break;
+        uint32_t x=0,y=0;if(!allocate(spot?1u:2u,1u,x,y))continue;
+        const SceneLight& src=*light_sources_[c.light];
+        atlas.push_back({std::format("{}:{}:{}:{}",src.name,src.id,c.view_bit,c.light>=light_count_),spot?1u:2u,x+y*kShadowTiles});
+        packed.push_back(c);reserved_views+=spot?1u:2u;
+    }
+    shadow_atlas_.Assign(atlas);size_t atlas_index=0;
+    for (const Candidate& c : packed) {
         if (view_count_ + 2 > gpu::kMaxViews) {
             break;
         }
         gpu::Light& g = frame_->lights[c.light];
         const SceneLight* src = light_sources_[c.light];
         const bool spot = g.position.w > 0.5f;
-        uint32_t tx = 0;
-        uint32_t ty = 0;
-        if (!allocate(spot ? 1u : 2u, 1u, tx, ty)) {
-            continue;
-        }
+        const uint32_t slot=atlas[atlas_index++].slot;
+        const uint32_t tx=slot%kShadowTiles,ty=slot/kShadowTiles;
         const float tile_uv = static_cast<float>(shadow_tile) / static_cast<float>(shadow_size);
         const glm::vec3 pos = glm::vec3(g.position);
         if (spot) {
@@ -1227,10 +1237,11 @@ void SceneRenderer::SetTppFog(const TppAtmosphereSettings& tpp) {
     frame_->fog[2] = glm::vec4(tpp.fog_mie, tpp.fog_mie_anisotropy);
     // 0x906330: m0.w = e dirLightGain |dir|, the weight of the directional light's in-scatter (the shaders' ray.w)
     frame_->fog[3] = glm::vec4(tpp.fog_rayleigh, e * tpp.dir_gain * glm::length(tpp.dir_color));
-    // fog[4..6] are unused: the area box term of VolFog_TppVolFog_Area never reaches the volume (compose.frag)
-    frame_->fog[4] = glm::vec4(0.0f);
-    frame_->fog[5] = glm::vec4(0.0f);
-    frame_->fog[6] = glm::vec4(0.0f);
+    // Precomputed fog coefficients; the unused area box term remains omitted.
+    const glm::vec3 sigma=tpp.fog_mie+tpp.fog_rayleigh;
+    frame_->fog[4]=glm::vec4(sigma,.07957747f*(1.0f-tpp.fog_mie_anisotropy*tpp.fog_mie_anisotropy));
+    frame_->fog[5]=glm::vec4(1.0f/glm::max(glm::vec3(1e-6f),sigma),0.0f);
+    frame_->fog[6]=glm::vec4(0.0f);
     frame_->fog[7] = glm::vec4(tpp.light_dir, 0.0f);
 }
 
@@ -1456,10 +1467,10 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
             }
             accepted.push_back(&d);
             const uint32_t material_flags = textures_->MaterialFlags(d.material);
-            state.reusable = state.reusable && !d.sub->skinned && d.skin_base == gpu::kInvalid && (material_flags & gpu::kMatAlphaTest) == 0;
+            state.reusable = state.reusable && !d.sub->skinned && d.skin_base == gpu::kInvalid;
             if (state.reusable) {
                 state.casters.push_back({reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
-                                         d.material, uint32_t(d.sub->shadow_double_sided), d.transform});
+                                         d.material, uint32_t(d.sub->shadow_double_sided), d.transform, textures_->ShadowAlphaState(d.material)});
             }
         }
         dirty[tile] = !shadow_cache_[tile].Reuse(state);
@@ -1761,6 +1772,12 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             }
             push.f0.x = contact ? rt_contact_reach_ : 0.0f;
             push.f0.y = contact && rt_contact_legacy_ ? 1.0f : 0.0f;
+            glm::mat4 scissor_volume=volume;glm::vec3 lo,hi;
+            if(l.type==LightType::Spot && l.cone_exponent>0 && l.inv_cone_range>0 && l.dimmer>=0 && l.inner_range>=0 && SpotBounds(l.position,l.direction,l.cos_outer,radius,lo,hi))
+                scissor_volume=glm::translate(glm::mat4(1.0f),(lo+hi)*.5f)*glm::scale(glm::mat4(1.0f),(hi-lo)*.5f);
+            const VkRect2D scissor=LightScissor(frame_->views[view.index].view_projection*scissor_volume,area);
+            if(!scissor.extent.width || !scissor.extent.height)continue;
+            vkCmdSetScissor(cmd,0,1,&scissor);
             push.m = volume;
             PushConstants(cmd, &push, sizeof(push));
             vkCmdDraw(cmd, 36, 1, 0, 0);

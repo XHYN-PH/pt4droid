@@ -365,7 +365,7 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
             {"descriptorBindingUpdateUnusedWhilePending", have12.descriptorBindingUpdateUnusedWhilePending},
             {"descriptorBindingStorageBufferUpdateAfterBind", have12.descriptorBindingStorageBufferUpdateAfterBind},
             {"scalarBlockLayout", have12.scalarBlockLayout}, {"samplerAnisotropy", have2.features.samplerAnisotropy},
-            {"textureCompressionBC", have2.features.textureCompressionBC}, {"fillModeNonSolid", have2.features.fillModeNonSolid},
+            {"fillModeNonSolid", have2.features.fillModeNonSolid},
             {"shaderInt16", have2.features.shaderInt16}, {"shaderClipDistance", have2.features.shaderClipDistance},
         };
         bool complete = true;
@@ -399,12 +399,12 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     features.pNext = &features12;
     features.features.samplerAnisotropy = VK_TRUE;
-    features.features.textureCompressionBC = VK_TRUE;
+    VkPhysicalDeviceFeatures supported{};vkGetPhysicalDeviceFeatures(physical,&supported);
+    features.features.textureCompressionBC=supported.textureCompressionBC;
+    if(!supported.textureCompressionBC)LogInfo("textures: experimental per-format BC compatibility enabled");
     features.features.fillModeNonSolid = VK_TRUE;
     features.features.shaderInt16 = VK_TRUE;
     features.features.shaderClipDistance = VK_TRUE;
-    VkPhysicalDeviceFeatures supported{};
-    vkGetPhysicalDeviceFeatures(physical, &supported);
     features.features.independentBlend = supported.independentBlend;
 
     const float priority = 1.0f;
@@ -1047,26 +1047,26 @@ void Context::DestroyBuffer(Buffer& buffer) {
     buffer = Buffer{};
 }
 
-void Context::Submit(const std::function<void(VkCommandBuffer)>& record) {
+bool Context::Submit(const std::function<void(VkCommandBuffer)>& record) {
     if (!upload_cmd_) {
         VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         alloc.commandPool = upload_pool_; alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount = 1;
-        if (!Check(vkAllocateCommandBuffers(device, &alloc, &upload_cmd_), "upload command")) return;
+        if (!Check(vkAllocateCommandBuffers(device, &alloc, &upload_cmd_), "upload command")) return false;
         VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         if (!Check(vkCreateFence(device, &f, nullptr, &upload_fence_), "upload fence")) {
-            vkFreeCommandBuffers(device, upload_pool_, 1, &upload_cmd_); upload_cmd_ = VK_NULL_HANDLE; return;
+            vkFreeCommandBuffers(device, upload_pool_, 1, &upload_cmd_); upload_cmd_ = VK_NULL_HANDLE; return false;
         }
     }
     vkResetFences(device, 1, &upload_fence_); vkResetCommandBuffer(upload_cmd_, 0);
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (!Check(vkBeginCommandBuffer(upload_cmd_, &begin), "upload begin")) return;
+    if (!Check(vkBeginCommandBuffer(upload_cmd_, &begin), "upload begin")) return false;
     record(upload_cmd_);
-    if (!Check(vkEndCommandBuffer(upload_cmd_), "upload end")) return;
+    if (!Check(vkEndCommandBuffer(upload_cmd_), "upload end")) return false;
     VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO}; cmd_info.commandBuffer = upload_cmd_;
     VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2}; submit.commandBufferInfoCount = 1; submit.pCommandBufferInfos = &cmd_info;
-    CheckDeviceLost(vkQueueSubmit2(queue, 1, &submit, upload_fence_), "one-time submit");
-    CheckDeviceLost(vkWaitForFences(device, 1, &upload_fence_, VK_TRUE, UINT64_MAX), "one-time submit wait");
+    const VkResult queued=vkQueueSubmit2(queue,1,&submit,upload_fence_);CheckDeviceLost(queued,"one-time submit");if(!Check(queued,"one-time submit"))return false;
+    const VkResult waited=vkWaitForFences(device,1,&upload_fence_,VK_TRUE,UINT64_MAX);CheckDeviceLost(waited,"one-time submit wait");return Check(waited,"one-time submit wait");
 }
 
 bool Context::MatchesWindowSize(uint32_t width, uint32_t height) const {
@@ -1102,12 +1102,12 @@ bool Context::Upload(Buffer& dst, const void* data, VkDeviceSize size) {
     }
     std::memcpy(staging.mapped, data, static_cast<size_t>(size));
     vmaFlushAllocation(allocator, staging.allocation, 0, size);
-    Submit([&](VkCommandBuffer cmd) {
+    const bool submitted=Submit([&](VkCommandBuffer cmd) {
         VkBufferCopy region{0, 0, size};
         vkCmdCopyBuffer(cmd, staging.buffer, dst.buffer, 1, &region);
     });
     DestroyBuffer(staging);
-    return true;
+    return submitted;
 }
 
 }

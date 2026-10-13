@@ -24,6 +24,7 @@
 #include "engine/render/raytracing.h"
 #include "engine/render/render_util.h"
 #include "engine/render/shadow_cache.h"
+#include "engine/render/shadow_atlas.h"
 #include "engine/render/renderer.h"
 #include "engine/render/scene_lighting.h"
 #include "engine/render/subsurface_pass.h"
@@ -326,6 +327,7 @@ private:
     bool CreateDescriptors();
     bool EnsureTargets(VkExtent2D extent, VkExtent2D output, bool upscaling);
     void DestroyTargets();
+    bool EnsureOptionalTargets(VkExtent2D extent,VkExtent2D output,bool upscaling,bool initialize=true);
     void WriteImageDescriptors();
     bool CreateTarget(RenderTarget& target, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage, VkImageAspectFlags aspect);
     bool UploadImage(vk::Image& image, VkFormat format, VkExtent3D extent, const void* data, size_t size);
@@ -457,6 +459,7 @@ private:
     RenderTarget reflect_offset_;
     RenderTarget reflect_history_[2];
     RenderTarget shadow_;
+    StableShadowAtlas shadow_atlas_;
     std::array<ShadowTileCache, 16> shadow_cache_;
     std::array<ShadowMapState, 16> shadow_states_;
     std::array<std::vector<const Draw*>, 16> shadow_casters_;

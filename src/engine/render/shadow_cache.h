@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -10,6 +11,7 @@ struct ShadowCasterState {
     uint32_t material = 0;
     uint32_t flags = 0;
     glm::mat4 transform{1.0f};
+    std::array<uint64_t,3> alpha{};
     bool operator==(const ShadowCasterState&) const = default;
 };
 struct ShadowMapState {
@@ -23,7 +25,7 @@ struct ShadowMapState {
     uint32_t cull = 0;
     uint8_t caster_views = 0;
     std::vector<ShadowCasterState> casters;
-    // Streaming alpha textures and independently animated skin stay per frame.
+    // Exact alpha dependencies permit reuse; animated skin stays per frame.
     bool reusable = true;
     bool operator==(const ShadowMapState&) const = default;
 };

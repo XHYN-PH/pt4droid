@@ -82,7 +82,7 @@ public:
     bool CreateBuffer(Buffer& out, VkDeviceSize size, VkBufferUsageFlags usage, bool host_visible);
     void DestroyBuffer(Buffer& buffer);
 
-    void Submit(const std::function<void(VkCommandBuffer)>& record);
+    bool Submit(const std::function<void(VkCommandBuffer)>& record);
     bool Upload(Buffer& dst, const void* data, VkDeviceSize size);
 
     VkInstance instance = VK_NULL_HANDLE;

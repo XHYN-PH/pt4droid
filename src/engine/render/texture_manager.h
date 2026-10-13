@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <array>
 #include <deque>
 #include <filesystem>
 #include <atomic>
@@ -66,6 +67,9 @@ public:
 
     uint32_t Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t layers = 1, bool cube = false);
     uint32_t Find(const std::string& name) const;
+    void BeginUploadBatch();
+    void EndUploadBatch();
+    void FlushUploads();
     uint32_t LoadFox(const QarArchive& qar, const std::string& path, bool* ok = nullptr, bool raw = false);
     // Reads and unpacks the .ftex files of `paths` on a worker thread ahead of their LoadFox, which then only uploads: the f100
     // clock's maze package brings eleven effect pictures (fx_viweye01..11) whose unpacking took 311 ms of one frame. Paths loaded or
@@ -89,6 +93,7 @@ public:
     void RedirectTexture(uint32_t texture, uint32_t shown);
     void FlushMaterials();
     uint32_t MaterialFlags(uint32_t index) const { return index < materials_.size() ? materials_[index].flags : 0u; }
+    std::array<uint64_t,3> ShadowAlphaState(uint32_t material) const;
     // Anisotropic filtering of the 2D textures (PC option, rendering.md 12.22): 0 or 1 keeps the original's trilinear sampler,
     // else the level up to the device's limit; waits for the device. Returns the level in use.
     int SetAnisotropy(int level);
@@ -159,6 +164,11 @@ private:
     std::unordered_map<std::string, std::shared_future<std::shared_ptr<FtexTexture>>> decoding_;
     std::deque<std::string> decode_order_;
     std::vector<std::future<void>> decode_workers_;
+    struct PendingUpload{VkImage image;std::vector<VkBufferImageCopy> regions;};
+    vk::Buffer upload_staging_;VkDeviceSize upload_used_=0;std::vector<PendingUpload> upload_pending_;uint32_t upload_batch_depth_=0;uint64_t fallback_bytes_=0;
+    struct FormatSupport{VkFormatProperties properties{};VkImageFormatProperties image{};bool valid=false;};
+    std::unordered_map<uint64_t,FormatSupport> format_support_;
+    bool SupportsTexture(VkFormat format,uint32_t width,uint32_t height,uint32_t levels,uint32_t layers,bool cube);
     double read_ms_ = 0.0;
     double upload_ms_ = 0.0;
 };

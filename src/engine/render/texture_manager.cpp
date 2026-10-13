@@ -7,6 +7,10 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <stdexcept>
+#include <bit>
+#include "engine/assets/bc_texture.h"
+#include "engine/render/gpu_types.h"
 
 #include "engine/assets/ftex.h"
 #include "engine/assets/enhanced_textures.h"
@@ -96,7 +100,9 @@ uint32_t FormatBlockBytes(VkFormat format, bool& compressed) {
     }
     compressed = false;
     switch (format) {
+    case VK_FORMAT_R8_SNORM:
     case VK_FORMAT_R8_UNORM: return 1;
+    case VK_FORMAT_R8G8_SNORM:
     case VK_FORMAT_R8G8_UNORM: return 2;
     case VK_FORMAT_R16_SFLOAT: return 2;
     case VK_FORMAT_R8G8B8A8_UNORM:
@@ -191,6 +197,7 @@ void TextureManager::Shutdown() {
     if (!ctx_) {
         return;
     }
+    FlushUploads();ctx_->DestroyBuffer(upload_staging_);upload_pending_.clear();upload_used_=0;upload_batch_depth_=0;fallback_bytes_=0;format_support_.clear();
     for (vk::Image& image : images_) {
         ctx_->DestroyImage(image);
     }
@@ -283,15 +290,51 @@ uint32_t TextureManager::Find(const std::string& name) const {
     return it == by_name_.end() ? kWhite : it->second;
 }
 
+bool TextureManager::SupportsTexture(VkFormat format,uint32_t width,uint32_t height,uint32_t levels,uint32_t layers,bool cube){
+    const uint64_t key=uint64_t(format)*2+cube;auto[it,inserted]=format_support_.try_emplace(key);auto& support=it->second;
+    if(inserted){vkGetPhysicalDeviceFormatProperties(ctx_->physical,format,&support.properties);const auto required=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        support.valid=(support.properties.optimalTilingFeatures & required)==required && vkGetPhysicalDeviceImageFormatProperties(ctx_->physical,format,VK_IMAGE_TYPE_2D,VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,cube?VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT:0,&support.image)==VK_SUCCESS;}
+    return support.valid && width<=support.image.maxExtent.width && height<=support.image.maxExtent.height && levels<=support.image.maxMipLevels && layers<=support.image.maxArrayLayers;
+}
+void TextureManager::BeginUploadBatch(){++upload_batch_depth_;}
+void TextureManager::EndUploadBatch(){if(upload_batch_depth_ && --upload_batch_depth_==0){FlushUploads();ctx_->DestroyBuffer(upload_staging_);}}
+void TextureManager::FlushUploads(){
+    if(upload_pending_.empty())return;const auto started=std::chrono::steady_clock::now();vmaFlushAllocation(ctx_->allocator,upload_staging_.allocation,0,upload_used_);
+    if(!ctx_->Submit([&](VkCommandBuffer cmd){for(const auto& upload:upload_pending_){
+        vk::ImageBarrier(cmd,upload.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,0,VK_IMAGE_LAYOUT_UNDEFINED,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdCopyBufferToImage(cmd,upload_staging_.buffer,upload.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(upload.regions.size()),upload.regions.data());
+        vk::ImageBarrier(cmd,upload.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }}))throw std::runtime_error("The driver could not complete the texture upload batch");
+    upload_ms_+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();upload_pending_.clear();upload_used_=0;
+}
+
 uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t layers, bool cube) {
     if (auto it = by_name_.find(name); it != by_name_.end()) {
         return it->second;
     }
-    if (mips.empty() || images_.size() >= kMaxTextures) {
+    if (mips.empty() || !layers || mips.size()%layers || (cube && layers!=6) || images_.size() >= kMaxTextures) {
         return kWhite;
     }
     vk::Image image;
     const uint32_t mip_count = static_cast<uint32_t>(mips.size()) / layers;
+    bool compressed=false;const uint32_t block_bytes=FormatBlockBytes(format,compressed);
+    if(!mips[0].width || !mips[0].height || mips[0].width>16384 || mips[0].height>16384 || mip_count>std::bit_width(std::max(mips[0].width,mips[0].height)) || (cube && mips[0].width!=mips[0].height))return kWhite;
+    for(size_t i=0;i<mips.size();++i){const uint32_t level=uint32_t(i)%mip_count,w=std::max(1u,mips[0].width>>level),h=std::max(1u,mips[0].height>>level);const auto& mip=mips[i];const uint64_t bytes=compressed?uint64_t((w+3)/4)*((h+3)/4)*block_bytes:uint64_t(w)*h*block_bytes;
+        if(mip.width!=w || mip.height!=h || mip.data.size()!=bytes){LogError("textures: {} invalid face/mip {} size",name,i);return kWhite;}}
+    uint64_t converted_bytes=0;std::vector<std::vector<uint8_t>> converted;std::vector<TextureMip> compatible;
+    if(!SupportsTexture(format,mips[0].width,mips[0].height,mip_count,layers,cube)){
+        const VkFormat fallback=BcFallbackFormat(format);
+        if(fallback==VK_FORMAT_UNDEFINED || !SupportsTexture(fallback,mips[0].width,mips[0].height,mip_count,layers,cube)){LogError("textures: {} format {} is unsupported by this driver",name,int(format));return kWhite;}
+        const uint32_t channels=fallback==VK_FORMAT_R8_UNORM || fallback==VK_FORMAT_R8_SNORM?1u:fallback==VK_FORMAT_R8G8_UNORM || fallback==VK_FORMAT_R8G8_SNORM?2u:4u;
+        for(const auto& mip:mips)converted_bytes+=uint64_t(mip.width)*mip.height*channels;
+        if(converted_bytes>128ull*1024*1024 || fallback_bytes_+converted_bytes>2ull*1024*1024*1024){LogError("textures: {} BC fallback exceeds the conversion memory limit",name);return kWhite;}
+        if(ctx_->memory_budget){VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};vmaGetHeapBudgets(ctx_->allocator,budgets);VkPhysicalDeviceMemoryProperties memory{};vkGetPhysicalDeviceMemoryProperties(ctx_->physical,&memory);uint64_t available=0;
+            for(uint32_t i=0;i<memory.memoryHeapCount;++i)if(memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)available+=budgets[i].budget>budgets[i].usage?budgets[i].budget-budgets[i].usage:0;
+            if(converted_bytes+128ull*1024*1024>available){LogError("textures: {} BC fallback would exceed the current device memory budget",name);return kWhite;}}
+        converted.resize(mips.size());compatible.reserve(mips.size());
+        for(size_t i=0;i<mips.size();++i){if(!DecodeBcMip(format,mips[i].width,mips[i].height,mips[i].data,converted[i])){LogError("textures: {} invalid BC data at face/mip {}",name,i);return kWhite;}compatible.push_back({mips[i].width,mips[i].height,converted[i]});}
+        LogInfo("textures: experimental BC fallback {} format {} -> {} ({} KiB, {} layers, {} mips)",name,int(format),int(fallback),converted_bytes/1024,layers,mip_count);format=fallback;mips=compatible;
+    }
     if (!ctx_->CreateImage(image, format, {mips[0].width, mips[0].height, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                            mip_count, layers, VK_IMAGE_ASPECT_COLOR_BIT, cube)) {
         return kWhite;
@@ -300,10 +343,14 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
     for (const TextureMip& mip : mips) {
         total += (mip.data.size() + 15) & ~VkDeviceSize(15);
     }
+    constexpr VkDeviceSize batch_limit=16ull*1024*1024;
+    bool batched=upload_batch_depth_ && total<=batch_limit;
+    if(batched && !upload_staging_.buffer)batched=ctx_->CreateBuffer(upload_staging_,batch_limit,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true);
+    if(batched && (upload_used_+total>batch_limit || upload_pending_.size()>=64))FlushUploads();
     vk::Buffer staging;
-    ctx_->CreateBuffer(staging, total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+    if(batched)staging=upload_staging_;else{FlushUploads();if(!ctx_->CreateBuffer(staging,total,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true)){ctx_->DestroyImage(image);return kWhite;}}
     std::vector<VkBufferImageCopy> regions;
-    VkDeviceSize offset = 0;
+    VkDeviceSize offset=batched?upload_used_:0;
     for (uint32_t layer = 0; layer < layers; ++layer) {
         for (uint32_t level = 0; level < mip_count; ++level) {
             const TextureMip& mip = mips[layer * mip_count + level];
@@ -316,8 +363,9 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
             offset += (mip.data.size() + 15) & ~VkDeviceSize(15);
         }
     }
+    if(batched){upload_pending_.push_back({image.image,std::move(regions)});upload_used_=offset;}else{
     vmaFlushAllocation(ctx_->allocator, staging.allocation, 0, total);
-    ctx_->Submit([&](VkCommandBuffer cmd) {
+    const bool submitted=ctx_->Submit([&](VkCommandBuffer cmd) {
         vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()),
@@ -326,7 +374,9 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
-    ctx_->DestroyBuffer(staging);
+    ctx_->DestroyBuffer(staging);if(!submitted){ctx_->DestroyImage(image);return kWhite;}
+    }
+    fallback_bytes_+=converted_bytes;
     const uint32_t index = static_cast<uint32_t>(images_.size());
     const bool cube_slot = cube && cube_slots_.size() < kMaxCubeTextures;
     VkDescriptorImageInfo image_info{sampler_, image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -420,8 +470,9 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         }
     }
     const auto upload_started = std::chrono::steady_clock::now();
+    const double upload_before=upload_ms_;
     const uint32_t index = Create(key, ftex.Format(), mips, ftex.faces, ftex.faces == 6);
-    upload_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_started).count();
+    upload_ms_ = upload_before+std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_started).count();
     if (index != kWhite && !raw && EnhancedTextureEligible(stem, ftex)) {
         fox_sources_[index] = stem;
         if (enhanced_enabled_) LoadEnhancedTexture(index, stem, &ftex);
@@ -702,7 +753,16 @@ void TextureManager::RedirectTexture(uint32_t texture, uint32_t shown) {
     materials_dirty_ = true;
 }
 
+std::array<uint64_t,3> TextureManager::ShadowAlphaState(uint32_t index) const {
+    if(index>=materials_.size())return {};
+    const auto& m=materials_[index];if(!(m.flags & gpu::kMatAlphaTest))return {m.flags,0,0};
+    uint32_t albedo=m.albedo;if(auto it=redirects_.find(albedo);it!=redirects_.end())albedo=it->second;
+    uint32_t shown=albedo;if(enhanced_enabled_)if(auto it=enhanced_images_.find(albedo);it!=enhanced_images_.end())shown=it->second;
+    return {uint64_t(m.flags)|(uint64_t(anisotropy_)<<32),albedo,shown};
+}
+
 void TextureManager::FlushMaterials() {
+    FlushUploads();
     if (!materials_dirty_) {
         return;
     }

@@ -617,13 +617,33 @@ void SceneRenderer::DestroyTargets() {
     output_extent_ = {0, 0};
 }
 
+bool SceneRenderer::EnsureOptionalTargets(VkExtent2D extent,VkExtent2D output,bool upscaling,bool initialize){
+    const bool need_ao=toggles.occlusion && !ao_[0].Valid(),need_dof=toggles.depth_of_field && !dof_half_.Valid();
+    const bool need_motion=toggles.motion_blur && !velocity_.Valid(),need_object=(toggles.motion_blur || upscaling) && !object_velocity_.Valid();
+    if(!need_ao && !need_dof && !need_motion && !need_object)return true;
+    if(initialize)vkDeviceWaitIdle(device_);
+    const VkImageUsageFlags color=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    const VkImageAspectFlags c=VK_IMAGE_ASPECT_COLOR_BIT;
+    const VkExtent2D shift1{std::max(output.width>>1,1u),std::max(output.height>>1,1u)},shift2{std::max(output.width>>2,1u),std::max(output.height>>2,1u)},shift3{std::max(output.width>>3,1u),std::max(output.height>>3,1u)};
+    std::vector<RenderTarget*> made;bool ok=true;
+    auto make=[&](RenderTarget& t,VkFormat f,VkExtent2D size,VkImageUsageFlags flags=0){if(!ok || t.Valid())return;if(!flags)flags=color;if(CreateTarget(t,f,size,flags,c))made.push_back(&t);else ok=false;};
+    if(need_ao){make(ao_[0],kAoFormat,extent);make(ao_[1],kAoFormat,extent,color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);}
+    if(need_dof){make(dof_half_,kPostFormat,shift1);for(auto& t:dof_quarter_)make(t,kPostFormat,shift2);for(auto& t:dof_eighth_)make(t,kPostFormat,shift3);}
+    if(need_object)make(object_velocity_,kPostFormat,extent);
+    if(need_motion){make(velocity_,kPostFormat,output);for(auto& t:mb_blur_)make(t,kPostFormat,shift1);for(uint32_t i=0;i<5;++i){const uint32_t round=(2u<<i)-1u;make(mb_tile_[i],kPostFormat,{(output.width+round)>>(i+1),(output.height+round)>>(i+1)});}make(mb_neighbour_,kPostFormat,mb_tile_[4].Extent());make(mb_bake_,kPostFormat,{(output.width+1)>>1,(output.height+1)>>1});}
+    if(!ok){for(auto* t:made)renderer_->Context().DestroyImage(t->image);return false;}
+    if(initialize){const bool initialized=renderer_->Context().Submit([&](VkCommandBuffer cmd){for(auto* t:made){UseTargets(cmd,{{t,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});BeginPass(cmd,t->Extent(),{{t,true,{}}});vkCmdEndRendering(cmd);UseTargets(cmd,{{t,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});}});
+        if(!initialized){for(auto* t:made)renderer_->Context().DestroyImage(t->image);return false;}WriteImageDescriptors();}
+    return true;
+}
+
 bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool upscaling) {
     if (extent.width == 0 || extent.height == 0 || output.width == 0 || output.height == 0) {
         return false;
     }
     if (extent.width == extent_.width && extent.height == extent_.height && output.width == output_extent_.width &&
         output.height == output_extent_.height && upscaling == targets_upscaled_) {
-        return true;
+        return EnsureOptionalTargets(extent,output,upscaling);
     }
     vkDeviceWaitIdle(device_);
     DestroyTargets();
@@ -658,22 +678,8 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
               CreateTarget(bloom_[2], kBloomFormat, quarter, color, c) && CreateTarget(flare_, kPostFormat, output, color, c) &&
               CreateTarget(ldr_[0], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
               CreateTarget(ldr_[1], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
-              CreateTarget(history_, ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
-              CreateTarget(ao_[0], kAoFormat, extent, color, c) && CreateTarget(ao_[1], kAoFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c);
-    const VkExtent2D shift1{std::max(output.width >> 1, 1u), std::max(output.height >> 1, 1u)};
-    const VkExtent2D shift2{std::max(output.width >> 2, 1u), std::max(output.height >> 2, 1u)};
-    const VkExtent2D shift3{std::max(output.width >> 3, 1u), std::max(output.height >> 3, 1u)};
-    ok = ok && CreateTarget(dof_half_, kPostFormat, shift1, color, c) && CreateTarget(dof_quarter_[0], kPostFormat, shift2, color, c) &&
-         CreateTarget(dof_quarter_[1], kPostFormat, shift2, color, c) && CreateTarget(dof_eighth_[0], kPostFormat, shift3, color, c) &&
-         CreateTarget(dof_eighth_[1], kPostFormat, shift3, color, c) && CreateTarget(velocity_, kPostFormat, output, color, c) &&
-         CreateTarget(object_velocity_, kPostFormat, extent, color, c) && CreateTarget(mb_blur_[0], kPostFormat, shift1, color, c) &&
-         CreateTarget(mb_blur_[1], kPostFormat, shift1, color, c);
-    for (uint32_t i = 0; i < 5 && ok; ++i) {
-        const uint32_t round = (2u << i) - 1u;
-        ok = CreateTarget(mb_tile_[i], kPostFormat, {(output.width + round) >> (i + 1), (output.height + round) >> (i + 1)}, color, c);
-    }
-    ok = ok && CreateTarget(mb_neighbour_, kPostFormat, mb_tile_[4].Extent(), color, c) &&
-         CreateTarget(mb_bake_, kPostFormat, {(output.width + 1) >> 1, (output.height + 1) >> 1}, color, c);
+              CreateTarget(history_,ldr_format_,output,color | VK_IMAGE_USAGE_TRANSFER_DST_BIT,c);
+    ok=ok && EnsureOptionalTargets(extent,output,upscaling,false);
     ok = ok && (!upscaling || CreateUpscaleTargets(extent, output));
     ok = ok && (!upscaling ||
                 (CreateTarget(mirror_history_, kHdrFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
@@ -696,6 +702,7 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
                                   &mb_tile_[1], &mb_tile_[2], &mb_tile_[3], &mb_tile_[4], &mb_neighbour_, &mb_bake_, &mb_blur_[0],
                                   &mb_blur_[1]};
         for (RenderTarget* t : colors) {
+            if(!t->Valid())continue;
             UseTargets(cmd, {{t, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
             BeginPass(cmd, t->Extent(), {{t, true, {}}});
             vkCmdEndRendering(cmd);
