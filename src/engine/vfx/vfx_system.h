@@ -350,8 +350,8 @@ private:
     // (window_tests t2_fsr_up_fgoff 132-140 s, a loaded machine: "vfx: prepare took 21-290 ms" on 41 frames)
     struct BuildItem {
         float depth;
-        Quad quad;
-        bool visible=true;
+        uint32_t quad = UINT32_MAX;
+
     };
     struct BuildLitRef {
         size_t first = 0;
@@ -359,7 +359,9 @@ private:
         glm::vec3 unlit{0.0f};
         glm::vec3 position{0.0f};
     };
+    static_assert(sizeof(BuildItem) == 8);
     mutable std::vector<BuildItem> build_items_;
+    mutable std::vector<Quad> build_quads_;
     mutable std::vector<size_t> build_order_;
     mutable std::vector<BuildLitRef> build_lit_refs_;
 };

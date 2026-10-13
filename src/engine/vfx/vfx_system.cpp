@@ -1127,6 +1127,12 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
     using Item = BuildItem;
     std::vector<Item>& items = build_items_;
     items.clear();
+    build_quads_.clear();
+    build_quads_.reserve(state.particles.size());
+    auto append = [&](float depth, const Quad& quad) {
+        items.push_back({depth, static_cast<uint32_t>(build_quads_.size())});
+        build_quads_.push_back(quad);
+    };
     // lit particles with a light block: their colour before lighting and their position, lit once the draw's box is known
     using LitRef = BuildLitRef;
     std::vector<LitRef>& lit_refs = build_lit_refs_;
@@ -1231,6 +1237,14 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             q.corner[2] = glm::vec4(world_pos + px0 + py0, 1.0f);
             q.corner[3] = glm::vec4(world_pos + px1 + py0, 1.0f);
         }
+        const float depth = glm::dot(world_pos - view.position, view.forward);
+        static const bool cull_quads = [] { const char* v = std::getenv("PT_VFX_CULL"); return !v || std::string_view(v) != "0"; }();
+        if (!mesh && cull_quads && rain && draw.layer == Layer::World && !QuadVisible(view.view_projection, q.corner)) {
+            // Keep a compact sort entry: omitting it changes std::sort's equal-depth
+            // ordering. No quad payload, UV animation or lighting work is needed.
+            items.push_back({depth, UINT32_MAX});
+            continue;
+        }
         q.uv = glm::vec4(uv.x, uv.y, uv.x + uv.z, uv.y + uv.w);
         q.uv_next = q.uv;
         float blend_weight = 0.0f;
@@ -1298,7 +1312,6 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             q.luminance = glm::vec4(m.rain_scale, state.rain_offset);
             q.extra=rain_extra;
         }
-        const float depth = glm::dot(world_pos - view.position, view.forward);
         if (mesh) {
             // 0xB8DF70: world = base * Rz * Ry * Rx * scale with the base translation at the position; 0xB8C700 keeps the model's
             // winding and swaps the second and third index with invertFace
@@ -1330,21 +1343,19 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
                 q.corner[3] = q.corner[2];
                 q.uv = glm::vec4(texcoord(i0), texcoord(i2));
                 q.uv_next = glm::vec4(texcoord(i1), texcoord(i1));
-                items.push_back({depth, q});
+                append(depth, q);
             }
             if (block_lit) {
                 lit_refs.back().last = items.size();
             }
             continue;
         }
-        static const bool cull_quads=[] {const char* v=std::getenv("PT_VFX_CULL");return !v || std::string_view(v)!="0";}();
-        const bool visible=!cull_quads || !rain || draw.layer!=Layer::World || QuadVisible(view.view_projection,q.corner);
-        items.push_back({depth,q,visible});
+        append(depth, q);
         if (block_lit) {
             lit_refs.back().last = items.size();
         }
     }
-    if (items.empty()) {
+    if (build_quads_.empty()) {
         return;
     }
     if (block_lit && !lit_refs.empty()) {
@@ -1355,7 +1366,7 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             glm::vec3 lo(1e30f);
             glm::vec3 hi(-1e30f);
             for (size_t k = first; k < last; ++k) {
-                for (const glm::vec4& corner : items[k].quad.corner) {
+                for (const glm::vec4& corner : build_quads_[items[k].quad].corner) {
                     lo = glm::min(lo, glm::vec3(corner));
                     hi = glm::max(hi, glm::vec3(corner));
                 }
@@ -1377,7 +1388,7 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
                          block.color[2].r, block.color[2].g, block.color[2].b, block.inv_r4[2]);
             }
             for (size_t k = r.first; k < r.last; ++k) {
-                Quad& q = items[k].quad;
+                Quad& q = build_quads_[items[k].quad];
                 q.color = glm::vec4(r.unlit, q.color.a);
                 q.info.y |= kQuadLit;
                 q.light_factors = glm::vec4(block.sky * m.ambient_rate + block.directional * m.directional_rate, m.point_rate);
@@ -1391,8 +1402,8 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
     if ((shape.sort_mode != 0 || shape.separate_draw) && draw.blend == BlendMode::Alpha) {
         build_order_.resize(items.size());for(size_t i=0;i<items.size();++i)build_order_[i]=i;
         std::sort(build_order_.begin(),build_order_.end(),[&](size_t a,size_t b){return items[a].depth>items[b].depth;});
-        for(size_t i:build_order_)if(items[i].visible)out.quads.push_back(items[i].quad);
-    }else{for(const Item& it:items)if(it.visible)out.quads.push_back(it.quad);}
+        for (size_t i : build_order_) if (items[i].quad != UINT32_MAX) out.quads.push_back(build_quads_[items[i].quad]);
+    }else{for (const Item& it : items) if (it.quad != UINT32_MAX) out.quads.push_back(build_quads_[it.quad]);}
     draw.count = static_cast<uint32_t>(out.quads.size()) - draw.first;
     out.draws.push_back(draw);
 }
