@@ -1,0 +1,136 @@
+{
+  "version": "0.2.1-test.9",
+  "base_commit": "0a124fa39dbb29134980fea32ee24f623fd81cbb",
+  "files": [
+    {
+      "path": "src/engine/assets/ftex.cpp",
+      "bytes": 15276,
+      "sha256": "86192228ddc9059ad40cbb32b0f3b1b889bf9489be066237e1de95fbcc1d5bd3"
+    },
+    {
+      "path": "src/engine/assets/ftex.h",
+      "bytes": 1774,
+      "sha256": "55c32976076dbece98c1928e57f8f81677408cd1772992d2b179ecc4c1a0d6c5"
+    },
+    {
+      "path": "src/engine/assets/texture_read_budget.h",
+      "bytes": 797,
+      "sha256": "19cb53d02edab14bfa15251fd8a1ff721ec481881901019053e8a7cf2fde7ec2"
+    },
+    {
+      "path": "src/engine/platform/user_data.cpp",
+      "bytes": 18424,
+      "sha256": "aac33f1a3abdaebd69fc5fdf17fc627ed1253fb288b350b51342b93d62f5f4bd"
+    },
+    {
+      "path": "src/engine/render/model_cache.cpp",
+      "bytes": 27723,
+      "sha256": "f8456f759c99ae6a1a4c39c39dbe6b5b854a910c24e8b92523e246442c898eef"
+    },
+    {
+      "path": "src/engine/render/model_cache.h",
+      "bytes": 3118,
+      "sha256": "8b27e667a81e49c63173662cf8aa9a262c74b7555a5b4a474b934113186a38c7"
+    },
+    {
+      "path": "src/engine/render/render_timing.h",
+      "bytes": 1839,
+      "sha256": "e50c4fadd49097bb947083bd89cce1d8142e5a9a3da8ef645769e31d670c7e4b"
+    },
+    {
+      "path": "src/engine/render/scene_frame.cpp",
+      "bytes": 164630,
+      "sha256": "1916e150091b6ae4c8cf311c13052bc3311b5e062e5df3dc0c02cfd6fb877ee5"
+    },
+    {
+      "path": "src/engine/render/scene_renderer.h",
+      "bytes": 33084,
+      "sha256": "20005796e3df3e5211b79ab7b5bda73b0997563552178a2791dfa5408264a19a"
+    },
+    {
+      "path": "src/engine/render/shadow_cache.h",
+      "bytes": 2423,
+      "sha256": "281e7ad769157d3fe3ca276b3cfa49ed562600880ff9a6c8ff669b2531b0520a"
+    },
+    {
+      "path": "src/engine/render/texture_manager.cpp",
+      "bytes": 38345,
+      "sha256": "d675e565608853d36355c698a697fa2a144b107e58545b646d3c40a9d5e1ab09"
+    },
+    {
+      "path": "src/engine/render/texture_manager.h",
+      "bytes": 8718,
+      "sha256": "e207f405d066eaf28bebb0fbca67a556e0ea572f15548f7af12284e0f1fbc796"
+    },
+    {
+      "path": "src/engine/vfx/vfx_system.cpp",
+      "bytes": 72908,
+      "sha256": "ae91105880c142fb0bf17887a6a8b1e70647c8b7f16777f731e4543a94a5aac2"
+    },
+    {
+      "path": "src/engine/vfx/vfx_system.h",
+      "bytes": 14104,
+      "sha256": "5bfe80efdf2fa0183e22d57da381e96262158847721a676a0eb53856cdb01f5a"
+    },
+    {
+      "path": "src/game/stage_manager.cpp",
+      "bytes": 40852,
+      "sha256": "4d53e547c6ad23d273c69ef91d53cb05c74ed7c973ddad900e02d8d87c5e17de"
+    },
+    {
+      "path": "src/main.cpp",
+      "bytes": 306189,
+      "sha256": "aa549a209c91676994871896297834a0dc3b44a6a37a94369e30ef59830c7391"
+    },
+    {
+      "path": "tests/android_user_data_test.cpp",
+      "bytes": 5819,
+      "sha256": "f931461a2eb3cf3b6e85381cf7052ad548f9d8f966f514ba1a4195a9ec520174"
+    },
+    {
+      "path": "tests/mobile_renderer_refinement_test.cpp",
+      "bytes": 10519,
+      "sha256": "3fc7bf3d276ab4880741caf011e991eed5330bb6fbe80cd8b65ef7d082f5d5eb"
+    },
+    {
+      "path": "tests/shadow_recording_test.cpp",
+      "bytes": 11944,
+      "sha256": "f1c89ddd7f29e9c5fa85ae805e36e0622b89cc4001b86d9f266b4d2df16d21de"
+    },
+    {
+      "path": "tests/texture_preparation_test.cpp",
+      "bytes": 5619,
+      "sha256": "5dbddfa60c3ff2b54e43dc787dbf65c35064230bb621cc34ee96747821a607fa"
+    },
+    {
+      "path": "tools/android/build_test_release.sh",
+      "bytes": 553,
+      "sha256": "61cf52bcc0aaa93314d98a4dde099cd5d01d5ca9a81d2f6cf7435c19c4cae7e0"
+    },
+    {
+      "path": "tools/android/tests/check_material_preparation.py",
+      "bytes": 5220,
+      "sha256": "206389e5e9da488df6f20a1d39acc18f6d5cdf7a98c3ec2319bbe43bdcf4ce9c"
+    },
+    {
+      "path": "tools/android/tests/check_particle_build.py",
+      "bytes": 2599,
+      "sha256": "d7aff0619457f715cb68677c8f27634ddc0e6e298b8e1ac8f1b533942a859e90"
+    },
+    {
+      "path": "tools/android/tests/check_renderer_refinements.py",
+      "bytes": 2650,
+      "sha256": "ebae70333fc1d46223414d89e19ab0a852e60faf473d40a8d0977b8f36ba7342"
+    },
+    {
+      "path": "tools/android/tests/check_texture_preparation.py",
+      "bytes": 1701,
+      "sha256": "fea20f0e2db354bd6fb19911c3694c7c040982f2eb1d37a7098535f0054a308a"
+    },
+    {
+      "path": "tools/android/tests/check_user_data_migration.py",
+      "bytes": 1241,
+      "sha256": "10402d089d5accdadb5affe30c89689323791fb002ab8d972714dfd810ab586f"
+    }
+  ]
+}
