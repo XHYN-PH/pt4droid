@@ -29,6 +29,7 @@ void SetRenderScale(float value);
 bool ConsumeRenderScaleChange();
 MobilePerformanceOptions PerformanceOptions();
 int EffectiveFrameLimit(int requested);
+int ThermalStatus();
 int ConsumePerformanceProfile();
 int BloomPassLimit();
 void ConsumeLookDelta(float& dx, float& dy);

@@ -37,6 +37,7 @@ void Reload() {
 }
 }
 MobilePerformanceOptions PerformanceOptions(){std::call_once(first_load,Reload);std::lock_guard lock(options_mutex);return options;}
+int ThermalStatus(){return thermal_status.load();}
 int EffectiveFrameLimit(int requested){
     auto o=PerformanceOptions();const int result=ThermalFrameLimit(requested,thermal_status.load(),o.sustained);
     return result;
