@@ -11,6 +11,7 @@
 #include "engine/assets/fmdl.h"
 #include "engine/core/log.h"
 #include "engine/core/parallel_for.h"
+#include "engine/fs/mods.h"
 
 namespace pt::game {
 namespace {
@@ -125,22 +126,27 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                 }
                 if (model) {
                     for (const FmdlMaterial& m : model->materials) {
-                        for (const auto& [slot, path] : m.textures) {
-                            std::string stem = FtexStem(path);
-                            if (!path.empty() && !known->textures.contains(stem) && stems.insert(stem).second) {
-                                texture_paths.push_back(path);
-                            }
+                        if (mods::Active()) continue;
+                        for (const auto& use : MaterialTextureReads(m)) {
+                            std::string stem = FtexStem(use.path);
+                            const std::string key = use.raw ? stem + "#raw" : stem;
+                            if (!known->textures.contains(key) && stems.insert(stem).second) texture_paths.push_back(use.path);
                         }
                     }
                 }
                 parsed.models.emplace(placement.model_file, std::move(model));
             }
         }
-        parsed.textures.resize(texture_paths.size());std::atomic<uint64_t> prepared_bytes{0};
-        auto texture_reads=std::async(std::launch::async,[&]{ParallelChunks(texture_paths.size(),2,[&](size_t,size_t begin,size_t end){
-            for(size_t i=begin;i<end;++i){if(prepared_bytes.load()>=96ull*1024*1024)continue;auto ftex=std::make_shared<FtexTexture>();if(!LoadFtex(vfs.Textures(),texture_paths[i],*ftex))continue;
-                uint64_t bytes=0;for(const auto& mip:ftex->mips)bytes+=mip.size();const uint64_t before=prepared_bytes.fetch_add(bytes);if(before+bytes>96ull*1024*1024){prepared_bytes.fetch_sub(bytes);continue;}parsed.textures[i]={texture_paths[i],std::move(ftex)};}
-        });});
+        parsed.textures.resize(texture_paths.size());
+        TextureReadBudget budget(96ull * 1024 * 1024);
+        auto texture_reads = std::async(std::launch::async, [&] {
+            ParallelChunks(texture_paths.size(), 2, [&](size_t, size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) {
+                    auto ftex = std::make_shared<FtexTexture>();
+                    if (LoadFtex(vfs.Textures(), texture_paths[i], *ftex, &budget)) parsed.textures[i] = {texture_paths[i], std::move(ftex)};
+                }
+            });
+        });
         // the geoms after the models: a new geom's line checks are over its model's positions
         std::unordered_map<std::string, std::shared_ptr<FmdlModel>> position_models;
         for (const auto& file : stage->files) {
