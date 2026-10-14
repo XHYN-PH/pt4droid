@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.10">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.11">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -25,13 +25,13 @@
 
 An unofficial native Android port of **P.T.**, with customizable touch controls, graphics settings and Vulkan driver support.
 
-**Current build: [0.2.1-test.10](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.10)** · ARM64 · Android 10+
+**Current build: [0.2.1-test.11](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.11)** · ARM64 · Android 10+
 
 Game files are not included. You need your own P.T. game dump. This is an experimental test build; compatibility and performance vary by device.
 
 ## Getting started
 
-1. Download **`pt4droid-v0.2.1-test.10-arm64.apk`** from the [Test 10 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.10) and install it.
+1. Download **`pt4droid-v0.2.1-test.11-arm64.apk`** from the [Test 11 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.11) and install it.
 2. Open **pt4droid** and choose **Choose your P.T. .pkg**.
 3. Select a fake PKG made from your own game dump. Extract ZIP/RAR/7z archives first; encrypted PlayStation Store packages are unsupported.
 4. Wait for extraction, then tap **Enter menu**.
@@ -39,7 +39,7 @@ Game files are not included. You need your own P.T. game dump. This is an experi
 
 Already have extracted files? Choose **I already have the extracted files**, place `chunk1.psarc`, `texture.qar` and `pathid_list_ps4.bin` in Downloads, loose or inside `CUSA01127`, and allow storage access. The US release **CUSA01127** is the reference data.
 
-**Updating:** install over the matching Test 9 or earlier test app to keep game files, saves, settings and touch layouts. Avoid uninstalling first.
+**Updating:** install over the matching Test 10 or earlier test app to keep game files, saves, settings and touch layouts. Avoid uninstalling first.
 
 ## Device compatibility
 
@@ -51,7 +51,7 @@ Already have extracted files? Choose **I already have the extracted files**, pla
 
 **Automatic** uses bundled Turnip on Adreno 6xx/7xx and the system driver on other GPUs, including Adreno 8xx.
 
-**Mali and Xclipse support is experimental.** Some system drivers lack required Vulkan features and cannot start the game. Bundled PanVK requires Android 15+ and compatible Mali hardware; it does not support Android 14. Test 10 does not remove these requirements.
+**Mali and Xclipse support is experimental.** Some system drivers lack required Vulkan features and cannot start the game. Bundled PanVK requires Android 15+ and compatible Mali hardware; it does not support Android 14. Test 11 does not remove these requirements.
 
 To import a compatible driver, use **Settings → Vulkan drivers → Import driver ZIP**, then fully close and reopen the game. If it causes problems, select **Automatic** or **System Vulkan driver** and restart.
 
@@ -69,7 +69,7 @@ Use **Settings → Game graphics** for presets, FPS/display refresh, textures, s
 
 The FPS setting requests a matching display refresh rate or a supported multiple. Render scale and optional Android frame pacing are in Settings. Sustained performance keeps your chosen FPS limit; Android still controls temperature and clocks. Keep logs Off during normal play.
 
-Test 10 refines texture preparation, lighting, shadows, VFX and composition, and adds more useful frame-timing logs. See the [changelog](docs/releases/pt4droid-v0.2.1-test.10.md). Phone performance comparisons still need testing.
+Test 11 reduces repeated rendering work and improves texture streaming, with clearer frame-timing logs. See the [changelog](docs/releases/pt4droid-v0.2.1-test.11.md). Phone performance comparisons still need testing.
 
 ## Reporting a problem
 
@@ -81,7 +81,7 @@ Enable logs in **Settings**, tap **Apply**, and reproduce the issue. [Open an is
 
 ## For developers
 
-[Android build instructions](docs/android.md) · [Test 10 implementation](docs/android-test10-update.md) · [Build validation](docs/android-test10-build-validation.md) · [Earlier releases](https://github.com/XHYN-PH/pt4droid/releases)
+[Android build instructions](docs/android.md) · [Test 11 implementation](docs/android-test11-update.md) · [Build validation](docs/android-test11-build-validation.md) · [Earlier releases](https://github.com/XHYN-PH/pt4droid/releases)
 
 ## Credits
 
