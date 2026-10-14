@@ -115,6 +115,7 @@ private:
     std::vector<std::string> preload_;
     std::vector<vfx::LightOut> prepared_lights_;
     std::vector<std::string> prepared_textures_;
+    std::unordered_map<std::string, uint32_t> resolved_textures_, resolved_cubes_;
     bool reader_set_ = false;
     bool test_spawned_ = false;
     uint64_t logged_frame_ = 0;

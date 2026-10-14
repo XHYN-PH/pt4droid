@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 namespace pt {
 struct ShadowCasterState {
@@ -12,7 +13,11 @@ struct ShadowCasterState {
     uint32_t flags = 0;
     glm::mat4 transform{1.0f};
     std::array<uint64_t,3> alpha{};
-    bool operator==(const ShadowCasterState&) const = default;
+    std::shared_ptr<const std::vector<glm::mat4>> pose;
+    bool operator==(const ShadowCasterState& b) const {
+        return mesh==b.mesh && submesh==b.submesh && material==b.material && flags==b.flags && transform==b.transform && alpha==b.alpha &&
+            (pose==b.pose || (pose && b.pose && *pose==*b.pose));
+    }
 };
 struct ShadowMapState {
     glm::mat4 view_projection{1.0f};
@@ -25,7 +30,7 @@ struct ShadowMapState {
     uint32_t cull = 0;
     uint8_t caster_views = 0;
     std::vector<ShadowCasterState> casters;
-    // Exact alpha dependencies permit reuse; animated skin stays per frame.
+    // Exact alpha and immutable pose snapshots permit reuse only while unchanged.
     bool reusable = true;
     bool operator==(const ShadowMapState&) const = default;
 };

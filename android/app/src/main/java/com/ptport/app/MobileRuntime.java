@@ -8,7 +8,7 @@ import android.hardware.SensorManager;
 import android.os.PowerManager;
 import android.view.Surface;
 
-/** Sensors run only during focused gameplay. Thermal policy never changes resolution. */
+/** Sensors run only during focused gameplay. Sustained mode preserves the FPS target. */
 final class MobileRuntime implements SensorEventListener {
     private final PTActivity activity;
     private final SensorManager sensors;
@@ -31,9 +31,9 @@ final class MobileRuntime implements SensorEventListener {
     void reload(){
         boolean sustained=activity.getSharedPreferences("touch_layout_v1",0).getBoolean("sustained",false);
         activity.getWindow().setSustainedPerformanceMode(resumed&&sustained&&power!=null&&power.isSustainedPerformanceModeSupported());
-        if(power!=null&&resumed&&sustained&&!thermalRegistered){power.addThermalStatusListener(activity.getMainExecutor(),thermal);thermalRegistered=true;}
-        else if(power!=null&&(!resumed||!sustained)&&thermalRegistered){power.removeThermalStatusListener(thermal);thermalRegistered=false;}
-        PTActivity.nativeThermalStatus(power!=null&&sustained?power.getCurrentThermalStatus():0);
+        if(power!=null&&resumed&&!thermalRegistered){power.addThermalStatusListener(activity.getMainExecutor(),thermal);thermalRegistered=true;}
+        else if(power!=null&&!resumed&&thermalRegistered){power.removeThermalStatusListener(thermal);thermalRegistered=false;}
+        PTActivity.nativeThermalStatus(power!=null?power.getCurrentThermalStatus():0);
         updateSensor();
     }
     private void updateSensor(){

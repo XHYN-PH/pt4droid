@@ -740,6 +740,31 @@ void FoldEffectConstants(EffectDef& def) {
         return value;
     };
     for (size_t i = 0; i < def.exprs.size(); ++i) visit(visit, int32_t(i), 0);
+    def.frame_uniform.assign(def.exprs.size(), 0);
+    visited.assign(def.exprs.size(), 0);
+    const auto uniform = [&](auto&& self, int32_t index, unsigned depth) -> bool {
+        if (index < 0) return true;
+        if (size_t(index) >= def.exprs.size() || depth > 64) return false;
+        if (visited[index]) return visited[index] == 2 && def.frame_uniform[index];
+        visited[index] = 1;
+        const Expr& e = def.exprs[index];
+        bool result = false;
+        const auto input = [&](int k) { return self(self, e.in[k], depth + 1); };
+        switch (e.op) {
+        case ExprOp::Zero: case ExprOp::Const: case ExprOp::UvMap: case ExprOp::Receive: result = true; break;
+        case ExprOp::Pass: case ExprOp::CameraFollow: case ExprOp::CenterScroll: result = input(0); break;
+        case ExprOp::Composition: case ExprOp::Multiply: case ExprOp::UniformVelocityTime: case ExprOp::Oscillate:
+            result = input(0) && input(1); break;
+        case ExprOp::DragTime: result = e.mode == 2; break;
+        case ExprOp::Keyframe:
+            result = input(0) && (e.mode > 2 || e.time == TimeSource::EffectTime || e.time == TimeSource::EffectRatio); break;
+        case ExprOp::CameraAngle: result = !(e.flags & 1u); break;
+        default: break;
+        }
+        def.frame_uniform[index] = result; visited[index] = 2;
+        return result;
+    };
+    for (size_t i = 0; i < def.exprs.size(); ++i) uniform(uniform, int32_t(i), 0);
 }
 
 std::shared_ptr<EffectDef> CompileEffect(const File& file, std::string name) {

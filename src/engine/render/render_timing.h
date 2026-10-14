@@ -28,6 +28,10 @@ public:
         shared += stats.shadow_tiles_shared;
         cache_redraws += stats.shadow_cache_redraws;
         shadow_draws += stats.shadow_draws;
+        if constexpr (requires { stats.shadow_static_updates; }) {
+            static_updates+=stats.shadow_static_updates; static_copies+=stats.shadow_static_copies;
+            static_saved+=stats.shadow_static_saved_draws;
+        }
         mirrors_occluded += stats.mirrors_occluded;
         if constexpr (requires { stats.shadow_misses; })
             for (size_t i = 0; i < 4; ++i) shadow_misses[i] += stats.shadow_misses[i];
@@ -39,6 +43,7 @@ public:
         // at a window boundary or while no new timestamp result is available.
         gpu_samples = cpu_samples = 0;
         gpu_ms = ray_ms = cpu_ms = reused = rendered = shared = cache_redraws = shadow_draws = mirrors_occluded = 0;
+        static_updates=static_copies=static_saved=0;
         passes.fill(0); parts.fill(0); lighting.fill(0); shadow_misses.fill(0);
     }
     void Reset() { Clear(); last_sample_ = last_cpu_sample_ = 0; }
@@ -47,6 +52,7 @@ public:
     std::array<double, 6> passes{}, parts{};
     std::array<double, 3> lighting{};
     std::array<double, 4> shadow_misses{};
+    double static_updates=0, static_copies=0, static_saved=0;
 private:
     uint64_t last_sample_ = 0, last_cpu_sample_ = 0;
 };

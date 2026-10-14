@@ -4024,7 +4024,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     bool diagnostic_logging = false;
     int diagnostic_state = -1;
     while (running) {
-        std::array<float, 5> diagnostic_parts{};
+        std::array<float, 8> diagnostic_parts{};
         bool diagnostic_rendered = false;
         const auto frame_started = std::chrono::steady_clock::now();
         // VR: the headset is the view, a minimized window does not stop it; the frame wait paces the loop. While the runtime has
@@ -5030,7 +5030,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
             if (pt::LogEnabled()) {
                 const auto part_t6 = std::chrono::steady_clock::now();
                 diagnostic_parts = {parts_row[0], parts_row[1], parts_row[2],
-                    parts_ms(part_t5 - part_t4).count(), parts_ms(part_t6 - part_t5).count()};
+                    parts_ms(part_t5 - part_t4).count(), parts_ms(part_t6 - part_t5).count(),
+                    app.renderer.LastSubmissionTiming().finish_ms, app.renderer.LastSubmissionTiming().submit_ms,
+                    app.renderer.LastSubmissionTiming().present_ms};
                 diagnostic_rendered = true;
             }
             if (parts_csv && pt::LogEnabled()) {
@@ -5187,6 +5189,15 @@ int RunGame(App& app, pt::Vfs& vfs) {
                     pt::LogInfo("mobile pacing: thermal status {}, sustained {}, frame pacing {}", pt::android::ThermalStatus(),
                         pt::android::PerformanceOptions().sustained, app.renderer.Context().AndroidFramePacingActive());
 #endif
+                    pt::LogInfo("presentation CPU avg: finish recording {:.2f}, queue submit {:.2f}, present {:.2f} ms; display {:.2f} Hz / {:.3f} ms; path {}",
+                        frame_diagnostics.Mean(5),frame_diagnostics.Mean(6),frame_diagnostics.Mean(7),app.renderer.Context().DisplayRefreshHz(),
+                        app.renderer.Context().DisplayRefreshHz()>0?1000.0/app.renderer.Context().DisplayRefreshHz():0.0,
+                        app.renderer.Context().AndroidFramePacingActive()?"Swappy":"native");
+                    const auto& uploads=app.renderer.Context().UploadStats();
+                    pt::LogInfo("texture uploads total: {} async submissions, {} ring waits ({:.2f} ms), peak staging {:.1f} MiB",
+                        uploads.submitted,uploads.waits,uploads.wait_ms,uploads.peak_bytes/1048576.0);
+                    pt::LogInfo("shadow static avg: {:.2f} templates updated, {:.2f} copied, {:.1f} background draws skipped",
+                        timings.CpuMean(timings.static_updates),timings.CpuMean(timings.static_copies),timings.CpuMean(timings.static_saved));
                     frame_diagnostics.Clear();
                     pt::LogInfo("status: {:.0f} fps, gpu {:.2f} ms, vram {:.0f} of {:.0f} MB, {}x{}, upscaler {} {}, frame generation {}, vsync {}, "
                                 "fps limit {}, floor {}{}",

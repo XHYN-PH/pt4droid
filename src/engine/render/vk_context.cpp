@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <chrono>
+#include <stdexcept>
 
 #ifdef __APPLE__
 #include <dlfcn.h>
@@ -620,6 +622,11 @@ void Context::SavePipelineCache() {
 void Context::Shutdown() {
     if (device) {
         vkDeviceWaitIdle(device);
+        RetireTextureUploads(true);
+        for (auto& upload : texture_uploads_) {
+            if (upload.fence) vkDestroyFence(device, upload.fence, nullptr);
+            upload = {};
+        }
         if (pipeline_cache) {
             SavePipelineCache();
             const PipelineCreationStats stats = PipelineStats(device);
@@ -954,8 +961,29 @@ VkResult Context::QueuePresent(const VkPresentInfoKHR& info) {
     return vkQueuePresentKHR(queue, &info);
 }
 
+float Context::DisplayRefreshHz() const {
+    if(!window_)return 0;
+    const auto* mode=SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+    return mode ? mode->refresh_rate : 0;
+}
+
 void Context::SetAndroidFramePacing(int fps){
 #ifdef __ANDROID__
+    // One target drives both the CPU/Swappy cap and the app's display request,
+    // even when optional Swappy pacing is off. Menu transitions also update it.
+    if(display_frame_target_!=fps) {
+        display_frame_target_=fps;
+        auto* env=static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+        auto activity=static_cast<jobject>(SDL_GetAndroidActivity());
+        if(env&&activity) {
+            auto cls=env->GetObjectClass(activity);
+            auto method=cls?env->GetStaticMethodID(cls,"setFrameTarget","(I)V"):nullptr;
+            if(method)env->CallStaticVoidMethod(cls,method,jint(fps));
+            if(env->ExceptionCheck()){env->ExceptionClear();LogWarn("android: display frame target request failed");}
+            if(cls)env->DeleteLocalRef(cls);
+        }
+        if(env&&activity)env->DeleteLocalRef(activity);
+    }
     swappy_active_=false;
     if(fps<=0||!android::PerformanceOptions().frame_pacing||!swapchain.handle||swapchain_owner_)return;
     if(!swappy_attempted_){
@@ -972,7 +1000,7 @@ void Context::SetAndroidFramePacing(int fps){
         }
     }
     if(swappy_ready_){
-        if(swappy_frame_limit_!=fps){SwappyVk_setSwapIntervalNS(device,swapchain.handle,1000000000ULL/std::clamp(fps,1,240));swappy_frame_limit_=fps;}
+        if(swappy_frame_limit_!=fps){SwappyVk_setSwapIntervalNS(device,swapchain.handle,1000000000ULL/std::clamp(fps,1,1000));swappy_frame_limit_=fps;}
         bool enabled=false;
         swappy_active_=SwappyVk_isEnabled(swapchain.handle,&enabled)&&enabled;
     }
@@ -1047,7 +1075,69 @@ void Context::DestroyBuffer(Buffer& buffer) {
     buffer = Buffer{};
 }
 
+void Context::RetireTextureUploads(bool wait) {
+    for (auto& upload : texture_uploads_) {
+        if (!upload.pending) continue;
+        const VkResult result = wait ? vkWaitForFences(device, 1, &upload.fence, VK_TRUE, UINT64_MAX) : vkGetFenceStatus(device, upload.fence);
+        CheckDeviceLost(result, "texture upload completion");
+        if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) {
+            DestroyBuffer(upload.staging); upload.pending = false;
+        } else if (result != VK_NOT_READY && !Check(result, "texture upload completion")) {
+            throw std::runtime_error("The driver could not check texture upload completion");
+        }
+    }
+}
+
+bool Context::SubmitTextureUpload(const std::function<void(VkCommandBuffer)>& record, Buffer& staging) {
+    // Oversized individual textures retain the synchronous path. The ring owns
+    // at most three 32 MiB buffers; normal batches are 16 MiB each.
+    constexpr VkDeviceSize limit = 32ull * 1024 * 1024;
+    RetireTextureUploads();
+    if (staging.size > limit) return Submit(record);
+    auto* chosen = &texture_uploads_[next_texture_upload_];
+    for (size_t i=0; i<texture_uploads_.size(); ++i) {
+        auto& candidate=texture_uploads_[(next_texture_upload_+i)%texture_uploads_.size()];
+        if (!candidate.pending) { chosen=&candidate; break; }
+    }
+    auto& upload=*chosen;
+    if (upload.pending) {
+        const auto started=std::chrono::steady_clock::now();
+        const VkResult result=vkWaitForFences(device,1,&upload.fence,VK_TRUE,UINT64_MAX);
+        CheckDeviceLost(result,"texture upload ring wait");
+        if (!Check(result,"texture upload ring wait")) return false;
+        ++texture_upload_stats_.waits;
+        texture_upload_stats_.wait_ms+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+        DestroyBuffer(upload.staging); upload.pending=false;
+    }
+    if (!upload.cmd) {
+        VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        alloc.commandPool=upload_pool_; alloc.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount=1;
+        if (!Check(vkAllocateCommandBuffers(device,&alloc,&upload.cmd),"texture upload command")) return false;
+    }
+    if (!upload.fence) {
+        VkFenceCreateInfo info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if (!Check(vkCreateFence(device,&info,nullptr,&upload.fence),"texture upload fence")) return false;
+    }
+    if (!Check(vkResetFences(device,1,&upload.fence),"texture upload fence reset") ||
+        !Check(vkResetCommandBuffer(upload.cmd,0),"texture upload command reset")) return false;
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (!Check(vkBeginCommandBuffer(upload.cmd,&begin),"texture upload begin")) return false;
+    record(upload.cmd);
+    if (!Check(vkEndCommandBuffer(upload.cmd),"texture upload end")) return false;
+    VkCommandBufferSubmitInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO}; command.commandBuffer=upload.cmd;
+    VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2}; submit.commandBufferInfoCount=1; submit.pCommandBufferInfos=&command;
+    const VkResult result=vkQueueSubmit2(queue,1,&submit,upload.fence); CheckDeviceLost(result,"texture upload submit");
+    if (!Check(result,"texture upload submit")) return false;
+    upload.staging=staging; staging={}; upload.pending=true;
+    next_texture_upload_=size_t(chosen-texture_uploads_.data()+1)%texture_uploads_.size();
+    ++texture_upload_stats_.submitted;
+    uint64_t bytes=0; for (const auto& job:texture_uploads_) if(job.pending) bytes+=job.staging.size;
+    texture_upload_stats_.peak_bytes=std::max(texture_upload_stats_.peak_bytes,bytes);
+    return true;
+}
+
 bool Context::Submit(const std::function<void(VkCommandBuffer)>& record) {
+    RetireTextureUploads();
     if (!upload_cmd_) {
         VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         alloc.commandPool = upload_pool_; alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount = 1;

@@ -4,9 +4,9 @@
 
 namespace pt {
 inline int ThermalFrameLimit(int requested,int status,bool enabled) {
-    if(!enabled||status<2)return requested;
-    const int ceiling=status>=4?20:status>=3?30:45;
-    return requested>0?std::min(requested,ceiling):ceiling;
+    // Sustained mode is a platform power hint, never a second frame limiter.
+    (void)status; (void)enabled;
+    return requested;
 }
 struct MobilePerformanceOptions {
     bool frame_pacing=false,sgsr=false,sustained=false,invert_y=false;

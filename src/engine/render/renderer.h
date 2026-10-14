@@ -54,6 +54,8 @@ public:
     // present: whether this frame goes to the window (VR draws the second eye without presenting)
     bool BeginFrame(bool present = true);
     void EndFrame(bool draw_ui);
+    struct SubmissionTiming {float finish_ms=0, submit_ms=0, present_ms=0;};
+    const SubmissionTiming& LastSubmissionTiming() const { return submission_timing_; }
     void Resize(uint32_t width, uint32_t height);
     void SetVsync(bool enabled);
     bool SaveScreenshot(const std::filesystem::path& path, glm::vec4 crop = {0.0f, 0.0f, 1.0f, 1.0f});
@@ -111,6 +113,7 @@ private:
     void DestroyXr();
 
     vk::Context ctx_;
+    SubmissionTiming submission_timing_;
     RendererSettings settings_;
     SDL_Window* window_ = nullptr;
     Frame frames_[kFramesInFlight];

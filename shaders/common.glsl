@@ -70,7 +70,7 @@ layout(std430, set = 1, binding = 1) readonly buffer SkinData {
     mat4 skin[];
 };
 
-layout(set = 1, binding = 2) uniform texture2D images[59];
+layout(set = 1, binding = 2) uniform texture2D images[60];
 layout(set = 1, binding = 3) uniform sampler samplers[5];
 layout(set = 1, binding = 4) uniform texture3D lut2_image;
 
@@ -101,6 +101,7 @@ layout(set = 1, binding = 4) uniform texture3D lut2_image;
 #define IMG_PARTICLES_NEAR 56
 #define IMG_PARTICLES_FAR 57
 #define IMG_NEAR_FAR_DEPTH 58
+#define IMG_PROBE_MAP 59
 #define RES_LUT1 24
 #define RES_MATERIAL 25
 #define RES_DITHER 26

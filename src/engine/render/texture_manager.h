@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "engine/assets/ftex.h"
+#include "engine/assets/texture_preparation_stream.h"
 #include "engine/render/vk_context.h"
 
 namespace pt {
@@ -83,12 +84,13 @@ public:
     // A decode made elsewhere (a stage prefetch) for LoadFox to take; false when the texture is loaded or queued already, or a
     // mod is active. Unlike DecodeAhead's, an adopted decode is not uploaded by PumpDecoded: DropDecoded drops the ones not taken.
     bool AdoptDecoded(const std::string& path, std::shared_ptr<FtexTexture> decoded);
+    bool AdoptPending(const std::string& path, std::shared_future<PreparedTextureResult> future, std::function<void(const std::string&)> prioritize);
     void DropDecoded(const std::vector<std::string>& paths);
     void SetPreparedVariants(const std::string& path, uint8_t variants) { prepared_variants_[FtexStem(path)] = variants; }
     std::unordered_set<std::string> Names() const;
     // milliseconds the calling (main) thread spent reading .ftex files and uploading textures, for the slow load logs
     double ReadMs() const { return read_ms_; }
-    struct ReadStats { uint64_t prepared = 0, ahead = 0, direct = 0; };
+    struct ReadStats { uint64_t prepared = 0, ahead = 0, direct = 0, stream_ready=0, budget_fallback=0, read_fallback=0, unprepared=0; double stream_wait_ms=0; };
     ReadStats Reads() const { return read_stats_; }
     double UploadMs() const { return upload_ms_; }
     uint32_t AddMaterial(const MaterialGpu& material);
@@ -188,6 +190,8 @@ private:
     std::vector<std::future<void>> decode_workers_;
     std::unordered_set<std::string> worker_prepared_;
     ReadStats read_stats_;
+    struct PendingPreparation {std::shared_future<PreparedTextureResult> future; std::function<void(const std::string&)> prioritize;};
+    std::unordered_map<std::string, PendingPreparation> pending_preparations_;
     struct PendingUpload{VkImage image;std::vector<VkBufferImageCopy> regions;};
     vk::Buffer upload_staging_;VkDeviceSize upload_used_=0;std::vector<PendingUpload> upload_pending_;uint32_t upload_batch_depth_=0;uint64_t fallback_bytes_=0;
     struct FormatSupport{VkFormatProperties properties{};VkImageFormatProperties image{};bool valid=false;};

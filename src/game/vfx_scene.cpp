@@ -789,8 +789,19 @@ void VfxScene::PrepareList(Game& game, const Camera& camera, float aspect, Scene
         }
         return s;
     };
-    const vfx::TextureResolver textures = [&pass](const std::string& path) { return pass.Texture(path); };
-    const vfx::TextureResolver cubes = [&pass](const std::string& path) { return pass.Cube(path); };
+    resolved_textures_.clear(); resolved_cubes_.clear();
+    const vfx::TextureResolver textures = [this, &pass](const std::string& path) {
+        if (auto it=resolved_textures_.find(path); it!=resolved_textures_.end()) return it->second;
+        const uint32_t handle=pass.Texture(path);
+        if (handle!=TextureManager::kWhite) resolved_textures_.emplace(path, handle);
+        return handle;
+    };
+    const vfx::TextureResolver cubes = [this, &pass](const std::string& path) {
+        if (auto it=resolved_cubes_.find(path); it!=resolved_cubes_.end()) return it->second;
+        const uint32_t handle=pass.Cube(path);
+        if (handle!=TextureManager::kNoCube) resolved_cubes_.emplace(path, handle);
+        return handle;
+    };
     static const bool legacy_lit = [] {
         const char* v = std::getenv("PT_VFX_LIT_LEGACY");
         return v && v[0] == '1';
