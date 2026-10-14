@@ -5,6 +5,7 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.hardware.display.DisplayManager;
 import android.os.PowerManager;
 import android.view.Surface;
 
@@ -14,17 +15,24 @@ final class MobileRuntime implements SensorEventListener {
     private final SensorManager sensors;
     private final Sensor gyro;
     private final PowerManager power;
+    private final DisplayManager displays;
+    private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){
+        @Override public void onDisplayAdded(int id){PTActivity.refreshDisplay();}
+        @Override public void onDisplayRemoved(int id){PTActivity.refreshDisplay();}
+        @Override public void onDisplayChanged(int id){PTActivity.refreshDisplay();}
+    };
     private final PowerManager.OnThermalStatusChangedListener thermal=PTActivity::nativeThermalStatus;
-    private boolean resumed,focused=true,allowed,editing,registered,thermalRegistered;
+    private boolean resumed,focused=true,allowed,editing,registered,thermalRegistered,displayRegistered;
     private long previous;
     MobileRuntime(PTActivity owner){
         activity=owner;sensors=(SensorManager)owner.getSystemService(Context.SENSOR_SERVICE);
         gyro=sensors==null?null:sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         power=(PowerManager)owner.getSystemService(Context.POWER_SERVICE);
+        displays=(DisplayManager)owner.getSystemService(Context.DISPLAY_SERVICE);
     }
     static boolean hasGyro(Context c){SensorManager s=(SensorManager)c.getSystemService(Context.SENSOR_SERVICE);return s!=null&&s.getDefaultSensor(Sensor.TYPE_GYROSCOPE)!=null;}
-    void resume(){resumed=true;reload();}
-    void pause(){resumed=false;activity.getWindow().setSustainedPerformanceMode(false);updateSensor();if(power!=null&&thermalRegistered){power.removeThermalStatusListener(thermal);thermalRegistered=false;}}
+    void resume(){resumed=true;if(displays!=null&&!displayRegistered){displays.registerDisplayListener(displayListener,null);displayRegistered=true;}PTActivity.refreshDisplay();reload();}
+    void pause(){resumed=false;if(displays!=null&&displayRegistered){displays.unregisterDisplayListener(displayListener);displayRegistered=false;}activity.getWindow().setSustainedPerformanceMode(false);updateSensor();if(power!=null&&thermalRegistered){power.removeThermalStatusListener(thermal);thermalRegistered=false;}}
     void focus(boolean value){focused=value;updateSensor();}
     void allow(boolean value){allowed=value;updateSensor();}
     void edit(boolean value){editing=value;updateSensor();}
