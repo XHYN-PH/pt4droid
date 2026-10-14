@@ -29,7 +29,7 @@ void main() {
     s.P = ViewPosition(v, PixelNdc(v, gl_FragCoord.xy), depth);
     s.world = (v.inv_view * vec4(s.P, 1.0)).xyz;
     vec3 L,radiance;float shadow_cone,d;
-    if(!PrepareLight(l,v,s.world,s.P,L,radiance,shadow_cone,d))discard;
+    if(!PrepareLightView(l,v,s.world,s.P,pass.f1.xyz,pass.f2.xyz,L,radiance,shadow_cone,d))discard;
     vec4 g_normal = ImgFetch(IMG_NORMAL, pixel);
     vec4 g_material = ImgFetch(IMG_MATERIAL, pixel);
     s.N = DecodeNormal(g_normal.xyz);

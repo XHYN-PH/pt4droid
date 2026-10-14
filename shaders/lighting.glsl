@@ -111,7 +111,7 @@ float g_contact_reach = 0.0;
 bool g_contact_legacy = false;
 #endif
 
-bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radiance, out float shadow_cone, out float d) {
+bool PrepareLightView(Light l, View v, vec3 world, vec3 P, vec3 light_pos, vec3 axis, out vec3 L, out vec3 radiance, out float shadow_cone, out float d) {
     if (l.info.z == 1) {
         vec3 q = (l.area * vec4(world, 1.0)).xyz;
         if (1.0 - max(abs(q.z), max(abs(q.x), abs(q.y))) < 0.0) {
@@ -128,7 +128,6 @@ bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radi
         }
     }
     bool spot = l.position.w > 0.5;
-    vec3 light_pos = (v.view * vec4(l.position.xyz, 1.0)).xyz;
     vec3 lv = light_pos - P;
     float dist = length(lv);
     L = lv / max(dist, 1.0e-6);
@@ -138,7 +137,6 @@ bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radi
     radiance = l.color.rgb * att * v.exposure.x;
     shadow_cone = 1.0;
     if (spot) {
-        vec3 axis = mat3(v.view) * l.direction.xyz;
         float cos_a = dot(axis, -L);
         float cone = pow(abs(Saturate((cos_a - l.cone.x) * l.cone.y)), l.cone.z);
         radiance *= cone;
@@ -149,6 +147,10 @@ bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radi
         return false;
     }
     return true;
+}
+bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radiance, out float shadow_cone, out float d) {
+    return PrepareLightView(l,v,world,P,(v.view*vec4(l.position.xyz,1.0)).xyz,
+                            mat3(v.view)*l.direction.xyz,L,radiance,shadow_cone,d);
 }
 bool ShadeLight(Light l,View v,Surface s,bool shadows,vec2 frag,vec3 L,vec3 radiance,float shadow_cone,float d,out vec3 diffuse,out vec3 specular){
     diffuse=vec3(0.0);specular=vec3(0.0);const vec3 dither_frag=vec3(frag,v.exposure.w);bool spot=l.position.w>0.5;
