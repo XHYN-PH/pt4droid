@@ -172,6 +172,7 @@ struct RenderStats {
     uint32_t shadow_tiles_shared = 0;
     uint32_t shadow_cache_redraws = 0;
     uint32_t shadow_draws = 0;
+    uint32_t shadow_static_updates=0, shadow_static_copies=0, shadow_static_saved_draws=0;
     uint32_t mirrors_occluded = 0;
     uint64_t gpu_sample = 0;
     uint64_t cpu_sample = 0;
@@ -293,6 +294,7 @@ private:
         GeometryBounds shadow_bounds;
         glm::vec3 shadow_center{0.0f};
         float shadow_radius = 0.0f;
+        uint32_t skin_count = 0;
     };
 
     struct MotionHistory {
@@ -352,6 +354,7 @@ private:
 
     void BindSets(VkCommandBuffer cmd, VkPipelineBindPoint point);
     void RecordShadows(VkCommandBuffer cmd);
+    std::array<bool,16> RecordStaticShadows(VkCommandBuffer cmd, const std::array<bool,16>& dirty);
     void InvalidateShadowCache();
     void RecordRayTracing(VkCommandBuffer cmd);
     void RecordView(VkCommandBuffer cmd, const ViewSetup& view, RenderTarget& output, bool main_view);
@@ -443,6 +446,7 @@ private:
     RenderTarget diffuse_;
     RenderTarget specular_;
     RenderTarget probe_acc_;
+    RenderTarget probe_map_;
     RenderTarget hdr_;
     RenderTarget bloom_[3];
     RenderTarget flare_;
@@ -467,6 +471,11 @@ private:
     RenderTarget shadow_;
     StableShadowAtlas shadow_atlas_;
     std::array<ShadowTileCache, 16> shadow_cache_;
+    RenderTarget shadow_static_;
+    std::array<ShadowTileCache, 16> shadow_static_cache_, shadow_static_seen_;
+    std::array<ShadowMapState, 16> shadow_static_states_;
+    std::array<std::vector<const Draw*>, 16> shadow_static_casters_;
+    bool shadow_static_unavailable_=false;
     std::vector<ShadowCasterState> shadow_draw_states_;
     std::vector<uint8_t> shadow_draw_state_ready_;
     std::array<ShadowMapState, 16> shadow_states_;
@@ -526,6 +535,7 @@ private:
     VkPipeline decal_ = VK_NULL_HANDLE;
     VkPipeline shadow_pipeline_ = VK_NULL_HANDLE;
     VkPipeline probe_ = VK_NULL_HANDLE;
+    VkPipeline probe_cached_ = VK_NULL_HANDLE, probe_map_pipeline_ = VK_NULL_HANDLE;
     VkPipeline probe_resolve_ = VK_NULL_HANDLE;
     VkPipeline light_ = VK_NULL_HANDLE;
     VkPipeline compose_ = VK_NULL_HANDLE;

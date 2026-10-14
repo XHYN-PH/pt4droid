@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -400,6 +401,7 @@ void Renderer::Resize(uint32_t width, uint32_t height) {
 }
 
 bool Renderer::BeginFrame(bool present) {
+    ctx_.RetireTextureUploads();
 #ifdef __ANDROID__
     if (android::ConsumeRenderScaleChange()||mobile_sgsr_!=android::PerformanceOptions().sgsr) swapchain_dirty_ = true;
 #endif
@@ -527,6 +529,9 @@ void Renderer::Composite(VkCommandBuffer cmd, VkDescriptorSet set, float mode, V
 }
 
 void Renderer::EndFrame(bool draw_ui) {
+    const bool measure=LogEnabled();
+    const auto finish_started=measure?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
+    submission_timing_={};
     Frame& frame = frames_[frame_index_];
     VkCommandBuffer cmd = frame.cmd;
     vk::ImageBarrier(cmd, scene_color_.image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -701,7 +706,12 @@ void Renderer::EndFrame(bool draw_ui) {
         submit.signalSemaphoreInfoCount = 1;
         submit.pSignalSemaphoreInfos = &signal;
     }
+    const auto submit_started=measure?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
     ctx_.CheckDeviceLost(vkQueueSubmit2(ctx_.queue, 1, &submit, frame.in_flight), "frame submit");
+    if(measure) {
+        submission_timing_.finish_ms=std::chrono::duration<float,std::milli>(submit_started-finish_started).count();
+        submission_timing_.submit_ms=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-submit_started).count();
+    }
     streamline::SetMarker(streamline::Marker::RenderSubmitEnd);
     if (presenting_) {
         VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -711,7 +721,9 @@ void Renderer::EndFrame(bool draw_ui) {
         present.pSwapchains = &ctx_.swapchain.handle;
         present.pImageIndices = &image_index_;
         streamline::SetMarker(streamline::Marker::PresentStart);
+        const auto present_started=measure?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
         const VkResult result = ctx_.QueuePresent(present);
+        if(measure)submission_timing_.present_ms=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-present_started).count();
         streamline::SetMarker(streamline::Marker::PresentEnd);
         ctx_.CheckDeviceLost(result, "present");
         if (result == VK_ERROR_SURFACE_LOST_KHR) ctx_.InvalidateSurface();

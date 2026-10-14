@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -73,6 +74,7 @@ public:
     VkResult QueuePresent(const VkPresentInfoKHR& info);
     void SetAndroidFramePacing(int fps);
     bool AndroidFramePacingActive() const { return swappy_active_; }
+    float DisplayRefreshHz() const;
     const SwapchainHooks* SwapchainOwner() const { return swapchain_owner_; }
     VkImageLayout PresentLayout() const { return swapchain_owner_ ? swapchain_owner_->PresentLayout() : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; }
 
@@ -83,6 +85,12 @@ public:
     void DestroyBuffer(Buffer& buffer);
 
     bool Submit(const std::function<void(VkCommandBuffer)>& record);
+    // Same graphics queue: subsequent frames see the upload barriers. Ownership
+    // transfers only after submission succeeds, and lasts until its fence signals.
+    bool SubmitTextureUpload(const std::function<void(VkCommandBuffer)>& record, Buffer& staging);
+    void RetireTextureUploads(bool wait = false);
+    struct TextureUploadStats { uint64_t submitted=0, waits=0, peak_bytes=0; double wait_ms=0; };
+    const TextureUploadStats& UploadStats() const { return texture_upload_stats_; }
     bool Upload(Buffer& dst, const void* data, VkDeviceSize size);
 
     VkInstance instance = VK_NULL_HANDLE;
@@ -136,11 +144,15 @@ private:
     VkCommandPool upload_pool_ = VK_NULL_HANDLE;
     VkCommandBuffer upload_cmd_ = VK_NULL_HANDLE;
     VkFence upload_fence_ = VK_NULL_HANDLE;
+    struct TextureUpload { VkCommandBuffer cmd=VK_NULL_HANDLE; VkFence fence=VK_NULL_HANDLE; Buffer staging; bool pending=false; };
+    std::array<TextureUpload, 3> texture_uploads_{};
+    size_t next_texture_upload_=0;
+    TextureUploadStats texture_upload_stats_;
     VkSurfaceCapabilitiesKHR surface_caps_{};
     VkExtent2D window_extent_{};
     bool suboptimal_logged_ = false;
     bool swappy_ready_=false,swappy_attempted_=false,swappy_active_=false;
-    int swappy_frame_limit_=-1;
+    int swappy_frame_limit_=-1, display_frame_target_=-1;
     SwapchainHooks* swapchain_owner_ = nullptr;
     // Android: the window and the native window the surface was made for. Android hands the app a new native window after
     // it comes back from the background; the surface is then made again (CreateSwapchain)

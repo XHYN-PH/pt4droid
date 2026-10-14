@@ -11,7 +11,9 @@ namespace pt {
 class FrameDiagnostics {
 public:
     static constexpr size_t kCapacity = 2048;
-    void Add(float interval_ms, const std::array<float, 5>& cpu) {
+    void Add(float interval_ms, const std::array<float,5>& cpu) { Add<5>(interval_ms,cpu); }
+    template<size_t N> void Add(float interval_ms, const std::array<float, N>& cpu) {
+        static_assert(N <= 8);
         if (!std::isfinite(interval_ms) || interval_ms <= 0) return;
         intervals_[next_] = interval_ms;
         next_ = (next_ + 1) % kCapacity;
@@ -34,7 +36,7 @@ public:
     double Mean(size_t part) const { return samples ? parts[part] / samples : 0; }
     uint64_t samples = 0, over_33ms = 0;
     float worst_ms = 0;
-    std::array<double, 5> parts{}; // acquire/fence wait, scene, VFX, recording, submit/present
+    std::array<double, 8> parts{}; // original five, then finish recording, queue submit, presentation
 private:
     std::array<float, kCapacity> intervals_{};
     size_t next_ = 0, retained_ = 0;

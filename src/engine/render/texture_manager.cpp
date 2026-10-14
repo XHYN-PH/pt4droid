@@ -207,12 +207,13 @@ void TextureManager::Shutdown() {
     read_stats_ = {};
     decoding_.clear();
     prepared_.clear();
+    pending_preparations_.clear();
     prepared_variants_.clear();
     decode_order_.clear();
     if (!ctx_) {
         return;
     }
-    FlushUploads();ctx_->DestroyBuffer(upload_staging_);upload_pending_.clear();upload_used_=0;upload_batch_depth_=0;fallback_bytes_=0;format_support_.clear();
+    FlushUploads();ctx_->RetireTextureUploads(true);ctx_->DestroyBuffer(upload_staging_);upload_pending_.clear();upload_used_=0;upload_batch_depth_=0;fallback_bytes_=0;format_support_.clear();
     for (vk::Image& image : images_) {
         ctx_->DestroyImage(image);
     }
@@ -315,11 +316,11 @@ void TextureManager::BeginUploadBatch(){++upload_batch_depth_;}
 void TextureManager::EndUploadBatch(){if(upload_batch_depth_ && --upload_batch_depth_==0){FlushUploads();ctx_->DestroyBuffer(upload_staging_);}}
 void TextureManager::FlushUploads(){
     if(upload_pending_.empty())return;const auto started=std::chrono::steady_clock::now();vmaFlushAllocation(ctx_->allocator,upload_staging_.allocation,0,upload_used_);
-    if(!ctx_->Submit([&](VkCommandBuffer cmd){for(const auto& upload:upload_pending_){
+    if(!ctx_->SubmitTextureUpload([&](VkCommandBuffer cmd){for(const auto& upload:upload_pending_){
         vk::ImageBarrier(cmd,upload.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,0,VK_IMAGE_LAYOUT_UNDEFINED,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         vkCmdCopyBufferToImage(cmd,upload_staging_.buffer,upload.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(upload.regions.size()),upload.regions.data());
         vk::ImageBarrier(cmd,upload.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }}))throw std::runtime_error("The driver could not complete the texture upload batch");
+    }}, upload_staging_))throw std::runtime_error("The driver could not submit the texture upload batch");
     upload_ms_+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();upload_pending_.clear();upload_used_=0;
 }
 
@@ -360,8 +361,8 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
     }
     constexpr VkDeviceSize batch_limit=16ull*1024*1024;
     bool batched=upload_batch_depth_ && total<=batch_limit;
-    if(batched && !upload_staging_.buffer)batched=ctx_->CreateBuffer(upload_staging_,batch_limit,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true);
     if(batched && (upload_used_+total>batch_limit || upload_pending_.size()>=64))FlushUploads();
+    if(batched && !upload_staging_.buffer)batched=ctx_->CreateBuffer(upload_staging_,batch_limit,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true);
     vk::Buffer staging;
     if(batched)staging=upload_staging_;else{FlushUploads();if(!ctx_->CreateBuffer(staging,total,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true)){ctx_->DestroyImage(image);return kWhite;}}
     std::vector<VkBufferImageCopy> regions;
@@ -380,7 +381,7 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
     }
     if(batched){upload_pending_.push_back({image.image,std::move(regions)});upload_used_=offset;}else{
     vmaFlushAllocation(ctx_->allocator, staging.allocation, 0, total);
-    const bool submitted=ctx_->Submit([&](VkCommandBuffer cmd) {
+    const bool submitted=ctx_->SubmitTextureUpload([&](VkCommandBuffer cmd) {
         vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()),
@@ -388,7 +389,7 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
         vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    });
+    }, staging);
     ctx_->DestroyBuffer(staging);if(!submitted){ctx_->DestroyImage(image);return kWhite;}
     }
     fallback_bytes_+=converted_bytes;
@@ -445,10 +446,22 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     FtexTexture owned;
     std::shared_ptr<const FtexTexture> prepared;
     bool read = false;
+    const bool scheduled=prepared_.contains(stem)||pending_preparations_.contains(stem)||decoding_.contains(stem);
     if (auto it = prepared_.find(stem); it != prepared_.end()) {
         prepared = it->second;
         read = prepared != nullptr;
         ++read_stats_.prepared;
+    } else if (auto it = pending_preparations_.find(stem); it != pending_preparations_.end()) {
+        it->second.prioritize(stem);
+        const bool ready=it->second.future.wait_for(std::chrono::seconds(0))==std::future_status::ready;
+        const auto started=std::chrono::steady_clock::now();
+        auto result=it->second.future.get();
+        read_stats_.stream_wait_ms+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+        read_stats_.stream_ready+=ready;
+        prepared=std::move(result.texture); pending_preparations_.erase(it); read=prepared!=nullptr;
+        if(read){prepared_.emplace(stem,prepared);++read_stats_.prepared;}
+        else if(result.failure==TexturePreparationFailure::Budget)++read_stats_.budget_fallback;
+        else ++read_stats_.read_fallback;
     } else if (auto it = decoding_.find(stem); it != decoding_.end()) {
         prepared = it->second.get();
         decoding_.erase(it);
@@ -462,6 +475,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     if (!read) {
         const auto started = std::chrono::steady_clock::now();
         ++read_stats_.direct;
+        read_stats_.unprepared+=!scheduled;
         read = LoadFtex(qar, stem, owned);
         read_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
@@ -568,6 +582,13 @@ void TextureManager::DecodeAhead(const QarArchive& qar, const std::vector<std::s
     decode_queue_->ready.notify_all();
 }
 
+bool TextureManager::AdoptPending(const std::string& path, std::shared_future<PreparedTextureResult> future,
+                                 std::function<void(const std::string&)> prioritize) {
+    const std::string stem=FtexStem(path);
+    if (mods::Active() || prepared_.contains(stem) || pending_preparations_.contains(stem)) return false;
+    return pending_preparations_.emplace(stem,PendingPreparation{std::move(future),std::move(prioritize)}).second;
+}
+
 bool TextureManager::AdoptDecoded(const std::string& path, std::shared_ptr<FtexTexture> decoded) {
     std::string stem = FtexStem(path);
     if (mods::Active() || stem.empty() || !decoded || prepared_.contains(stem) || decoding_.contains(stem)) {
@@ -580,6 +601,7 @@ bool TextureManager::AdoptDecoded(const std::string& path, std::shared_ptr<FtexT
 void TextureManager::DropDecoded(const std::vector<std::string>& paths) {
     for (const std::string& path : paths) {
         prepared_.erase(FtexStem(path));
+        pending_preparations_.erase(FtexStem(path));
         prepared_variants_.erase(FtexStem(path));
     }
 }

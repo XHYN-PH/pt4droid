@@ -74,6 +74,7 @@ struct GpuMesh {
     glm::vec3 bounds_min{0.0f};
     glm::vec3 bounds_max{0.0f};
     bool skinned = false;
+    uint32_t skin_required = 0;
 };
 
 MeshData MakeBoxMesh(glm::vec3 half_extent);

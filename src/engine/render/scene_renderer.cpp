@@ -89,7 +89,7 @@ bool SceneRenderer::EnsureShadowTarget() {
     const uint32_t size=tile*4;
     if(shadow_.Valid() && shadow_.Extent().width==size) return true;
     RenderTarget replacement;
-    if(!CreateTarget(replacement,kDepthFormat,{size,size},VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_DEPTH_BIT))
+    if(!CreateTarget(replacement,kDepthFormat,{size,size},VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT,VK_IMAGE_ASPECT_DEPTH_BIT))
         return shadow_.Valid();
     auto& ctx=renderer_->Context();
     vkDeviceWaitIdle(device_);
@@ -98,7 +98,7 @@ bool SceneRenderer::EnsureShadowTarget() {
         BeginPass(cmd,{size,size},{},&replacement,false,true);vkCmdEndRendering(cmd);
         UseTargets(cmd,{{&replacement,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
     });
-    ctx.DestroyImage(shadow_.image);shadow_=replacement;
+    ctx.DestroyImage(shadow_.image); ctx.DestroyImage(shadow_static_.image); shadow_static_={}; shadow_static_unavailable_=false; shadow_=replacement;
     InvalidateShadowCache();
     if(extent_.width>0) WriteImageDescriptors();
     LogInfo("graphics: shadow atlas {}x{}, tile {} px",size,size,tile);
@@ -298,6 +298,20 @@ bool SceneRenderer::CreatePipelines() {
     volume.colors = {kLightFormat};
     volume.blend = BlendMode::ProbeAccumulate;
     probe_ = CreateGraphicsPipeline(device_, volume);
+    // Full float cells preserve the original SH arithmetic and four-tap mix.
+    // Unsupported devices retain the original shader without a startup failure.
+    VkFormatProperties map_support{};
+    vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical, VK_FORMAT_R32G32B32A32_SFLOAT, &map_support);
+    const auto map_required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if ((map_support.optimalTilingFeatures & map_required) == map_required) {
+        volume.fragment_constants = {{0, 1}};
+        probe_cached_ = CreateGraphicsPipeline(device_, volume);
+        volume.fragment_constants.clear();
+        PipelineDesc map;
+        map.layout = layout_; map.fragment = "probe_map.frag";
+        map.colors = {VK_FORMAT_R32G32B32A32_SFLOAT};
+        probe_map_pipeline_ = CreateGraphicsPipeline(device_, map);
+    }
     {
         PipelineDesc resolve;
         resolve.layout = layout_;
@@ -321,7 +335,7 @@ bool SceneRenderer::CreatePipelines() {
     full.layout = layout_;
     full.fragment = "compose.frag";
     full.colors = {kHdrFormat};
-    full.depth = kDepthFormat;
+    // Composition reads depth as a sampled image, without depth testing.
     compose_ = CreateGraphicsPipeline(device_, full);
 #ifdef __ANDROID__
     full.fragment_constants = {{0, 0}};
@@ -479,7 +493,7 @@ void SceneRenderer::DestroyPipelines() {
             *p = VK_NULL_HANDLE;
         }
     }
-    for (VkPipeline* p : {&compose_plain_, &compose_fog_, &tonemap_base_, &tonemap_grade_}) {
+    for (VkPipeline* p : {&compose_plain_, &compose_fog_, &tonemap_base_, &tonemap_grade_, &probe_cached_, &probe_map_pipeline_}) {
         if (*p) vkDestroyPipeline(device_, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }
@@ -578,6 +592,7 @@ void SceneRenderer::Shutdown() {
     ctx.DestroyBuffer(dump_scene_);
     ctx.DestroyBuffer(dump_mirror_);
     ctx.DestroyImage(shadow_.image);
+    ctx.DestroyImage(shadow_static_.image);
     vk::Image* images[] = {&lut1_, &lut2_, &material_tex_, &dither_, &color_lut_, &color_lut_prev_, &noise_, &mask_, &white_};
     for (vk::Image* image : images) {
         ctx.DestroyImage(*image);
@@ -608,7 +623,7 @@ bool SceneRenderer::CreateTarget(RenderTarget& target, VkFormat format, VkExtent
 
 void SceneRenderer::DestroyTargets() {
     vk::Context& ctx = renderer_->Context();
-    RenderTarget* targets[] = {&albedo_, &normal_, &material_, &depth_, &diffuse_, &specular_, &probe_acc_, &hdr_, &bloom_[0], &bloom_[1], &bloom_[2],
+    RenderTarget* targets[] = {&albedo_, &normal_, &material_, &depth_, &diffuse_, &specular_, &probe_acc_, &probe_map_, &hdr_, &bloom_[0], &bloom_[1], &bloom_[2],
                                &flare_, &ldr_[0], &ldr_[1], &history_, &mirror_, &ao_[0], &ao_[1], &refmap_, &hdr_copy_, &particles_,
                                &particles_near_, &particles_far_, &near_far_depth_, &near_far_depth_attachment_, &dof_half_,
                                &dof_quarter_[0], &dof_quarter_[1], &dof_eighth_[0], &dof_eighth_[1], &velocity_, &object_velocity_,
@@ -697,6 +712,10 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
               CreateTarget(ldr_[0], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
               CreateTarget(ldr_[1], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
               CreateTarget(history_,ldr_format_,output,color | VK_IMAGE_USAGE_TRANSFER_DST_BIT,c);
+    if (probe_cached_ && probe_map_pipeline_) {
+        if (!CreateTarget(probe_map_, VK_FORMAT_R32G32B32A32_SFLOAT, {512, 256}, color, c))
+            LogWarn("probes: map allocation failed; using per-pixel SH");
+    }
     ok=ok && EnsureOptionalTargets(extent,output,upscaling,false);
     ok = ok && (!upscaling || CreateUpscaleTargets(extent, output));
     ok = ok && (!upscaling ||
@@ -788,6 +807,7 @@ void SceneRenderer::WriteImageDescriptors() {
     set_target(gpu::kImgDiffuse, diffuse_);
     set_target(gpu::kImgSpecular, specular_);
     set_target(gpu::kImgProbeAcc, probe_acc_);
+    set_target(gpu::kImgProbeMap, probe_map_);
     set_target(gpu::kImgHdr, hdr_);
     set_target(gpu::kImgBloomA, bloom_[0]);
     set_target(gpu::kImgBloomB, bloom_[1]);
@@ -1156,6 +1176,10 @@ void SceneRenderer::UpdateColorLut(const ScreenSettings& screen) {
 std::unique_ptr<GpuMesh> SceneRenderer::Upload(const MeshData& data) {
     auto& ctx = renderer_->Context();
     auto mesh = std::make_unique<GpuMesh>();
+    for (const Vertex& vertex : data.vertices) {
+        if (vertex.weights == glm::u8vec4(0)) continue;
+        for (int k=0;k<4;++k) mesh->skin_required=std::max(mesh->skin_required,uint32_t(vertex.joints[k])+1);
+    }
     mesh->name = data.name;
     mesh->submeshes = data.submeshes;
     mesh->groups = data.groups;

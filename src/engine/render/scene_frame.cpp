@@ -498,6 +498,7 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
             d.tint = item.tint;
             d.material = item.material_override >= 0 ? static_cast<uint32_t>(item.material_override) : sub.material;
             d.skin_base = skin_base;
+            d.skin_count = skin_base != gpu::kInvalid ? uint32_t(item.skin.size()) : 0;
             d.previous_model = previous_model;
             d.previous_skin = previous_skin;
             d.center = center;
@@ -1392,6 +1393,8 @@ void SceneRenderer::RecordRayTracing(VkCommandBuffer cmd) {
 
 void SceneRenderer::InvalidateShadowCache() {
     for (auto& tile : shadow_cache_) tile.Invalidate();
+    for (auto& tile : shadow_static_cache_) tile.Invalidate();
+    for (auto& tile : shadow_static_seen_) tile.Invalidate();
 }
 
 void SceneRenderer::PrepareShadowCasters() {
@@ -1409,8 +1412,8 @@ void SceneRenderer::PrepareShadowCasters() {
     const uint32_t tile_size = shadow_.Extent().width / kShadowTiles;
     shadow_draw_states_.resize(draws_.size());
     shadow_draw_state_ready_.assign(draws_.size(), 0);
-    // Previous-frame reuse requires exact caster state. Skin remains dynamic;
-    // sharing within this frame compares the actual Draw pointers instead.
+    // Pose snapshots are immutable: a moving skeleton invalidates its tile,
+    // while an unchanged pose can reuse the exact previous depth.
     for (const ShadowView& sv : shadow_views_) {
         const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
         ShadowMapState& state = shadow_states_[tile];
@@ -1458,14 +1461,26 @@ void SceneRenderer::PrepareShadowCasters() {
             }
             accepted.push_back(&d);
             shadow_indices_[tile] += d.sub->index_count;
-            state.reusable = state.reusable && !d.sub->skinned && d.skin_base == gpu::kInvalid;
-            if (state.reusable) {
+            if (cache_enabled) {
                 const size_t index = size_t(&d - draws_.data());
                 if (!shadow_draw_state_ready_[index]) {
-                    shadow_draw_states_[index] = {reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
-                        d.material, uint32_t(d.sub->shadow_double_sided), d.transform, textures_->ShadowAlphaState(d.material)};
+                    auto& metadata=shadow_draw_states_[index];
+                    auto pose=metadata.pose;
+                    if (d.sub->skinned && d.skin_base!=gpu::kInvalid) {
+                        if (!d.skin_count || d.skin_count<d.mesh->skin_required || size_t(d.skin_base)+d.skin_count>skin_matrices_.size()) {
+                            state.reusable=false; pose.reset();
+                        } else {
+                            auto begin=skin_matrices_.begin()+d.skin_base;
+                            if (!pose || pose->size()!=d.skin_count || !std::equal(pose->begin(),pose->end(),begin))
+                                pose=std::make_shared<const std::vector<glm::mat4>>(begin,begin+d.skin_count);
+                        }
+                    } else pose.reset();
+                    metadata = {reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
+                        d.material, uint32_t(d.sub->shadow_double_sided) | (uint32_t(d.sub->skinned)<<1), d.transform,
+                        textures_->ShadowAlphaState(d.material), std::move(pose)};
                     shadow_draw_state_ready_[index] = 1;
                 }
+                if (d.sub->skinned && d.skin_base!=gpu::kInvalid && !shadow_draw_states_[index].pose) state.reusable=false;
                 state.casters.push_back(shadow_draw_states_[index]);
             }
         }
@@ -1517,9 +1532,54 @@ void SceneRenderer::PrepareShadowCasters() {
     }
 }
 
+std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, const std::array<bool,16>& dirty) {
+    std::array<bool,16> use{};
+    static const bool enabled=[] {const char* v=std::getenv("PT_SHADOW_STATIC");return !v||std::string_view(v)!="0";}();
+    // Keep the extra depth atlas within 64 MiB. A stable projection must be
+    // observed twice before paying for its static template; moving lights keep
+    // the original path. Empty/static-only tiles use whole-tile reuse instead.
+    if(!enabled || shadow_.Extent().width>4096 || shadow_static_unavailable_)return use;
+    bool needed=false;
+    const uint32_t tile_size=shadow_.Extent().width/kShadowTiles;
+    for(const ShadowView& sv:shadow_views_) {
+        const uint32_t tile=uint32_t(sv.rect.offset.x)/tile_size+kShadowTiles*(uint32_t(sv.rect.offset.y)/tile_size);
+        if(shadow_shared_[tile])continue;
+        auto& state=shadow_static_states_[tile];
+        state=shadow_states_[tile];state.casters.clear();
+        auto& casters=shadow_static_casters_[tile];casters.clear();
+        for(const Draw* d:shadow_casters_[tile]) {
+            if(d->sub->skinned || d->skin_base!=gpu::kInvalid)continue;
+            casters.push_back(d);state.casters.push_back(shadow_draw_states_[size_t(d-draws_.data())]);
+        }
+        const bool eligible=state.reusable && casters.size()>=32 && casters.size()<shadow_casters_[tile].size();
+        use[tile]=dirty[tile] && eligible && shadow_static_seen_[tile].Reuse(state);
+        needed=needed||use[tile];
+        shadow_static_seen_[tile].Recorded(state);
+    }
+    if(!needed)return use;
+    if(!shadow_static_.Valid() && !CreateTarget(shadow_static_,kDepthTargetFormat,shadow_.Extent(),
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_DEPTH_BIT)) {
+        shadow_static_unavailable_=true;use.fill(false);return use;
+    }
+    for(const ShadowView& sv:shadow_views_) {
+        const uint32_t tile=uint32_t(sv.rect.offset.x)/tile_size+kShadowTiles*(uint32_t(sv.rect.offset.y)/tile_size);
+        if(!use[tile] || shadow_static_cache_[tile].Reuse(shadow_static_states_[tile]))continue;
+        UseTargets(cmd,{{&shadow_static_,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();
+        BeginPass(cmd,sv.rect,{},&shadow_static_,false,true);
+        vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shadow_pipeline_);
+        vkCmdSetDepthBias(cmd,sv.bias_constant,0.0f,sv.bias_slope);
+        for(const Draw* d:shadow_static_casters_[tile]) {DrawMesh(cmd,*d,sv.view,0,false,false,nullptr,sv.cull,true);++stats_.shadow_draws;}
+        vkCmdEndRendering(cmd);
+        shadow_static_cache_[tile].Recorded(shadow_static_states_[tile]);++stats_.shadow_static_updates;
+    }
+    return use;
+}
+
 void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
     stats_.shadow_tiles_reused = stats_.shadow_tiles_rendered = stats_.shadow_draws = stats_.shadow_cache_redraws = 0;
     stats_.shadow_misses.fill(0);
+    stats_.shadow_static_updates=stats_.shadow_static_copies=stats_.shadow_static_saved_draws=0;
     if (rt_active_ || rt_reflections_ || rt_ao_active_ || rt_contact_active_) {
         RecordRayTracing(cmd);
     }
@@ -1567,15 +1627,33 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
     // All dirty: retain the original cheap loadOp clear. Partial updates clear
     // only the changed rectangles; untouched tiles keep their depth contents.
     const bool clear_all = dirty_count == active_count;
-    if (clear_all) InvalidateShadowCache();
+    if (clear_all) for(auto& tile:shadow_cache_)tile.Invalidate();
+    const auto static_tiles=RecordStaticShadows(cmd,dirty);
+    const bool copy_static=std::any_of(static_tiles.begin(),static_tiles.end(),[](bool v){return v;});
+    if(copy_static) {
+        if(clear_all) {
+            UseTargets(cmd,{{&shadow_,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
+            BeginPass(cmd,{shadow_.Extent().width,rows},{},&shadow_,false,true);vkCmdEndRendering(cmd);
+        }
+        UseTargets(cmd,{{&shadow_static_,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},{&shadow_,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
+        for(const ShadowView& sv:shadow_views_) {
+            const uint32_t tile=uint32_t(sv.rect.offset.x)/tile_size+kShadowTiles*(uint32_t(sv.rect.offset.y)/tile_size);
+            if(!static_tiles[tile])continue;
+            VkImageCopy copy{};copy.srcSubresource=copy.dstSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
+            copy.srcOffset=copy.dstOffset={sv.rect.offset.x,sv.rect.offset.y,0};copy.extent={sv.rect.extent.width,sv.rect.extent.height,1};
+            vkCmdCopyImage(cmd,shadow_static_.image.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,shadow_.image.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+            ++stats_.shadow_static_copies;
+            stats_.shadow_static_saved_draws+=uint32_t(shadow_static_casters_[tile].size());
+        }
+    }
     UseTargets(cmd, {{&shadow_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, {shadow_.Extent().width, rows}, {}, &shadow_, false, clear_all);
+    BeginPass(cmd, {shadow_.Extent().width, rows}, {}, &shadow_, false, clear_all && !copy_static);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
     for (const ShadowView& sv : shadow_views_) {
         const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
         if (!dirty[tile]) continue;
-        if (!clear_all) {
+        if (!static_tiles[tile] && (!clear_all || copy_static)) {
             VkClearAttachment clear{};
             clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
             clear.clearValue.depthStencil = {0.0f, 0};
@@ -1587,6 +1665,7 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         uint32_t shadow_draws = 0, shadow_indices = 0;
         for (const Draw* pointer : shadow_casters_[tile]) {
             const Draw& d = *pointer;
+            if(static_tiles[tile] && !d.sub->skinned && d.skin_base==gpu::kInvalid)continue;
             ++shadow_draws; shadow_indices += d.sub->index_count;
             ++stats_.shadow_draws;
             if (static const bool dump = std::getenv("PT_SHADOW_PASS_DUMP") != nullptr; dump && light_sources_[sv.light]->id == kMirrorLightId) {
@@ -1771,13 +1850,26 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
     const bool ao = rt_ao_ready_ && view.index == main_view_.index;
     const bool shrink = !up_.enabled && !ao && !legacy_resolve;
     const VkExtent2D acc_area{shrink ? (area.width + 1) / 2 : area.width, shrink ? (area.height + 1) / 2 : area.height};
+    static const bool maps_enabled = [] { const char* v=std::getenv("PT_PROBE_MAP"); return !v || std::string_view(v)!="0"; }();
+    const bool cached = probes && !ao && maps_enabled && probe_cached_ && probe_map_pipeline_ && probe_map_.Valid();
+    if (cached) {
+        // Rebuilt for each camera/mirror/eye view; no stale orientation.
+        UseTargets(cmd, {{&probe_map_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        const VkExtent2D map_area{512, 16 * ((probe_count_ + 31) / 32)};
+        mesh_draw_state_.Reset();
+        BeginPass(cmd, map_area, {{&probe_map_, false, {}, true}});
+        gpu::PassPush map_push; map_push.ids = {view.index, probe_count_, 0, 0};
+        Fullscreen(cmd, probe_map_pipeline_, map_push);
+        vkCmdEndRendering(cmd);
+        UseTargets(cmd, {{&probe_map_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    }
     auto draw_probes = [&](uint32_t shrink_flag) {
         if (ao) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_ao_);
             const VkDescriptorSet rt_set = rt_->Set(renderer_->FrameIndex());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rt_->Layout(), 2, 1, &rt_set, 0, nullptr);
         } else {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, cached ? probe_cached_ : probe_);
         }
         mesh_draw_state_.Reset();
         vkCmdSetCullMode(cmd, cull);
@@ -2617,7 +2709,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
     mesh_draw_state_.Reset();
     const VkExtent2D area = ViewArea(view);
     const bool overwrite_target = area.width == output.Extent().width && area.height == output.Extent().height;
-    BeginPass(cmd, area, {{&output, false, {}, overwrite_target}}, &depth_, true, false);
+    BeginPass(cmd, area, {{&output, false, {}, overwrite_target}});
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, occlusion ? 1u : 0u, 0, 0);
     const TppAtmosphereSettings& tpp = lighting_->tpp;
