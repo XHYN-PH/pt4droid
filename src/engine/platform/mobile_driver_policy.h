@@ -18,4 +18,11 @@ inline bool PreferBundledTurnip(std::string_view device_name) {
     const auto model=std::strtoul(name.c_str()+number,nullptr,10);
     return model>=600 && model<800;
 }
+inline bool BundledTurnipCompatible(std::string_view device_name) {
+    // A failed system probe must not override an explicit driver choice.
+    if (device_name.empty()) return true;
+    std::string name(device_name);
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return name.find("adreno") != std::string::npos;
+}
 }

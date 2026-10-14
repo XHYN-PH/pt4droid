@@ -35,7 +35,9 @@ public class GraphicsMenuTest {
   Display d=a.manager.display;Display.Mode low=new Display.Mode(1,1080,2400,60),high=new Display.Mode(2,1080,2400,120),other=new Display.Mode(3,2160,3840,144);d.current=low;d.modes=new Display.Mode[]{low,high,other};
   ok(DisplayRefresh.choose(d.modes,low,0)==high,"automatic picks highest at same resolution");ok(DisplayRefresh.choose(d.modes,low,60)==low,"explicit 60 mode");ok(DisplayRefresh.choose(d.modes,low,999)==high,"unsupported request picks nearest available mode");ok(DisplayRefresh.choose(new Display.Mode[]{},low,120)==low,"missing mode inventory retains valid current mode");
   ok(DisplayRefresh.rates(a).size()==2 && DisplayRefresh.maximum(a)==120,"UI only exposes same-resolution supported rates");
-  Surface s=new Surface();DisplayRefresh.apply(a,s);ok(s.calls==1 && s.rate==120 && a.window.attributes.preferredRefreshRate==120 && a.window.attributes.preferredDisplayModeId==0,"Android 11+ requests high rate on window and game surface");
+  Surface s=new Surface();DisplayRefresh.apply(a,s);ok(s.calls==1 && s.rate==120 && a.window.attributes.preferredRefreshRate==120 && a.window.attributes.preferredDisplayModeId==2,"Android 11+ requests high rate on window and game surface");
+  ok(DisplayRefresh.actualRate()==60,"reports the observed display rate before the requested mode takes effect");
+  d.current=high;DisplayRefresh.apply(a,s);ok(DisplayRefresh.actualRate()==120,"reports display changes rather than only the requested rate");
   int updates=a.window.updates;for(int i=0;i<1000;i++)DisplayRefresh.apply(a,s);ok(s.calls==1 && updates==a.window.updates,"stable request avoids repeated surface/window updates");
   a.prefs.edit().putInt("frame_target",60).apply();DisplayRefresh.apply(a,s);ok(s.calls==2 && s.rate==60,"live preference changes request");DisplayRefresh.surfaceCreated(a,s);ok(s.calls==3,"recreated surface receives request");
   Build.VERSION.SDK_INT=29;a.prefs.edit().putInt("frame_target",0).apply();DisplayRefresh.apply(a,s);ok(s.calls==3 && a.window.attributes.preferredDisplayModeId==2,"Android 10 uses supported window mode without newer Surface API");

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "engine/assets/fmdl.h"
+#include "engine/assets/cpu_preparation_queue.h"
 #include "engine/fs/vfs.h"
 #include "engine/render/scene_renderer.h"
 #include "engine/render/texture_manager.h"
@@ -30,7 +31,10 @@ struct ModelEntry {
 
 class ModelCache {
 public:
-    ModelCache(Vfs& vfs, SceneRenderer& scene, TextureManager& textures) : vfs_(vfs), scene_(scene), textures_(textures) {}
+    ModelCache(Vfs& vfs, SceneRenderer& scene, TextureManager& textures);
+    ~ModelCache() { preparation_.reset(); }
+    void Prepare(const std::string& path);
+    void SetPreparationAllowed(bool allowed) { preparation_allowed_=allowed; if(!allowed)preparation_.reset(); }
 
     // `parsed`: the file already read and parsed (a stage prefetch), used when the model is not cached yet
     const ModelEntry* Get(const std::string& path, FmdlModel* parsed = nullptr);
@@ -59,6 +63,8 @@ private:
     Vfs& vfs_;
     SceneRenderer& scene_;
     TextureManager& textures_;
+    std::unique_ptr<CpuPreparationQueue<FmdlModel>> preparation_;
+    bool preparation_allowed_=true;
     std::vector<float> reflection_;
     bool reflection_loaded_ = false;
     std::unordered_map<std::string, ModelEntry> entries_;

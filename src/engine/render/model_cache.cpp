@@ -370,13 +370,45 @@ std::unordered_set<std::string> ModelCache::Paths() const {
     return paths;
 }
 
+ModelCache::ModelCache(Vfs& vfs, SceneRenderer& scene, TextureManager& textures) : vfs_(vfs), scene_(scene), textures_(textures) {}
+
+void ModelCache::Prepare(const std::string& path) {
+    if(!preparation_allowed_ || path.empty() || entries_.contains(path))return;
+    if(!preparation_)preparation_=std::make_unique<CpuPreparationQueue<FmdlModel>>(64ull*1024*1024,
+        [this](const std::string& path,const std::shared_ptr<TextureReadBudget>& lease)->std::shared_ptr<FmdlModel> {
+            auto bytes=vfs_.ReadFile(path);
+            if(!bytes || bytes->size()>16ull*1024*1024 || !lease->Reserve(bytes->size()))return {};
+            auto model=std::shared_ptr<FmdlModel>(new FmdlModel,[lease](FmdlModel* p){delete p;});
+            if(!LoadFmdl(*bytes,path,*model))return {};
+            uint64_t retained=sizeof(FmdlModel)+model->mesh.vertices.capacity()*sizeof(Vertex)+model->mesh.indices.capacity()*sizeof(uint32_t);
+            retained+=model->mesh.submeshes.capacity()*sizeof(SubMesh)+model->raw_positions.capacity()*sizeof(glm::vec3);
+            retained+=model->bone_world.capacity()*sizeof(glm::vec3)+model->bone_parent.capacity()*sizeof(int16_t);
+            auto strings=[&](const auto& values){retained+=values.capacity()*sizeof(std::string);for(const auto& value:values)retained+=value.capacity()+1;};
+            strings(model->bone_names);strings(model->mesh_group_names);
+            retained+=model->bone_groups.capacity()*sizeof(FmdlBoneGroup);for(const auto& group:model->bone_groups)retained+=group.bones.capacity()*sizeof(uint16_t);
+            retained+=model->meshes.capacity()*sizeof(FmdlMeshInfo);for(const auto& mesh:model->meshes)retained+=mesh.bones.capacity()*sizeof(uint16_t);
+            retained+=model->materials.capacity()*sizeof(FmdlMaterial);
+            for(const auto& m:model->materials) {
+                retained+=m.name.capacity()+m.shader.capacity()+m.technique.capacity()+m.base_color.capacity()+m.normal_map.capacity()+m.specular_map.capacity()+m.mask.capacity()+7;
+                retained+=m.textures.capacity()*sizeof(decltype(m.textures)::value_type)+m.vectors.capacity()*sizeof(decltype(m.vectors)::value_type);
+                for(const auto& item:m.textures)retained+=item.first.capacity()+item.second.capacity()+2;
+                for(const auto& item:m.vectors)retained+=item.first.capacity()+1;
+            }
+            if(!lease->Reserve(retained))return {};
+            lease->Release(bytes->size());return model;
+        });
+    preparation_->Enqueue(path);
+}
+
 const ModelEntry* ModelCache::Get(const std::string& path, FmdlModel* parsed) {
-    return Load(path, path, nullptr, parsed);
+    auto prepared=(!parsed && preparation_ && !entries_.contains(path))?preparation_->Take(path):nullptr;
+    return Load(path, path, nullptr, parsed?parsed:prepared.get());
 }
 
 const ModelEntry* ModelCache::GetSubset(const std::string& path, const std::string& key, const std::function<bool(const Vertex&)>& keep,
                                         const std::function<void(Vertex&)>& transform) {
-    return Load(path, key, &keep, nullptr, transform ? &transform : nullptr);
+    auto prepared=(preparation_ && !entries_.contains(key))?preparation_->Take(path):nullptr;
+    return Load(path, key, &keep, prepared.get(), transform ? &transform : nullptr);
 }
 
 const ModelEntry* ModelCache::Load(const std::string& path, const std::string& key, const std::function<bool(const Vertex&)>* keep,
@@ -533,6 +565,7 @@ bool ModelCache::ReadMesh(const std::string& path, MeshData& out) {
 }
 
 void ModelCache::Clear() {
+    preparation_.reset();
     for (auto& [path, entry] : entries_) {
         if (entry.mesh) {
             scene_.Destroy(*entry.mesh);

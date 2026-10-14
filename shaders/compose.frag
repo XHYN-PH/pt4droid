@@ -12,6 +12,7 @@ layout(push_constant) uniform PassPush {
 layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 out_color;
 layout(constant_id = 0) const uint COMPOSE_TPP = 0xFFFFFFFFu;
+layout(constant_id = 1) const uint COMPOSE_AO = 0xFFFFFFFFu;
 
 float BloomAlpha(vec3 color) {
     float r = Luma709(color) / 32.0;
@@ -34,7 +35,7 @@ void TppFog(vec3 eye, vec3 point, out vec3 inscatter, out float transmittance) {
     float m = 1.0 - cos_theta * mie.w;
     float mie_phase=frame.fog[4].w/(m*m);
     vec3 sigma=frame.fog[4].rgb;
-    vec3 directional=ray.w*(mie.rgb*mie_phase+ray.rgb*rayleigh_phase)*frame.fog[5].rgb;
+    vec3 directional=(mie.rgb*mie_phase+ray.rgb*rayleigh_phase)*frame.fog[6].rgb;
     float opacity = 1.0 - exp(-depth);
     vec3 color = g1.rgb + directional * (1.0 - exp(-depth * sigma));
     // No area box term: VolFog_TppVolFog_Area (ps adf9aadf6beb2a36) runs its box code only for the froxels whose ray misses the
@@ -68,7 +69,8 @@ void main() {
         vec3 albedo = SrgbDecode(ImgFetch(IMG_ALBEDO, pixel).rgb);
         vec3 diffuse = ImgFetch(IMG_DIFFUSE, pixel).rgb;
         vec3 specular = ImgFetch(IMG_SPECULAR, pixel).rgb;
-        float occlusion = pass.ids.y != 0u ? ImgFetch(IMG_AO_BLUR, pixel).x : 1.0;
+        uint ao = COMPOSE_AO == 0xFFFFFFFFu ? pass.ids.y : COMPOSE_AO;
+        float occlusion = ao != 0u ? ImgFetch(IMG_AO_BLUR, pixel).x : 1.0;
         color = (diffuse * albedo + specular) * occlusion;
         z = ViewZ(v, depth);
     }

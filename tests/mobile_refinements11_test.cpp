@@ -18,13 +18,26 @@ int main(){using namespace pt;using namespace pt::vfx;
    e.op=std::array{ExprOp::Const,ExprOp::DragTime,ExprOp::Random,ExprOp::UniformVelocity,ExprOp::UniformAccel,ExprOp::UniformVelocityTime,ExprOp::Composition,ExprOp::Multiply,ExprOp::Oscillate,ExprOp::Pass,ExprOp::TimeScale,ExprOp::CameraFollow,ExprOp::CenterScroll,ExprOp::CameraAngle,ExprOp::Receive}[random()%15];
    e.mode=random()%3;e.slot=0;e.flags=random()%2;
   }
-  FoldEffectConstants(def);std::vector<glm::vec4> values(def.exprs.size());std::vector<uint8_t> ready(def.exprs.size());glm::vec4 slot(.4f);
+  FoldEffectConstants(def);std::vector<glm::vec4> values(def.exprs.size());std::vector<uint32_t> ready(def.exprs.size());glm::vec4 slot(.4f);
   System::EvalContext ctx;ctx.def=&def;ctx.inst=&inst;ctx.view=&view;ctx.effect_time=.7f;ctx.effect_ratio=.35f;ctx.slots=&slot;ctx.frame_values=values.data();ctx.frame_ready=ready.data();
   for(int particle=0;particle<100;++particle){ctx.age=particle/117.f;ctx.ratio=particle/107.f;ctx.life=1.31f;ctx.world[3]=glm::vec4(particle*.031f,0,0,1);slot.x=particle*.17f;
    auto original=ctx;original.frame_values=nullptr;original.frame_ready=nullptr;
    for(int i=0;i<30;++i){auto a=system.Eval(original,i),b=system.Eval(ctx,i);assert(std::memcmp(&a,&b,sizeof(a))==0);}
   }
  }
+ // Exercise actual per-shape generations, including wrap and an effect switch.
+ auto epoch_def=std::make_shared<EffectDef>();epoch_def->all_frame=120;epoch_def->exprs.resize(1);epoch_def->frame_uniform={1};
+ epoch_def->exprs[0].op=ExprOp::DragTime;epoch_def->exprs[0].mode=2;epoch_def->exprs[0].v0=glm::vec4(1);
+ System::Instance epoch_inst;epoch_inst.def=epoch_def;epoch_inst.frame=60;
+ ShapeDef shape;shape.kind=ShapeKind::PointLight;shape.attr[kColor]=0;
+ System::ShapeState state;state.particles.emplace_back();RenderList output;std::vector<LightOut> lights;
+ system.frame_epoch_=UINT32_MAX;system.frame_ready_={1};system.frame_values_={glm::vec4(99)};
+ system.BuildShape(epoch_inst,glm::mat4(1),shape,state,view,{},{},{},output,lights);
+ assert(system.frame_epoch_==1&&lights.size()==1&&lights[0].color==glm::vec3(1));
+ epoch_inst.frame=120;lights.clear();system.BuildShape(epoch_inst,glm::mat4(1),shape,state,view,{},{},{},output,lights);
+ assert(system.frame_epoch_==2&&lights[0].color==glm::vec3(2));
+ epoch_inst.def=std::make_shared<EffectDef>(*epoch_def);epoch_inst.frame=30;lights.clear();
+ system.BuildShape(epoch_inst,glm::mat4(1),shape,state,view,{},{},{},output,lights);assert(lights[0].color==glm::vec3(.5f));
  // A slow texture cannot hold a completed unrelated texture hostage. Use
  // explicit barriers instead of relying on scheduling or sleep thresholds.
  auto budget=std::make_shared<TextureReadBudget>(16);
@@ -59,5 +72,5 @@ int main(){using namespace pt;using namespace pt::vfx;
  assert(a.get().failure==TexturePreparationFailure::Cancelled&&b.get().failure==TexturePreparationFailure::Cancelled);
  {std::lock_guard lock(mutex);unblock_all=true;}condition.notify_all();stopping.get();
  assert(one.get().texture&&two.get().texture&&needed.get().texture);
- puts("Test 11: 240000 bit-exact cached/live VFX evaluations; individual readiness, budget reclaim/fallbacks; split diagnostics and sustained FPS preservation passed");
+ puts("Test 11: 240000 bit-exact cached/live VFX evaluations; generation wrap/effect switches; individual readiness, budget reclaim/fallbacks; split diagnostics and sustained FPS preservation passed");
 }

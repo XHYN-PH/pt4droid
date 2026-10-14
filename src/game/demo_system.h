@@ -284,6 +284,7 @@ public:
     // The player's own model as plr0_main0_def_v00.parts describes it: the model file, its help bones and the groups its
     // invisibleMeshNames hide (MESH_arm), for the body the mirror captures draw in play
     const std::string& PlayerModelFile();
+    void PreparePlayer();
     const std::set<uint64_t>& PlayerDefaultHidden();
     // the player's body groups as the parts list them (the one model the original keeps for the session; a new session's
     // body is the boot's)

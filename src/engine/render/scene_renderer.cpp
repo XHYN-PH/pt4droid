@@ -260,10 +260,11 @@ bool SceneRenderer::CreateDescriptors() {
 }
 
 bool SceneRenderer::CreatePipelines() {
+    const bool clip = renderer_->Context().shader_clip_distance;
     PipelineDesc desc;
     desc.layout = layout_;
-    desc.vertex = "mesh.vert";
-    desc.fragment = "gbuffer.frag";
+    desc.vertex = clip ? "mesh.vert" : "mesh_clip.vert";
+    desc.fragment = clip ? "gbuffer.frag" : "gbuffer_clip.frag";
     desc.mesh_input = true;
     desc.colors = {kAlbedoFormat, kNormalFormat, kMaterialFormat};
     desc.depth = kDepthFormat;
@@ -280,8 +281,8 @@ bool SceneRenderer::CreatePipelines() {
 
     PipelineDesc shadow;
     shadow.layout = layout_;
-    shadow.vertex = "shadow.vert";
-    shadow.fragment = "shadow.frag";
+    shadow.vertex = clip ? "shadow.vert" : "shadow_clip.vert";
+    shadow.fragment = clip ? "shadow.frag" : "shadow_clip.frag";
     shadow.mesh_input = true;
     shadow.depth = kDepthFormat;
     shadow.depth_test = true;
@@ -338,17 +339,21 @@ bool SceneRenderer::CreatePipelines() {
     // Composition reads depth as a sampled image, without depth testing.
     compose_ = CreateGraphicsPipeline(device_, full);
 #ifdef __ANDROID__
-    full.fragment_constants = {{0, 0}};
+    full.fragment_constants = {{0, 0}, {1, 1}};
     compose_plain_ = CreateGraphicsPipeline(device_, full);
-    full.fragment_constants = {{0, 3}};
+    full.fragment_constants = {{0, 3}, {1, 1}};
     compose_fog_ = CreateGraphicsPipeline(device_, full);
+    full.fragment_constants = {{0, 0}, {1, 0}};
+    compose_plain_noao_ = CreateGraphicsPipeline(device_, full);
+    full.fragment_constants = {{0, 3}, {1, 0}};
+    compose_fog_noao_ = CreateGraphicsPipeline(device_, full);
     full.fragment_constants.clear();
 #endif
 
     PipelineDesc forward;
     forward.layout = layout_;
-    forward.vertex = "mesh.vert";
-    forward.fragment = "forward.frag";
+    forward.vertex = clip ? "mesh.vert" : "mesh_clip.vert";
+    forward.fragment = clip ? "forward.frag" : "forward_clip.frag";
     forward.mesh_input = true;
     forward.colors = {kHdrFormat};
     forward.depth = kDepthFormat;
@@ -493,7 +498,7 @@ void SceneRenderer::DestroyPipelines() {
             *p = VK_NULL_HANDLE;
         }
     }
-    for (VkPipeline* p : {&compose_plain_, &compose_fog_, &tonemap_base_, &tonemap_grade_, &probe_cached_, &probe_map_pipeline_}) {
+    for (VkPipeline* p : {&compose_plain_, &compose_fog_, &compose_plain_noao_, &compose_fog_noao_, &tonemap_base_, &tonemap_grade_, &probe_cached_, &probe_map_pipeline_}) {
         if (*p) vkDestroyPipeline(device_, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }
@@ -1279,6 +1284,7 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
         stats_.pass_ms[i - 1] = span(i - 1, i);
     }
     stats_.ray_setup_ms = span(0, 12);
+    stats_.probe_map_ms = span(17,18);
     stats_.lighting_ms[0] = span(13, 14);
     stats_.lighting_ms[1] = span(14, 15);
     stats_.lighting_ms[2] = span(15, 16);
