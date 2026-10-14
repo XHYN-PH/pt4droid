@@ -61,13 +61,12 @@ final class MobileSettings {
         float[] sharpness=gain(v,"Upscaling sharpness","sharpness",1f,2f);
         Spinner ao=choice(v,"Ambient occlusion",new String[]{"Original quality","Performance • fewer samples"},prefs.getInt("ao_quality",0));
         Spinner reflections=choice(v,"Screen reflections",new String[]{"Original quality","Performance • fewer steps"},prefs.getInt("reflection_quality",0));
-        CheckBox sustained=check(v,"Sustained performance / heat management", "sustained",false);
-        text(v,"Optional for longer sessions: asks Android for steady performance and limits FPS when hot (45 / 30 / 20). Off preserves your chosen frame limit.");
-        List<Float> refreshRates=DisplayRefresh.rates(activity);String[] refreshNames=new String[refreshRates.size()+1];refreshNames[0]="Highest supported • automatic";
-        int refreshIndex=0;float storedRefresh=prefs.getFloat("display_refresh",0);
-        for(int i=0;i<refreshRates.size();i++){refreshNames[i+1]=String.format(Locale.ROOT,"%.2f Hz",refreshRates.get(i));if(Math.abs(refreshRates.get(i)-storedRefresh)<.1f)refreshIndex=i+1;}
-        Spinner refresh=choice(v,"Display refresh rate",refreshNames,refreshIndex);
-        text(v,String.format(Locale.ROOT,"Current display: %.2f Hz. Android can lower this for battery saving or temperature limits. Frame limit is in Game graphics.",DisplayRefresh.display(activity).getRefreshRate()));
+        CheckBox sustained=check(v,"Sustained performance", "sustained",false);
+        android.os.PowerManager power=(android.os.PowerManager)activity.getSystemService(Context.POWER_SERVICE);
+        sustained.setEnabled(power!=null&&power.isSustainedPerformanceModeSupported());
+        if(!sustained.isEnabled())sustained.setChecked(false);
+        text(v,sustained.isEnabled()?"Asks Android for steadier performance during long sessions. Keeps your FPS limit and graphics settings. Android still controls temperature and clock speeds.":"This device does not support Android sustained performance mode.");
+        text(v,String.format(Locale.ROOT,"Current display: %.2f Hz. FPS and display refresh are controlled together in Game graphics.",DisplayRefresh.display(activity).getRefreshRate()));
         MenuStyle.section(v,"Controls");
         Spinner movement=choice(v,"Movement control",new String[]{"Visible joystick","Invisible left-half movement"},prefs.getInt("move_style",0));
         text(v,"Invisible movement: touch and drag on the left half, then hold to keep moving. Pair it with swipe look on the right. Lift to stop. Stick size and dead zone still apply; buttons and Settings take priority.");
@@ -105,7 +104,7 @@ final class MobileSettings {
                 write("performance_profile_pending.txt",Integer.toString(selected));
                 write("mobile_performance.ini","frame_pacing="+(pacing.isChecked()?1:0)+"\nsgsr="+(sgsr.isChecked()?1:0)+"\nsharpness="+sharpness[0]+"\nao_quality="+ao.getSelectedItemPosition()+"\nreflection_quality="+reflections.getSelectedItemPosition()+"\nsustained="+(sustained.isChecked()?1:0)+"\ninvert_y="+(invert.isChecked()?1:0)+"\nmouse_sensitivity="+mouse[0]+"\ncontroller_sensitivity="+controller[0]);
                 prefs.edit().putBoolean("frame_pacing",pacing.isChecked()).putBoolean("sgsr",sgsr.isChecked()).putFloat("sharpness",sharpness[0]).putInt("ao_quality",ao.getSelectedItemPosition()).putInt("reflection_quality",reflections.getSelectedItemPosition()).putBoolean("sustained",sustained.isChecked()).putBoolean("invert_y",invert.isChecked()).putFloat("mouse_sensitivity",mouse[0]).putFloat("controller_sensitivity",controller[0]).putBoolean("gyro",gyro.isChecked()).putFloat("gyro_sensitivity",gyroGain[0]).apply();
-                prefs.edit().putInt("performance_profile",selected).putFloat("sensitivity",sensitivity[0]).putInt("move_style",movement.getSelectedItemPosition()).putInt("look_style",look.getSelectedItemPosition()).putInt("overlay_mode",mode.getSelectedItemPosition()).putBoolean("optimized_bloom",bloom.isChecked()).putFloat("display_refresh",refresh.getSelectedItemPosition()==0?0:refreshRates.get(refresh.getSelectedItemPosition()-1)).apply();
+                prefs.edit().putInt("performance_profile",selected).putFloat("sensitivity",sensitivity[0]).putInt("move_style",movement.getSelectedItemPosition()).putInt("look_style",look.getSelectedItemPosition()).putInt("overlay_mode",mode.getSelectedItemPosition()).putBoolean("optimized_bloom",bloom.isChecked()).apply();
                 DisplayRefresh.apply(activity,null);PTActivity.refreshDisplay();
                 AppLog.setEnabled(logs.isChecked());
                 if(touch!=null){touch.reloadPreferences();touch.setMode(mode.getSelectedItemPosition());}

@@ -26,9 +26,11 @@ final class GameGraphicsSettings {
         List<Integer> fps=new ArrayList<>();fps.add(0);float maximum=DisplayRefresh.maximum(activity);
         for(int rate:new int[]{30,40,45,60,90,120,144,165,240})if(rate<=maximum+.5f)fps.add(rate);
         int stored=data.integer("display.fps_limit",0);if(stored>0 && !fps.contains(stored))fps.add(stored);
-        int[] rates=new int[fps.size()];String[] labels=new String[fps.size()];for(int i=0;i<rates.length;i++){rates[i]=fps.get(i);labels[i]=rates[i]==0?"Unlimited":rates[i]+" FPS";}
-        choice("Frame limit","display.fps_limit",labels,rates,true);toggle("VSync","display.vsync",true);
-        note("Display refresh rate is set separately in Android settings. A higher rate does not guarantee the game can render that many frames.");
+        for(float rate:DisplayRefresh.rates(activity)){int rounded=Math.round(rate);if(rounded>=20&&!fps.contains(rounded))fps.add(rounded);}
+        fps.subList(1,fps.size()).sort(Integer::compare);
+        int[] rates=new int[fps.size()];String[] labels=new String[fps.size()];for(int i=0;i<rates.length;i++){rates[i]=fps.get(i);labels[i]=DisplayRefresh.label(activity,rates[i]);}
+        choice("FPS limit / display refresh","display.fps_limit",labels,rates,true);toggle("VSync","display.vsync",true);
+        note("Requests a matching display rate, or a supported multiple for even pacing. Unlimited requests the highest rate. Android may override the request; actual FPS depends on the scene.");
         choice("Letterbox","display.letterbox",new String[]{"Off","Cinema • 2.39:1","Cinema • 1.85:1"},new int[]{0,1,2},true);
         MenuStyle.section(column,"Textures and lighting");
         choice("Texture detail","graphics.texture_detail",new String[]{"Reduced","Original","Fine"},new int[]{0,1,2},true);
@@ -48,7 +50,7 @@ final class GameGraphicsSettings {
         note("HDR, enhanced texture generation, desktop upscalers and frame generation are unavailable in this Android build. Scene resolution and optimized mobile bloom are in Android settings.");
         AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Game graphics").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            try{data.save(activity);if(PTActivity.gameRunning())PTActivity.nativeApplyGameGraphicsSettings();dialog.dismiss();Toast.makeText(activity,PTActivity.gameRunning()?"Graphics saved. Applying to the game.":"Graphics saved for the next game start.",Toast.LENGTH_LONG).show();}
+            try{data.save(activity);activity.getSharedPreferences("touch_layout_v1",0).edit().putInt("frame_target",data.integer("display.fps_limit",0)).apply();if(PTActivity.gameRunning())PTActivity.nativeApplyGameGraphicsSettings();else {DisplayRefresh.setTarget(data.integer("display.fps_limit",0));DisplayRefresh.apply(activity,null);}dialog.dismiss();Toast.makeText(activity,PTActivity.gameRunning()?"Graphics saved. Applying to the game.":"Graphics saved for the next game start.",Toast.LENGTH_LONG).show();}
             catch(Exception error){new AlertDialog.Builder(activity).setTitle("Could not save graphics").setMessage(error.getMessage()).setPositiveButton("OK",null).show();}
         }));dialog.show();MenuStyle.styleDialog(dialog);
     }

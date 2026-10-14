@@ -37,6 +37,7 @@ public class PTActivity extends SDLActivity {
     static native String nativeGetGameGraphicsSettings();
     static native void nativeApplyGameGraphicsSettings();
     public static void refreshDisplay(){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->DisplayRefresh.apply(a,mSurface==null?null:mSurface.getHolder().getSurface()));}
+    public static void setFrameTarget(int fps){DisplayRefresh.setTarget(fps);refreshDisplay();}
     public static void gameGraphicsSettingsFailed(String message){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->android.widget.Toast.makeText(a,message,android.widget.Toast.LENGTH_LONG).show());}
     static boolean gameRunning() {return current!=null;}
     public static int getTouchControlsMode() {return current==null?0:current.getSharedPreferences("touch_layout_v1",0).getInt("overlay_mode",0);}
