@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "engine/assets/ftex.h"
 #include "engine/core/log.h"
@@ -43,6 +44,9 @@ struct TextureManager {
     std::unordered_map<uint32_t, std::string> fox_sources_;
     std::vector<Upload> uploads;
     double read_ms_ = 0, upload_ms_ = 0;
+    struct ReadStats { uint64_t prepared = 0, ahead = 0, direct = 0; } read_stats_;
+    std::unordered_set<std::string> worker_prepared_;
+    std::unordered_map<std::string, uint8_t> prepared_variants_;
     bool enhanced_enabled_ = false;
     uint32_t Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t, bool) {
         Upload upload{format, {}};

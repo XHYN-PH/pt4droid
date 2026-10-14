@@ -712,6 +712,36 @@ float Curve::Eval(float t) const {
     return values[count - 1];
 }
 
+void FoldEffectConstants(EffectDef& def) {
+    def.constants.assign(def.exprs.size(), std::nullopt);
+    std::vector<uint8_t> visited(def.exprs.size());
+    const auto visit = [&](auto&& self, int32_t index, unsigned depth) -> std::optional<glm::vec4> {
+        if (index < 0) return glm::vec4(0);
+        if (size_t(index) >= def.exprs.size() || depth > 64) return std::nullopt;
+        if (visited[index]) return def.constants[index];
+        visited[index] = 1;
+        const Expr& e = def.exprs[index];
+        auto& value = def.constants[index];
+        switch (e.op) {
+        case ExprOp::Zero: value = glm::vec4(0); break;
+        case ExprOp::Const: case ExprOp::UvMap: value = e.v0; break;
+        case ExprOp::Pass: value = self(self, e.in[0], depth + 1); break;
+        case ExprOp::Composition: case ExprOp::Multiply: case ExprOp::UniformVelocityTime: {
+            const auto a = self(self, e.in[0], depth + 1), b = self(self, e.in[1], depth + 1);
+            if (a && b) {
+                if (e.op == ExprOp::Composition) value = *a + glm::mix(*b, e.v1, e.v0);
+                else if (e.op == ExprOp::Multiply) value = *a * glm::mix(*b, e.v1, e.v0);
+                else value = *a * *b;
+            }
+            break;
+        }
+        default: break;
+        }
+        return value;
+    };
+    for (size_t i = 0; i < def.exprs.size(); ++i) visit(visit, int32_t(i), 0);
+}
+
 std::shared_ptr<EffectDef> CompileEffect(const File& file, std::string name) {
     auto def = std::make_shared<EffectDef>();
     def->name = std::move(name);

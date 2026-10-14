@@ -1,4 +1,5 @@
 #pragma once
+#include <utility>
 
 #include <initializer_list>
 #include <span>
@@ -59,6 +60,7 @@ struct PipelineDesc {
     std::vector<BlendMode> blends;
     VkColorComponentFlags write_mask = 0xF;
     std::vector<VkColorComponentFlags> write_masks;
+    std::vector<std::pair<uint32_t, uint32_t>> fragment_constants;
 };
 
 VkPipeline CreateGraphicsPipeline(VkDevice device, const PipelineDesc& desc);

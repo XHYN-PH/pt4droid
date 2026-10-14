@@ -1407,6 +1407,8 @@ void SceneRenderer::PrepareShadowCasters() {
         return !value || std::string_view(value) != "0";
     }();
     const uint32_t tile_size = shadow_.Extent().width / kShadowTiles;
+    shadow_draw_states_.resize(draws_.size());
+    shadow_draw_state_ready_.assign(draws_.size(), 0);
     // Previous-frame reuse requires exact caster state. Skin remains dynamic;
     // sharing within this frame compares the actual Draw pointers instead.
     for (const ShadowView& sv : shadow_views_) {
@@ -1458,8 +1460,13 @@ void SceneRenderer::PrepareShadowCasters() {
             shadow_indices_[tile] += d.sub->index_count;
             state.reusable = state.reusable && !d.sub->skinned && d.skin_base == gpu::kInvalid;
             if (state.reusable) {
-                state.casters.push_back({reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
-                                         d.material, uint32_t(d.sub->shadow_double_sided), d.transform, textures_->ShadowAlphaState(d.material)});
+                const size_t index = size_t(&d - draws_.data());
+                if (!shadow_draw_state_ready_[index]) {
+                    shadow_draw_states_[index] = {reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
+                        d.material, uint32_t(d.sub->shadow_double_sided), d.transform, textures_->ShadowAlphaState(d.material)};
+                    shadow_draw_state_ready_[index] = 1;
+                }
+                state.casters.push_back(shadow_draw_states_[index]);
             }
         }
     }
@@ -1512,6 +1519,7 @@ void SceneRenderer::PrepareShadowCasters() {
 
 void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
     stats_.shadow_tiles_reused = stats_.shadow_tiles_rendered = stats_.shadow_draws = stats_.shadow_cache_redraws = 0;
+    stats_.shadow_misses.fill(0);
     if (rt_active_ || rt_reflections_ || rt_ao_active_ || rt_contact_active_) {
         RecordRayTracing(cmd);
     }
@@ -1533,7 +1541,9 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         rows = std::max(rows, uint32_t(sv.rect.offset.y) + sv.rect.extent.height);
         total_draws += shadow_casters_[tile].size();
         total_indices += shadow_indices_[tile];
-        dirty[tile] = !shadow_cache_[tile].Reuse(shadow_states_[tile]);
+        const ShadowMiss miss = shadow_cache_[tile].Miss(shadow_states_[tile]);
+        dirty[tile] = miss != ShadowMiss::None;
+        if (dirty[tile]) ++stats_.shadow_misses[size_t(miss) - 1];
         if (dirty[tile]) { ++dirty_count; dirty_draws += shadow_casters_[tile].size(); dirty_indices += shadow_indices_[tile]; }
     }
     if (!dirty_count) { stats_.shadow_tiles_reused = active_count; return; }
@@ -1776,6 +1786,11 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             gpu::PassPush push;
             push.ids = glm::uvec4(view.index, i, shrink_flag, 0);
             push.m = p.box_world;
+            // Same accumulation order; skip only pixels outside the projected
+            // box. Camera/near-plane crossings keep the original full target.
+            const VkRect2D bounds = LightScissor(frame_->views[view.index].view_projection * p.box_world, acc_area);
+            if (!bounds.extent.width || !bounds.extent.height) continue;
+            vkCmdSetScissor(cmd, 0, 1, &bounds);
             PushConstants(cmd, &push, sizeof(push));
             vkCmdDraw(cmd, 36, 1, 0, 0);
         }
@@ -1800,6 +1815,8 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
                      {&specular_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
     BeginPass(cmd, area, {{&diffuse_, true, {}}, {&specular_, true, {}}}, &depth_, true, false);
+    const VkRect2D full_scissor{{0, 0}, area};
+    vkCmdSetScissor(cmd, 0, 1, &full_scissor);
     if (probes) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_resolve_);
         gpu::PassPush push;
@@ -1808,6 +1825,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
         PushConstants(cmd, &push, sizeof(push));
         vkCmdDraw(cmd, 3, 1, 0, 0);
     }
+    if (view.index == main_view_.index) Stamp(cmd, 15);
     // the contact shadows are the main view's (their occluders are its surfaces)
     const bool contact = rt_contact_active_ && view.index == main_view_.index;
     if (lights && light_count_ > 0) {
@@ -1861,6 +1879,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
     }
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&diffuse_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&specular_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    if (view.index == main_view_.index) Stamp(cmd, 16);
 }
 
 void SceneRenderer::RecordLuminance(VkCommandBuffer cmd) {
@@ -2554,6 +2573,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
             EndLabel(cmd);
         }
     }
+    if (main_view) Stamp(cmd, 13);
     // the occlusion pass samples the depth over the whole target; the capture view, which renders into a corner, goes without
     const bool occlusion = toggles.occlusion && lighting_->valid && main_view;
     if (occlusion) {
@@ -2567,6 +2587,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         RecordRtAmbientOcclusion(cmd, view);
         EndLabel(cmd);
     }
+    if (main_view) Stamp(cmd, 14);
     BeginLabel(cmd, main_view ? "lighting" : "mirror lighting");
     RecordLighting(cmd, view);
     EndLabel(cmd);
@@ -2618,7 +2639,10 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         const float c = u * (1.0f - t) / std::max(t + u - 1.0f, 1.0e-3f);
         push.f0 = glm::vec4(1.0f / (c * c), t, c, 0.0f);
     }
-    Fullscreen(cmd, compose_, push);
+    VkPipeline composite = compose_;
+    if (push.ids.z == 0 && compose_plain_) composite = compose_plain_;
+    if (push.ids.z == 3 && compose_fog_) composite = compose_fog_;
+    Fullscreen(cmd, composite, push);
     // f010_dumps 1490: fox3dfw_glass and fox3dfw_constant draws write depth (DB_DEPTH_CONTROL 0x7e6), so the effects behind them are hidden
     vkCmdEndRendering(cmd);
     if (main_view && dump_requested_ && &output == &hdr_) {
@@ -2968,6 +2992,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
     if (vr_eye_ != 1) {
         ++frame_counter_;
     }
+    ++stats_.cpu_sample;
     stats_.cpu_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - cpu_start).count();
     if (static const bool frame_csv = std::getenv("PT_FRAME_CSV") != nullptr; frame_csv && LogEnabled()) {
         const float interval = previous_frame_start_ == std::chrono::steady_clock::time_point{}

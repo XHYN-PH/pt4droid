@@ -11,6 +11,8 @@ layout(push_constant) uniform PassPush {
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 out_color;
+// 2 keeps the general path; 0 and 1 specialize the existing two separate passes.
+layout(constant_id = 0) const uint TONEMAP_MODE = 2u;
 
 vec3 Lut16(uint lut, vec3 c) {
     float slice = floor(15.0 * c.b);
@@ -25,7 +27,7 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 c;
     vec3 hdr = vec3(0.0);
-    if (pass.ids.y == 1u) {
+    if (TONEMAP_MODE == 1u || (TONEMAP_MODE == 2u && pass.ids.y == 1u)) {
         c = ImgFetch(pass.ids.x, pixel).rgb;
     } else {
         hdr = ImgFetch(IMG_HDR, pixel).rgb * pass.f0.z;
@@ -40,13 +42,13 @@ void main() {
         c = clamp(r * inversesqrt(max(vec3(1.0 / 512.0), r)), 0.0, 1.0);
     }
     vec3 graded = c;
-    if (pass.f0.w > 0.0) {
+    if (TONEMAP_MODE == 1u || (TONEMAP_MODE == 2u && pass.f0.w > 0.0)) {
         graded = Lut16(RES_COLOR_LUT, c);
         if (pass.f0.y < 1.0) {
             graded = mix(Lut16(RES_COLOR_LUT_PREV, c), graded, pass.f0.y);
         }
     }
-    if (pass.f1.x > 0.5 && pass.ids.y != 1u) {
+    if (pass.f1.x > 0.5 && TONEMAP_MODE != 1u && (TONEMAP_MODE != 2u || pass.ids.y != 1u)) {
         vec3 extended = SrgbEncode(max(hdr, vec3(1.0)));
         graded = mix(graded, max(graded, extended), greaterThan(hdr, vec3(1.0)));
     }

@@ -43,14 +43,16 @@ struct SceneRenderer {
     struct View {glm::mat4 view_projection{1},view{1};glm::vec4 projection_param{0},eye{0},shadow{0};};
     struct GpuLight { glm::ivec4 info{0}; glm::vec4 shadow_rect{0}; };
     struct Frame {std::array<View,32> views;std::array<GpuLight,32> lights;} data; Frame* frame_=&data;
-    struct Stats {uint32_t shadow_tiles_reused=0,shadow_tiles_rendered=0,shadow_tiles_shared=0,shadow_cache_redraws=0,shadow_draws=0;} stats_;
+    struct Stats {std::array<uint32_t,4> shadow_misses{};uint32_t shadow_tiles_reused=0,shadow_tiles_rendered=0,shadow_tiles_shared=0,shadow_cache_redraws=0,shadow_draws=0;} stats_;
     struct Textures {uint32_t flags=0;uint32_t MaterialFlags(uint32_t)const{return flags;} uint64_t alpha=0;std::array<uint64_t,3> ShadowAlphaState(uint32_t)const{return {flags,0,alpha};}} texture; Textures* textures_=&texture;
     struct Light {uint64_t id=0;std::string name;} light; std::vector<const Light*> light_sources_{&light};
     struct MeshState {void Reset(){}} mesh_draw_state_;
     bool rt_active_=false,rt_reflections_=false,rt_ao_active_=false,rt_contact_active_=false;
     RenderTarget shadow_; VkPipeline shadow_pipeline_=VK_NULL_HANDLE;
     std::vector<ShadowView> shadow_views_;std::vector<Draw> draws_;
-    std::array<ShadowTileCache,16> shadow_cache_;std::array<ShadowMapState,16> shadow_states_;std::array<std::vector<const Draw*>,16> shadow_casters_;std::array<bool,16> shadow_shared_{};std::array<uint64_t,16> shadow_indices_{};
+    std::array<ShadowTileCache,16> shadow_cache_;
+    std::vector<ShadowCasterState> shadow_draw_states_;
+    std::vector<uint8_t> shadow_draw_state_ready_;std::array<ShadowMapState,16> shadow_states_;std::array<std::vector<const Draw*>,16> shadow_casters_;std::array<bool,16> shadow_shared_{};std::array<uint64_t,16> shadow_indices_{};
     void InvalidateShadowCache();void PrepareShadowCasters();void RecordShadows(VkCommandBuffer);
     void TestShadows(VkCommandBuffer c){PrepareShadowCasters();RecordShadows(c);}
     void RecordRayTracing(VkCommandBuffer){} void Stamp(VkCommandBuffer,uint32_t index){assert(index==12);}

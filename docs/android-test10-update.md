@@ -1,0 +1,24 @@
+# pt4droid Test 10 refinements
+
+This implements refinements 1–6 from the Test 9 performance review. Resolution and saved graphics choices remain unchanged.
+
+## Changes
+
+1. **Frame diagnostics.** Bounded storage records render-loop intervals including pacing waits, p50/p95/p99, worst intervals and counts over 33 ms. CPU diagnostics split acquisition/fence waits, scene building, VFX, command recording and submit/present calls. Logs identify the effective cap, focus, thermal status and enabled pacing. Focus/menu transitions restart diagnostic windows. Renderer CPU/work samples are counted once, even if an engine loop has no new render. Logging Off retains the existing query and reporting gates.
+2. **Texture loading.** Cold loads prepare successive 16-placement windows with two readers, overlapping the next window with current model uploads. A shared 96 MiB reservation pool covers every retained wave. Immutable payloads serve all required raw/sRGB material variants and release their reservations when those uploads are resident. Rejected preparations use the normal loader and never wait for budget space. Already-prefetched stages retain their existing preparation path; mods retain their existing loading path. General VFX read-ahead also uses two bounded workers, stops safely at shutdown and can share a result for either upload order. Stage logs distinguish preparation/ahead/direct reads and wave waits.
+3. **Lighting.** Probe volumes use conservative projected scissors without changing accumulation order. Near/camera-plane crossings and uncertain projections retain the full target. The full scissor is restored before probe resolve. GPU diagnostics separate AO, probes/resolve and direct lights; the old combined pass remains available.
+4. **Shadows.** Exact caster metadata and alpha dependencies are prepared once per accepted draw within a frame, then reused by that frame's shadow tiles. Previous-frame reuse still requires the same projections, caster masks, transforms, material dependencies and unanimated skin. Cache misses distinguish cold tiles, dynamic/disabled reuse, projection/view changes and caster/material changes. Existing sharing, adaptive clearing and opt-outs remain.
+5. **VFX.** First-use texture uploads within preparation share the existing upload batch. Constant expression subgraphs are folded once when an effect loads; random, age, particle, camera, receive and wind inputs remain live. Stall logs now identify the final upload wait and previously unsplit handover/other time. Particle counts, simulation, random values, lighting boxes and transparency sorting remain unchanged.
+6. **Composition/post.** Android uses specialization constants for common composition modes and the existing base-tonemap and LUT passes. The same equations, pass order, intermediate formats and quantization boundaries remain. Other modes retain the general shader; optional pipeline failures use the general pipeline. No resolution reduction, effect removal or approximation is introduced.
+
+## Review and validation
+
+All 23 host regression scripts passed. New checks exercise frame distributions, reclaimed/retained preparation leases, ownership surviving the caller, shadow miss classes, probe bounds and 80,000 bit-exact production VFX expression comparisons. Production particle output matches the Test 7 culling-disabled and Test 8 culling-enabled references in 1,500 cases each, now with constant folding exercised. Existing native upload tests retain byte-identical supported-format uploads, immutable raw/sRGB sharing and pre-stream budget rejection. Production shadow recording covers moving geometry, alpha dependencies, skin, clear/reuse transitions, whole point-light sharing and opt-outs.
+
+The new checks also pass AddressSanitizer and UndefinedBehaviorSanitizer. LeakSanitizer cannot inspect this container's process threads and was disabled for that run; explicit preparation ownership/reclamation checks pass. Changed shaders compile for Vulkan 1.3. Native compilation, packaging, signature, alignment and lint results are recorded in the build validation file after release verification.
+
+## Device testing
+
+No physical Android GPU was connected. A performance improvement is not claimed from host checks. Compare the same save, camera route, imported driver, graphics settings, render scale, cap and warmup. Include turns, doors, flashlight, mirror, rain and scene transitions, then a longer session.
+
+Graphics options, saved settings and driver defaults are preserved. Package `com.ptport.app.test`, version `0.2.1-test.10`, version code 52, ARM64, Android 10+. Install over Test 9 with the same signing certificate. The selected work does not implement Mali refinements 7–8; required Vulkan features and experimental texture compatibility still apply.

@@ -323,6 +323,13 @@ bool SceneRenderer::CreatePipelines() {
     full.colors = {kHdrFormat};
     full.depth = kDepthFormat;
     compose_ = CreateGraphicsPipeline(device_, full);
+#ifdef __ANDROID__
+    full.fragment_constants = {{0, 0}};
+    compose_plain_ = CreateGraphicsPipeline(device_, full);
+    full.fragment_constants = {{0, 3}};
+    compose_fog_ = CreateGraphicsPipeline(device_, full);
+    full.fragment_constants.clear();
+#endif
 
     PipelineDesc forward;
     forward.layout = layout_;
@@ -372,6 +379,13 @@ bool SceneRenderer::CreatePipelines() {
     post.colors = {ldr_format_};
     post.fragment = "tonemap.frag";
     tonemap_ = CreateGraphicsPipeline(device_, post);
+#ifdef __ANDROID__
+    post.fragment_constants = {{0, 0}};
+    tonemap_base_ = CreateGraphicsPipeline(device_, post);
+    post.fragment_constants = {{0, 1}};
+    tonemap_grade_ = CreateGraphicsPipeline(device_, post);
+    post.fragment_constants.clear();
+#endif
     post.fragment = "fxaa.frag";
     fxaa_ = CreateGraphicsPipeline(device_, post);
     // the mirror capture's history (mirror_temporal_) is an HDR target
@@ -464,6 +478,10 @@ void SceneRenderer::DestroyPipelines() {
             vkDestroyPipeline(device_, *p, nullptr);
             *p = VK_NULL_HANDLE;
         }
+    }
+    for (VkPipeline* p : {&compose_plain_, &compose_fog_, &tonemap_base_, &tonemap_grade_}) {
+        if (*p) vkDestroyPipeline(device_, *p, nullptr);
+        *p = VK_NULL_HANDLE;
     }
     DestroyUpscalePipelines();
 }
@@ -1237,6 +1255,9 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
         stats_.pass_ms[i - 1] = span(i - 1, i);
     }
     stats_.ray_setup_ms = span(0, 12);
+    stats_.lighting_ms[0] = span(13, 14);
+    stats_.lighting_ms[1] = span(14, 15);
+    stats_.lighting_ms[2] = span(15, 16);
     stats_.pass_ms[0] = span(12, 1);
     stats_.part_ms[0] = span(4, 7);
     stats_.part_ms[1] = span(7, 5);
