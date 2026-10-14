@@ -5,10 +5,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <chrono>
 #include <stdexcept>
 
 #ifdef __APPLE__
@@ -367,8 +367,7 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
             {"descriptorBindingUpdateUnusedWhilePending", have12.descriptorBindingUpdateUnusedWhilePending},
             {"descriptorBindingStorageBufferUpdateAfterBind", have12.descriptorBindingStorageBufferUpdateAfterBind},
             {"scalarBlockLayout", have12.scalarBlockLayout}, {"samplerAnisotropy", have2.features.samplerAnisotropy},
-            {"fillModeNonSolid", have2.features.fillModeNonSolid},
-            {"shaderInt16", have2.features.shaderInt16}, {"shaderClipDistance", have2.features.shaderClipDistance},
+            {"shaderInt16", have2.features.shaderInt16},
         };
         bool complete = true;
         for (const auto& feature : needed) {
@@ -404,9 +403,12 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     VkPhysicalDeviceFeatures supported{};vkGetPhysicalDeviceFeatures(physical,&supported);
     features.features.textureCompressionBC=supported.textureCompressionBC;
     if(!supported.textureCompressionBC)LogInfo("textures: experimental per-format BC compatibility enabled");
-    features.features.fillModeNonSolid = VK_TRUE;
+    // All pipelines use solid fill. Do not reject Mali system drivers for an unused wireframe feature.
+    features.features.fillModeNonSolid = supported.fillModeNonSolid;
     features.features.shaderInt16 = VK_TRUE;
-    features.features.shaderClipDistance = VK_TRUE;
+    shader_clip_distance = supported.shaderClipDistance;
+    features.features.shaderClipDistance = supported.shaderClipDistance;
+    if (!shader_clip_distance) LogInfo("vulkan: fragment clipping compatibility enabled for mirrors and point shadows");
     features.features.independentBlend = supported.independentBlend;
 
     const float priority = 1.0f;
@@ -880,6 +882,7 @@ void Context::DestroySwapchain() {
 #ifdef __ANDROID__
     if(swappy_ready_&&swapchain.handle)SwappyVk_destroySwapchain(device,swapchain.handle);
     swappy_ready_=swappy_attempted_=swappy_active_=false;
+    swappy_fallback_=swappy_requested_=false; swappy_interval_ns_=swappy_last_present_ns_=0; pacing_guard_.Reset();
     swappy_frame_limit_=-1;
 #endif
     for (VkImageView view : swapchain.views) {
@@ -956,12 +959,42 @@ VkResult Context::QueuePresent(const VkPresentInfoKHR& info) {
         return swapchain_owner_->QueuePresent(queue, info);
     }
 #ifdef __ANDROID__
-    if(swappy_active_)return SwappyVk_queuePresent(queue,&info);
+    if(swappy_active_) {
+        const uint64_t started=SDL_GetTicksNS();
+        const VkResult result=SwappyVk_queuePresent(queue,&info);
+        const float present_ms=(SDL_GetTicksNS()-started)/1000000.f;
+        const float interval_ms=swappy_last_present_ns_?(started-swappy_last_present_ns_)/1000000.f:0;
+        swappy_last_present_ns_=started;
+        if(result==VK_SUCCESS && interval_ms>0 && pacing_guard_.Observe(interval_ms,present_ms,
+            swappy_frame_limit_,DisplayRefreshHz(),swappy_interval_ns_,pacing_gpu_ms_)) {
+            swappy_fallback_=true; swappy_active_=false;
+            LogWarn("android: presentation pacing blocked the requested {} FPS; using native cap (display {:.2f} Hz, Swappy interval {:.2f} ms)",
+                    swappy_frame_limit_,DisplayRefreshHz(),AndroidSwapIntervalMs());
+        }
+        return result;
+    }
 #endif
     return vkQueuePresentKHR(queue, &info);
 }
 
 float Context::DisplayRefreshHz() const {
+#ifdef __ANDROID__
+    const uint64_t now=SDL_GetTicksNS();
+    if(!refresh_checked_ns_ || now-refresh_checked_ns_>=250000000) {
+        refresh_checked_ns_=now;
+        auto* env=static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+        auto activity=static_cast<jobject>(SDL_GetAndroidActivity());
+        if(env&&activity) {
+            auto cls=env->GetObjectClass(activity);
+            auto method=cls?env->GetStaticMethodID(cls,"getDisplayRefreshRate","()F"):nullptr;
+            if(method)actual_refresh_hz_=env->CallStaticFloatMethod(cls,method);
+            if(env->ExceptionCheck()){env->ExceptionClear();actual_refresh_hz_=0;}
+            if(cls)env->DeleteLocalRef(cls);
+            env->DeleteLocalRef(activity);
+        }
+    }
+    if(std::isfinite(actual_refresh_hz_)&&actual_refresh_hz_>0)return actual_refresh_hz_;
+#endif
     if(!window_)return 0;
     const auto* mode=SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
     return mode ? mode->refresh_rate : 0;
@@ -973,6 +1006,7 @@ void Context::SetAndroidFramePacing(int fps){
     // even when optional Swappy pacing is off. Menu transitions also update it.
     if(display_frame_target_!=fps) {
         display_frame_target_=fps;
+        swappy_fallback_=false; swappy_last_present_ns_=0; pacing_guard_.Reset();
         auto* env=static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
         auto activity=static_cast<jobject>(SDL_GetAndroidActivity());
         if(env&&activity) {
@@ -985,7 +1019,11 @@ void Context::SetAndroidFramePacing(int fps){
         if(env&&activity)env->DeleteLocalRef(activity);
     }
     swappy_active_=false;
-    if(fps<=0||!android::PerformanceOptions().frame_pacing||!swapchain.handle||swapchain_owner_)return;
+    const bool requested=fps>0&&android::PerformanceOptions().frame_pacing;
+    if(requested!=swappy_requested_) {
+        swappy_requested_=requested; swappy_fallback_=false; swappy_last_present_ns_=0; pacing_guard_.Reset();
+    }
+    if(!requested||swappy_fallback_||!swapchain.handle||swapchain_owner_)return;
     if(!swappy_attempted_){
         swappy_attempted_=true;
         auto* env=static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());auto activity=static_cast<jobject>(SDL_GetAndroidActivity());
@@ -994,13 +1032,17 @@ void Context::SetAndroidFramePacing(int fps){
         if(env&&env->ExceptionCheck()){env->ExceptionClear();swappy_ready_=false;}
         if(env&&activity)env->DeleteLocalRef(activity);
         if(swappy_ready_){
+            auto* native=static_cast<ANativeWindow*>(SDL_GetPointerProperty(SDL_GetWindowProperties(window_),SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER,nullptr));
+            if(native)SwappyVk_setWindow(device,swapchain.handle,native);
+            else { swappy_fallback_=true; LogWarn("android: frame pacing has no native window; using native cap"); return; }
             // DisplayRefresh owns the requested display rate. Do not let Swappy replace it with the FPS cap.
             SwappyVk_setAutoSwapInterval(false);SwappyVk_setAutoPipelineMode(false);
             SwappyVk_enableStats(swapchain.handle,false);
-        }
+        } else LogWarn("android: frame pacing unavailable; using native cap");
     }
     if(swappy_ready_){
         if(swappy_frame_limit_!=fps){SwappyVk_setSwapIntervalNS(device,swapchain.handle,1000000000ULL/std::clamp(fps,1,1000));swappy_frame_limit_=fps;}
+        swappy_interval_ns_=SwappyVk_getSwapIntervalNS(swapchain.handle);
         bool enabled=false;
         swappy_active_=SwappyVk_isEnabled(swapchain.handle,&enabled)&&enabled;
     }

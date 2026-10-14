@@ -16,6 +16,7 @@
 #include "engine/fs/vfs.h"
 #include "engine/render/scene_renderer.h"
 #include "engine/render/light_scissor.h"
+#include "engine/render/mobile_probe_policy.h"
 
 namespace pt {
 namespace {
@@ -1243,7 +1244,7 @@ void SceneRenderer::SetTppFog(const TppAtmosphereSettings& tpp) {
     const glm::vec3 sigma=tpp.fog_mie+tpp.fog_rayleigh;
     frame_->fog[4]=glm::vec4(sigma,.07957747f*(1.0f-tpp.fog_mie_anisotropy*tpp.fog_mie_anisotropy));
     frame_->fog[5]=glm::vec4(1.0f/glm::max(glm::vec3(1e-6f),sigma),0.0f);
-    frame_->fog[6]=glm::vec4(0.0f);
+    frame_->fog[6]=glm::vec4(frame_->fog[3].w*glm::vec3(frame_->fog[5]),0.0f);
     frame_->fog[7] = glm::vec4(tpp.light_dir, 0.0f);
 }
 
@@ -1851,7 +1852,18 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
     const bool shrink = !up_.enabled && !ao && !legacy_resolve;
     const VkExtent2D acc_area{shrink ? (area.width + 1) / 2 : area.width, shrink ? (area.height + 1) / 2 : area.height};
     static const bool maps_enabled = [] { const char* v=std::getenv("PT_PROBE_MAP"); return !v || std::string_view(v)!="0"; }();
-    const bool cached = probes && !ao && maps_enabled && probe_cached_ && probe_map_pipeline_ && probe_map_.Valid();
+    std::array<VkRect2D,gpu::kMaxProbes> probe_bounds;
+    uint64_t covered_pixels=0;
+    if(probes)for(uint32_t i=0;i<probe_count_;++i) {
+        probe_bounds[i]=LightScissor(frame_->views[view.index].view_projection*lighting_->probes[probe_order_[i]].box_world,acc_area);
+        covered_pixels+=uint64_t(probe_bounds[i].extent.width)*probe_bounds[i].extent.height;
+    }
+    bool cached = probes && !ao && maps_enabled && probe_cached_ && probe_map_pipeline_ && probe_map_.Valid();
+#ifdef __ANDROID__
+    cached=cached&&ProbeMapWorthBuilding(covered_pixels,probe_count_);
+#endif
+    if(view.index==main_view_.index) {stats_.probe_map_used=cached;stats_.probe_covered_pixels=covered_pixels;}
+    if(view.index==main_view_.index)Stamp(cmd,17);
     if (cached) {
         // Rebuilt for each camera/mirror/eye view; no stale orientation.
         UseTargets(cmd, {{&probe_map_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
@@ -1863,6 +1875,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&probe_map_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     }
+    if(view.index==main_view_.index)Stamp(cmd,18);
     auto draw_probes = [&](uint32_t shrink_flag) {
         if (ao) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_ao_);
@@ -1880,7 +1893,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             push.m = p.box_world;
             // Same accumulation order; skip only pixels outside the projected
             // box. Camera/near-plane crossings keep the original full target.
-            const VkRect2D bounds = LightScissor(frame_->views[view.index].view_projection * p.box_world, acc_area);
+            const VkRect2D bounds = probe_bounds[i];
             if (!bounds.extent.width || !bounds.extent.height) continue;
             vkCmdSetScissor(cmd, 0, 1, &bounds);
             PushConstants(cmd, &push, sizeof(push));
@@ -1956,6 +1969,11 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             if (const char* unshadowed = std::getenv("PT_LIGHT_DRAW_NO_SHADOW"); unshadowed && l.name.find(unshadowed) != std::string::npos) {
                 push.ids.z = 0;
             }
+            // View-space light values are invariant across every covered pixel.
+            const auto& light=frame_->lights[light_index];
+            const auto& camera=frame_->views[view.index];
+            push.f1=camera.view*glm::vec4(glm::vec3(light.position),1.0f);
+            push.f2=glm::vec4(glm::mat3(camera.view)*glm::vec3(light.direction),0.0f);
             push.f0.x = contact ? rt_contact_reach_ : 0.0f;
             push.f0.y = contact && rt_contact_legacy_ ? 1.0f : 0.0f;
             glm::mat4 scissor_volume=volume;glm::vec3 lo,hi;
@@ -2732,8 +2750,8 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         push.f0 = glm::vec4(1.0f / (c * c), t, c, 0.0f);
     }
     VkPipeline composite = compose_;
-    if (push.ids.z == 0 && compose_plain_) composite = compose_plain_;
-    if (push.ids.z == 3 && compose_fog_) composite = compose_fog_;
+    if (push.ids.z == 0) composite = push.ids.y ? (compose_plain_ ? compose_plain_ : compose_) : (compose_plain_noao_ ? compose_plain_noao_ : compose_);
+    if (push.ids.z == 3) composite = push.ids.y ? (compose_fog_ ? compose_fog_ : compose_) : (compose_fog_noao_ ? compose_fog_noao_ : compose_);
     Fullscreen(cmd, composite, push);
     // f010_dumps 1490: fox3dfw_glass and fox3dfw_constant draws write depth (DB_DEPTH_CONTROL 0x7e6), so the effects behind them are hidden
     vkCmdEndRendering(cmd);

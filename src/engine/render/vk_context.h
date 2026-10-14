@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "engine/render/vk.h"
+#include "engine/platform/mobile_pacing_guard.h"
 
 struct SDL_Window;
 
@@ -74,6 +75,8 @@ public:
     VkResult QueuePresent(const VkPresentInfoKHR& info);
     void SetAndroidFramePacing(int fps);
     bool AndroidFramePacingActive() const { return swappy_active_; }
+    void SetPacingGpuTime(float milliseconds) { pacing_gpu_ms_ = milliseconds; }
+    double AndroidSwapIntervalMs() const { return swappy_interval_ns_ / 1000000.0; }
     float DisplayRefreshHz() const;
     const SwapchainHooks* SwapchainOwner() const { return swapchain_owner_; }
     VkImageLayout PresentLayout() const { return swapchain_owner_ ? swapchain_owner_->PresentLayout() : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; }
@@ -126,6 +129,8 @@ public:
     bool want_ray_query = false;
     bool ray_query_supported = false;
     bool ray_query = false;
+    // Missing optional clip distances use shader variants with fragment clipping.
+    bool shader_clip_distance = true;
     std::string ray_query_missing;
     VkDeviceSize scratch_alignment = 256;
 
@@ -152,7 +157,13 @@ private:
     VkExtent2D window_extent_{};
     bool suboptimal_logged_ = false;
     bool swappy_ready_=false,swappy_attempted_=false,swappy_active_=false;
+    bool swappy_fallback_=false, swappy_requested_=false;
     int swappy_frame_limit_=-1, display_frame_target_=-1;
+    uint64_t swappy_interval_ns_=0, swappy_last_present_ns_=0;
+    float pacing_gpu_ms_=0;
+    android::PacingGuard pacing_guard_;
+    mutable uint64_t refresh_checked_ns_=0;
+    mutable float actual_refresh_hz_=0;
     SwapchainHooks* swapchain_owner_ = nullptr;
     // Android: the window and the native window the surface was made for. Android hands the app a new native window after
     // it comes back from the background; the surface is then made again (CreateSwapchain)

@@ -187,6 +187,9 @@ struct RenderStats {
     // finer splits of the passes above: forward draws (of compose), effects (of compose), upscale inputs, reflections, upscaler,
     // bloom (of post)
     float part_ms[6] = {};
+    float probe_map_ms = 0;
+    bool probe_map_used = false;
+    uint64_t probe_covered_pixels = 0;
     float lighting_ms[3] = {}; // AO, probes/resolve, direct lights
     std::array<uint32_t, 4> shadow_misses{}; // cold, dynamic/disabled, projection, casters
     // the port's device memory (VMA blocks) when the frame was recorded, in MiB
@@ -413,7 +416,7 @@ private:
     // 0 start, 1 shadows, 2 mirror, 3 G-buffer, 4 lighting, 5 compose, forward and effects, 6 end; within them 7 the forward draws,
     // 8 the upscale inputs, 9 the reflections, 10 the upscaler, 11 the bloom (written on every frame, in place when a pass is off)
     // 12 ends ray structure preparation, separating it from shadow-map rendering.
-    static constexpr uint32_t kTimestamps = 17;
+    static constexpr uint32_t kTimestamps = 19;
     static constexpr uint32_t kReflectMapSize = 512;
     static constexpr float kCameraCutDistance = 3.0f;
 
@@ -540,6 +543,7 @@ private:
     VkPipeline light_ = VK_NULL_HANDLE;
     VkPipeline compose_ = VK_NULL_HANDLE;
     VkPipeline compose_plain_ = VK_NULL_HANDLE, compose_fog_ = VK_NULL_HANDLE;
+    VkPipeline compose_plain_noao_ = VK_NULL_HANDLE, compose_fog_noao_ = VK_NULL_HANDLE;
     VkPipeline forward_ = VK_NULL_HANDLE;
     VkPipeline luminance_ = VK_NULL_HANDLE;
     VkPipeline reflect_colour_ = VK_NULL_HANDLE;
