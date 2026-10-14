@@ -5188,6 +5188,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
 #ifdef __ANDROID__
                     pt::LogInfo("mobile pacing: thermal status {}, sustained {}, frame pacing {}", pt::android::ThermalStatus(),
                         pt::android::PerformanceOptions().sustained, app.renderer.Context().AndroidFramePacingActive());
+                    pt::LogInfo("mobile pacing interval: {:.2f} ms",app.renderer.Context().AndroidSwapIntervalMs());
 #endif
                     pt::LogInfo("presentation CPU avg: finish recording {:.2f}, queue submit {:.2f}, present {:.2f} ms; display {:.2f} Hz / {:.3f} ms; path {}",
                         frame_diagnostics.Mean(5),frame_diagnostics.Mean(6),frame_diagnostics.Mean(7),app.renderer.Context().DisplayRefreshHz(),
@@ -5215,6 +5216,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
                     } else {
                         pt::LogInfo("mobile passes: GPU timings unavailable; renderer CPU avg {:.2f} ms", timings.CpuMean(timings.cpu_ms));
                     }
+                    pt::LogInfo("mobile probe map: used {}, covered {} pixels, build {:.2f} ms",app.scene.Stats().probe_map_used,app.scene.Stats().probe_covered_pixels,app.scene.Stats().probe_map_ms);
                     if (timings.gpu_samples) pt::LogInfo("mobile lighting avg: AO {:.2f}, probes/resolve {:.2f}, direct lights {:.2f} ms",
                         timings.GpuMean(timings.lighting[0]), timings.GpuMean(timings.lighting[1]), timings.GpuMean(timings.lighting[2]));
                     pt::LogInfo("mobile shadow misses avg: cold {:.2f}, dynamic/disabled {:.2f}, projection/view {:.2f}, casters/material {:.2f}",
@@ -5268,6 +5270,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 cap = 0;
             }
 #ifdef __ANDROID__
+            app.renderer.Context().SetPacingGpuTime(app.scene.Stats().gpu_ms);
             app.renderer.Context().SetAndroidFramePacing(cap);
             if(app.renderer.Context().AndroidFramePacingActive())cap=0;
 #endif
