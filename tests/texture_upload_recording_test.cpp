@@ -36,6 +36,7 @@ struct Context{VkPhysicalDevice physical{};VkDevice device{};void*allocator{};bo
  void DestroyImage(Image&o){records.erase(o.image);o={};}
  bool CreateBuffer(Buffer&o,size_t size,VkBufferUsageFlags,bool){if(fail_buffer)return false;static uintptr_t serial=100000;o.buffer=handle<VkBuffer>(serial++);o.size=size;o.mapped=new uint8_t[size];o.allocation=o.mapped;buffers[o.buffer]={static_cast<uint8_t*>(o.mapped),size};return true;}
  void DestroyBuffer(Buffer&o){if(o.buffer){buffers.erase(o.buffer);delete[]static_cast<uint8_t*>(o.mapped);}o={};}
+ bool SubmitTextureUpload(const std::function<void(VkCommandBuffer)>& fn,Buffer&){return Submit(fn);}
  bool Submit(const std::function<void(VkCommandBuffer)>&fn){++submissions;if(fail_submit)return false;fn(nullptr);return true;}
 };}
 struct TextureMip{uint32_t width,height;std::span<const uint8_t>data;};
