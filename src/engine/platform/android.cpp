@@ -353,6 +353,11 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     const std::string choice = DriverChoice();
     std::string lower = choice;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lower == "turnip" && !BundledTurnipCompatible(SystemGpuName())) {
+        name = "system driver (bundled Turnip is for Adreno)";
+        LogInfo("android: incompatible bundled Turnip selection ignored; using the system driver");
+        return nullptr;
+    }
     if (lower == "system" || (lower=="auto" && !AutoUsesTurnip())) {
         name = "system driver (driver.txt)";
         return nullptr;
