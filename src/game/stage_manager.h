@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "engine/assets/ftex.h"
+#include "engine/assets/texture_preparation_stream.h"
 #include "engine/assets/geom.h"
 #include "engine/fs/vfs.h"
 #include "engine/physics/collision_world.h"
@@ -199,6 +200,8 @@ private:
         std::unordered_map<std::string, std::shared_ptr<const PreGeom>> geoms;
         std::unordered_map<std::string, std::shared_ptr<FmdlModel>> models;
         std::vector<std::pair<std::string, std::shared_ptr<FtexTexture>>> textures;
+        std::shared_ptr<TexturePreparationStream> preparation;
+        std::vector<std::pair<std::string, std::shared_future<PreparedTextureResult>>> early_textures;
     };
     struct KnownAssets {
         std::unordered_set<std::string> models;
@@ -218,6 +221,7 @@ public:
     // false while the machine is low on memory (main.cpp's memory guard): no parse is kept ahead
     void SetPrefetchAllowed(bool allowed) {
         prefetch_allowed_ = allowed;
+        models_.SetPreparationAllowed(allowed);
         if (!allowed) {
             DropPrefetch();
         }

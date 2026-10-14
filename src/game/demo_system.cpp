@@ -336,6 +336,7 @@ void DemoSystem::IndexStage(Stage& stage) {
             for (const auto& [key, path] : info->file_params) {
                 string_names_[Code(key.c_str())] = path;
             }
+            for(const auto& [name,path]:info->model_files)game_.Models().Prepare(path);
             demos_[info->demo_id] = info;
         }
     }
@@ -548,6 +549,15 @@ void DemoSystem::LoadPlayerParts() {
         player_default_hidden_ = player_hidden_;
         break;
     }
+}
+
+void DemoSystem::PreparePlayer() {
+    LoadPlayerParts();
+    if(player_model_file_.empty())return;
+    game_.Models().Get(player_model_file_);
+    LoadSkeleton(player_model_file_);
+    PlayerHelpBones();
+    PlayerSimRig();
 }
 
 const std::string& DemoSystem::PlayerModelFile() {

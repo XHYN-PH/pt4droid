@@ -103,6 +103,7 @@ bool Game::Init(const GameConfig& config) {
         fox_rng_ = ReadTsc() | 1u;
     }
     floor_.SeedRandom(config.seed ? config.seed : ReadTsc());
+    if(!config.theater)demos_.PreparePlayer();
     controller_.first_boot = true;
     LogInfo("game: initialized");
     LogInfo("game+: {}", PT_GAMEPLUS ? "content in this build" : "not in this build (PT_GAMEPLUS off; finishes are still counted)");

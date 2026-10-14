@@ -115,8 +115,14 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
     if (known) {
         std::unordered_set<std::string> stems;
         std::vector<std::string> texture_paths;
+        if(!prepare_textures&&!mods::Active()) {
+            parsed.preparation=std::make_shared<TexturePreparationStream>(std::make_shared<TextureReadBudget>(96ull*1024*1024),
+                [&vfs](const std::string& path,FtexTexture& ftex,TextureReadBudget* lease){return LoadFtex(vfs.Textures(),path,ftex,lease);});
+        }
+        size_t placement_index=0;
         for (const auto& file : stage->files) {
             for (const auto& placement : file->static_models) {
+                const bool early=placement_index++<32;
                 if (placement.model_file.empty() || known->models.contains(placement.model_file) || parsed.models.contains(placement.model_file)) {
                     continue;
                 }
@@ -131,7 +137,10 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                         for (const auto& use : MaterialTextureReads(m)) {
                             std::string stem = FtexStem(use.path);
                             const std::string key = use.raw ? stem + "#raw" : stem;
-                            if (!known->textures.contains(key) && stems.insert(stem).second) texture_paths.push_back(use.path);
+                            if (!known->textures.contains(key) && stems.insert(stem).second) {
+                                texture_paths.push_back(use.path);
+                                if(early&&parsed.preparation)parsed.early_textures.emplace_back(use.path,parsed.preparation->Enqueue(use.path));
+                            }
                         }
                     }
                 }
@@ -141,7 +150,8 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
         if (!prepare_textures) texture_paths.clear();
         parsed.textures.resize(texture_paths.size());
         TextureReadBudget budget(96ull * 1024 * 1024);
-        auto texture_reads = std::async(std::launch::async, [&] {
+        std::future<void> texture_reads;
+        if(!texture_paths.empty())texture_reads = std::async(std::launch::async, [&] {
             ParallelChunks(texture_paths.size(), 2, [&](size_t, size_t begin, size_t end) {
                 for (size_t i = begin; i < end; ++i) {
                     auto ftex = std::make_shared<FtexTexture>();
@@ -188,7 +198,7 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                 parsed.geoms.emplace(placement.geom_file, std::move(geom));
             }
         }
-        texture_reads.get();std::erase_if(parsed.textures,[](const auto& entry){return !entry.second;});
+        if(texture_reads.valid())texture_reads.get();std::erase_if(parsed.textures,[](const auto& entry){return !entry.second;});
     }
     parsed.stage = std::move(stage);
     return parsed;
@@ -303,18 +313,27 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
     }
     if (planned.empty()) waves.clear();
     auto wave_budget = std::make_shared<TextureReadBudget>(96ull * 1024 * 1024);
-    std::unique_ptr<TexturePreparationStream> stream;
-    if (!waves.empty()) stream=std::make_unique<TexturePreparationStream>(wave_budget,[&](const std::string& path,FtexTexture& ftex,TextureReadBudget* lease){return LoadFtex(vfs_.Textures(),path,ftex,lease);});
+    auto stream=std::move(parsed.preparation);
+    if (!waves.empty()&&!stream) stream=std::make_shared<TexturePreparationStream>(wave_budget,[&](const std::string& path,FtexTexture& ftex,TextureReadBudget* lease){return LoadFtex(vfs_.Textures(),path,ftex,lease);});
     // Drop callbacks and outstanding futures before their stream is destroyed,
     // including if model parsing/upload throws during this stage load.
     struct PreparationCleanup {
         TextureManager& textures; std::vector<std::string>& paths;
         ~PreparationCleanup(){textures.DropDecoded(paths);}
     } cleanup{models_.Textures(),adopted};
+    std::unordered_set<std::string> early_stems;
+    for(auto& [path,future]:parsed.early_textures) {
+        const std::string stem=FtexStem(path);
+        early_stems.insert(stem);
+        if(models_.Textures().AdoptPending(path,std::move(future),[&](const std::string& value){stream->Prioritize(value);})) {
+            adopted.push_back(path);models_.Textures().SetPreparedVariants(path,required_variants[stem]);
+        }
+    }
     size_t scheduled_waves=0;
     const auto schedule_through=[&](size_t last) {
         while (scheduled_waves<waves.size() && scheduled_waves<=last) {
             for(const auto& path:waves[scheduled_waves]) {
+                if(early_stems.contains(FtexStem(path)))continue;
                 if(models_.Textures().AdoptPending(path,stream->Enqueue(path),[&](const std::string& stem){stream->Prioritize(stem);})) {
                     adopted.push_back(path); models_.Textures().SetPreparedVariants(path,required_variants.at(FtexStem(path)));
                 }
@@ -428,6 +447,7 @@ Stage* StageManager::LoadResident(const std::string& fpk_path) {
 
 void StageManager::RequestLocation(const std::string& fpk_path) {
     pending_location_ = fpk_path;
+    if(prefetch_allowed_&&!prefetch_.valid())StartPrefetch(fpk_path);
 }
 
 void StageManager::RequestLoad(const std::string& fpk_path, const std::string& label, const std::string& connector, const std::string& base_label,
@@ -437,6 +457,7 @@ void StageManager::RequestLoad(const std::string& fpk_path, const std::string& l
         return;
     }
     pending_load_ = PendingLoad{fpk_path, label, connector, base_label, base_connector};
+    if(prefetch_allowed_&&!prefetch_.valid())StartPrefetch(fpk_path);
 }
 
 void StageManager::RequestActivate(const std::string& label) {
