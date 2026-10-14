@@ -314,7 +314,8 @@ private:
         glm::mat4 world{1.0f};
         glm::vec3 position{0.0f};
         glm::vec4* frame_values = nullptr;
-        uint8_t* frame_ready = nullptr;
+        uint32_t* frame_ready = nullptr;
+        uint32_t frame_epoch = 1;
     };
 
     int Emit(Instance& inst, ShapeState& state, const EffectDef& def, int32_t emit, float dframes, const ViewInfo& view);
@@ -324,7 +325,8 @@ private:
     glm::vec4 Eval(const EvalContext& c, int32_t expr) const;
     glm::vec4 EvalUncached(const EvalContext& c, int32_t expr) const;
     mutable std::vector<glm::vec4> frame_values_;
-    mutable std::vector<uint8_t> frame_ready_;
+    mutable std::vector<uint32_t> frame_ready_;
+    mutable uint32_t frame_epoch_ = 0;
     glm::vec4 Receive(const Instance& inst, uint32_t name, const glm::vec4& fallback) const;
     uint32_t SeedFor(const Instance& inst, uint32_t seed, uint8_t type, uint32_t node_id) const;
     void BuildShape(const Instance& inst, const glm::mat4& world, const ShapeDef& shape, const ShapeState& state, const ViewInfo& view,
