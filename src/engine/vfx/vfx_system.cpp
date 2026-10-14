@@ -777,6 +777,16 @@ glm::vec4 System::Receive(const Instance& inst, uint32_t name, const glm::vec4& 
 }
 
 glm::vec4 System::Eval(const EvalContext& c, int32_t index) const {
+    if (index < 0 || size_t(index) >= c.def->exprs.size()) return glm::vec4(0);
+    if (size_t(index) < c.def->constants.size() && c.def->constants[index]) return *c.def->constants[index];
+    const bool memo = c.frame_ready && size_t(index) < c.def->frame_uniform.size() && c.def->frame_uniform[index];
+    if (memo && c.frame_ready[index]) return c.frame_values[index];
+    const glm::vec4 value = EvalUncached(c, index);
+    if (memo) { c.frame_values[index] = value; c.frame_ready[index] = 1; }
+    return value;
+}
+
+glm::vec4 System::EvalUncached(const EvalContext& c, int32_t index) const {
     if (index < 0) {
         return glm::vec4(0.0f);
     }
@@ -1006,6 +1016,9 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
     c.view = &view;
     c.effect_time = inst.frame / kFrameRate;
     c.effect_ratio = Saturate(inst.frame / static_cast<float>(def.all_frame));
+    frame_values_.resize(def.exprs.size());
+    frame_ready_.assign(def.exprs.size(), 0);
+    c.frame_values = frame_values_.data(); c.frame_ready = frame_ready_.data();
     const MaterialDef& m = shape.material;
     const size_t slots = def.random_slots;
     if (shape.kind == ShapeKind::SpotLight || shape.kind == ShapeKind::PointLight) {

@@ -221,6 +221,7 @@ struct FlareDef {
 struct EffectDef {
     // Only pure constant expression subgraphs are folded; random/time/view inputs stay live.
     std::vector<std::optional<glm::vec4>> constants;
+    std::vector<uint8_t> frame_uniform; // independent of particle age, random slots, position and spawn world
     std::string name;
     uint32_t all_frame = 1;
     uint32_t play_mode = 0;
