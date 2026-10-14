@@ -65,9 +65,9 @@ To import a compatible driver, use **Settings → Vulkan drivers → Import driv
 
 ## Graphics and performance
 
-Use **Settings → Game graphics** for presets, frame limit, textures, shadows and effects. Start with **Balanced**, or choose **Maximum performance** for lower detail and render scale.
+Use **Settings → Game graphics** for presets, FPS/display refresh, textures, shadows and effects. Start with **Balanced**, or choose **Maximum performance** for lower detail and render scale.
 
-Render scale, display refresh rate, Android frame pacing and heat management are separate Settings options. A higher display rate does not guarantee higher game FPS. Keep logs Off during normal play.
+The FPS setting requests a matching display refresh rate or a supported multiple. Render scale and optional Android frame pacing are in Settings. Sustained performance keeps your chosen FPS limit; Android still controls temperature and clocks. Keep logs Off during normal play.
 
 Test 10 refines texture preparation, lighting, shadows, VFX and composition, and adds more useful frame-timing logs. See the [changelog](docs/releases/pt4droid-v0.2.1-test.10.md). Phone performance comparisons still need testing.
 
