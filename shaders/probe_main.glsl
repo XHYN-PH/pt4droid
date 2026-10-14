@@ -15,29 +15,13 @@ layout(push_constant) uniform PassPush {
 
 layout(location = 0) out vec4 out_diffuse;
 
-vec3 EvaluateSh(Probe p, vec3 n) {
-    vec3 e = p.sh[0].rgb;
-    e += (p.sh[1].rgb * n.y + p.sh[2].rgb * n.z + p.sh[3].rgb * n.x);
-    e += (p.sh[4].rgb * (n.x * n.y) + p.sh[5].rgb * (n.y * n.z) + p.sh[6].rgb * (3.0 * n.z * n.z - 1.0));
-    e += (p.sh[7].rgb * (n.x * n.z) + p.sh[8].rgb * (n.x * n.x - n.y * n.y));
-    return e;
-}
+#include "probe_sh.glsl"
+layout(constant_id = 0) const bool cached_probe_map = false;
 
-// SH_SphereMap (rendering.md 5): an atlas texel at cell coordinate t in [-1, 1]^2 holds E at the view direction of a Lambert
-// azimuthal equal area map around -z
-vec3 SphereMapDirection(vec2 t) {
-    float len2 = dot(t, t);
-    float z = min(1.0, 2.0 * len2 - 1.0);
-    vec2 xy = len2 > 0.0 ? vec2(-t.x, t.y) * inversesqrt(len2) * sqrt(max(0.0, 1.0 - z * z)) : vec2(0.0);
-    return vec3(xy, z);
-}
-
-vec3 SphereMapTexel(Probe p, View v, ivec2 texel) {
-    // the 16x16 cell's texel centre; the vertex shader flips v (inTexcoord.y = 1 - 2 v)
-    vec2 s = (vec2(texel) + 0.5) / 16.0;
-    vec3 d = SphereMapDirection(vec2(2.0 * s.x - 1.0, 1.0 - 2.0 * s.y));
-    vec3 w = mat3(v.inv_view) * d;
-    return EvaluateSh(p, vec3(-w.x, -w.z, w.y));
+vec3 ProbeTexel(Probe p, View v, ivec2 texel) {
+    if (!cached_probe_map) return SphereMapTexel(p, v, texel);
+    ivec2 cell = ivec2(int(pass.ids.y % 32u), int(pass.ids.y / 32u));
+    return ImgFetch(IMG_PROBE_MAP, cell * 16 + texel).rgb;
 }
 
 // SSLighting2_SH_MultiBlend reads the atlas at r = 0.40625 sqrt(0.5 N.z + 0.5) from the cell centre along -normalize(N.xy),
@@ -52,10 +36,10 @@ vec3 SphereMapLookup(Probe p, View v, vec3 n_view) {
     vec2 texel = s * 16.0 - 0.5;
     ivec2 i0 = ivec2(floor(texel));
     vec2 f = texel - vec2(i0);
-    vec3 a = SphereMapTexel(p, v, i0);
-    vec3 b = SphereMapTexel(p, v, i0 + ivec2(1, 0));
-    vec3 c = SphereMapTexel(p, v, i0 + ivec2(0, 1));
-    vec3 d = SphereMapTexel(p, v, i0 + ivec2(1, 1));
+    vec3 a = ProbeTexel(p, v, i0);
+    vec3 b = ProbeTexel(p, v, i0 + ivec2(1, 0));
+    vec3 c = ProbeTexel(p, v, i0 + ivec2(0, 1));
+    vec3 d = ProbeTexel(p, v, i0 + ivec2(1, 1));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
