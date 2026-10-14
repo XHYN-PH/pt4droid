@@ -9,7 +9,7 @@
 #include <atomic>
 
 #include "engine/assets/fmdl.h"
-#include "engine/assets/texture_preparation_wave.h"
+#include "engine/assets/texture_preparation_stream.h"
 #include "engine/core/log.h"
 #include "engine/core/parallel_for.h"
 #include "engine/fs/mods.h"
@@ -280,7 +280,6 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
     // Cold loads prepare a sliding window, overlapping the next wave's reads
     // with current model uploads. One shared 96 MiB pool covers both waves;
     // a refused reservation is loaded normally on first use, never waited on.
-    using TextureWave = PreparedTextureWave;
     constexpr size_t kWavePlacements = 16;
     std::vector<std::vector<std::string>> waves;
     std::unordered_map<std::string, uint8_t> required_variants;
@@ -304,16 +303,26 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
     }
     if (planned.empty()) waves.clear();
     auto wave_budget = std::make_shared<TextureReadBudget>(96ull * 1024 * 1024);
-    const auto start_wave = [&](size_t index) {
-        if (waves[index].empty()) return std::async(std::launch::deferred, [] { return TextureWave{}; });
-        return std::async(std::launch::async, [&, paths = waves[index], budget = wave_budget] {
-            return PrepareTextureWave(paths, budget, [&](const std::string& path, FtexTexture& ftex, TextureReadBudget* lease) {
-                return LoadFtex(vfs_.Textures(), path, ftex, lease);
-            });
-        });
+    std::unique_ptr<TexturePreparationStream> stream;
+    if (!waves.empty()) stream=std::make_unique<TexturePreparationStream>(wave_budget,[&](const std::string& path,FtexTexture& ftex,TextureReadBudget* lease){return LoadFtex(vfs_.Textures(),path,ftex,lease);});
+    // Drop callbacks and outstanding futures before their stream is destroyed,
+    // including if model parsing/upload throws during this stage load.
+    struct PreparationCleanup {
+        TextureManager& textures; std::vector<std::string>& paths;
+        ~PreparationCleanup(){textures.DropDecoded(paths);}
+    } cleanup{models_.Textures(),adopted};
+    size_t scheduled_waves=0;
+    const auto schedule_through=[&](size_t last) {
+        while (scheduled_waves<waves.size() && scheduled_waves<=last) {
+            for(const auto& path:waves[scheduled_waves]) {
+                if(models_.Textures().AdoptPending(path,stream->Enqueue(path),[&](const std::string& stem){stream->Prioritize(stem);})) {
+                    adopted.push_back(path); models_.Textures().SetPreparedVariants(path,required_variants.at(FtexStem(path)));
+                }
+            }
+            ++scheduled_waves;
+        }
     };
-    std::future<TextureWave> next_wave;
-    if (!waves.empty()) next_wave = start_wave(0);
+    if(stream)schedule_through(1);
     placement_count = 0;
     models_.Textures().BeginUploadBatch();
     const uint32_t models_before = models_.Loaded() + models_.Failed();
@@ -322,20 +331,11 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
     const double upload_before = models_.Textures().UploadMs();
     double models_ms = 0.0;
     double geoms_ms = 0.0;
-    double wave_wait_ms = 0.0;
     for (const auto& file : stage->files) {
         for (const auto& placement : file->static_models) {
             if (!waves.empty() && placement_count % kWavePlacements == 0) {
                 const size_t wave = placement_count / kWavePlacements;
-                const auto wait_started = clock::now();
-                for (auto& [path, ftex] : next_wave.get()) {
-                    if (models_.Textures().AdoptDecoded(path, std::move(ftex))) {
-                        adopted.push_back(path);
-                        models_.Textures().SetPreparedVariants(path, required_variants.at(FtexStem(path)));
-                    }
-                }
-                wave_wait_ms += ms(wait_started, clock::now());
-                if (wave + 1 < waves.size()) next_wave = start_wave(wave + 1);
+                schedule_through(wave + 1);
             }
             ++placement_count;
             const auto model_started = clock::now();
@@ -388,7 +388,7 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
         LogInfo("stage texture sources: {} prepared hits, {} ahead hits, {} direct reads, {} retained preparations; mods {}",
             reads.prepared - reads_before.prepared, reads.ahead - reads_before.ahead, reads.direct - reads_before.direct,
             adopted.size(), mods::Active() != nullptr);
-        LogInfo("stage texture pipeline: {} waves, wait {:.1f} ms, 96 MiB shared preparation limit", waves.size(), wave_wait_ms);
+        LogInfo("stage texture pipeline: {} windows, first-use wait {:.1f} ms, {} ready; direct fallbacks: budget {}, read {}, unprepared {}; 96 MiB preparation limit", waves.size(), reads.stream_wait_ms-reads_before.stream_wait_ms, reads.stream_ready-reads_before.stream_ready, reads.budget_fallback-reads_before.budget_fallback, reads.read_fallback-reads_before.read_fallback, reads.unprepared-reads_before.unprepared);
     }
     // the main thread's share of a stage load (the hitch at the clock when the loaded package is new): the parse unless the
     // prefetch had it, the models with their textures, the collision pieces
