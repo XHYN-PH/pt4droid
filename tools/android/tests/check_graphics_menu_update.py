@@ -37,9 +37,14 @@ public class GraphicsMenuTest {
   ok(DisplayRefresh.rates(a).size()==2 && DisplayRefresh.maximum(a)==120,"UI only exposes same-resolution supported rates");
   Surface s=new Surface();DisplayRefresh.apply(a,s);ok(s.calls==1 && s.rate==120 && a.window.attributes.preferredRefreshRate==120 && a.window.attributes.preferredDisplayModeId==0,"Android 11+ requests high rate on window and game surface");
   int updates=a.window.updates;for(int i=0;i<1000;i++)DisplayRefresh.apply(a,s);ok(s.calls==1 && updates==a.window.updates,"stable request avoids repeated surface/window updates");
-  a.prefs.edit().putFloat("display_refresh",60).apply();DisplayRefresh.apply(a,s);ok(s.calls==2 && s.rate==60,"live preference changes request");DisplayRefresh.surfaceCreated(a,s);ok(s.calls==3,"recreated surface receives request");
-  Build.VERSION.SDK_INT=29;a.prefs.edit().putFloat("display_refresh",0).apply();DisplayRefresh.apply(a,s);ok(s.calls==3 && a.window.attributes.preferredDisplayModeId==2,"Android 10 uses supported window mode without newer Surface API");
-  Build.VERSION.SDK_INT=35;a.prefs.edit().putFloat("display_refresh",Float.NaN).apply();DisplayRefresh.apply(a,s);ok(s.rate==120 && AppLog.errors==0,"corrupt preference safely uses automatic");
+  a.prefs.edit().putInt("frame_target",60).apply();DisplayRefresh.apply(a,s);ok(s.calls==2 && s.rate==60,"live preference changes request");DisplayRefresh.surfaceCreated(a,s);ok(s.calls==3,"recreated surface receives request");
+  Build.VERSION.SDK_INT=29;a.prefs.edit().putInt("frame_target",0).apply();DisplayRefresh.apply(a,s);ok(s.calls==3 && a.window.attributes.preferredDisplayModeId==2,"Android 10 uses supported window mode without newer Surface API");
+  Build.VERSION.SDK_INT=35;a.prefs.edit().putInt("frame_target",-10).apply();DisplayRefresh.apply(a,s);ok(s.rate==120 && AppLog.errors==0,"corrupt preference safely uses automatic");
+  ok(DisplayRefresh.choose(d.modes,low,30)==low,"30 FPS uses 60 Hz multiple");
+  ok(DisplayRefresh.choose(d.modes,low,40)==high,"40 FPS uses 120 Hz multiple rather than incompatible 60 Hz");
+  DisplayRefresh.setTarget(40);DisplayRefresh.apply(a,s);ok(s.rate==40&&a.window.attributes.preferredRefreshRate==120,"one runtime cap drives surface content rate and compatible display mode");
+  DisplayRefresh.setTarget(60);DisplayRefresh.apply(a,s);ok(s.rate==60&&a.window.attributes.preferredRefreshRate==60,"live cap selects exact mode");
+  DisplayRefresh.setTarget(0);DisplayRefresh.apply(a,s);ok(s.rate==120,"unlimited restores highest display rate");
   System.out.println("Graphics menu/refresh checks passed: "+checks);
  }
 }'''

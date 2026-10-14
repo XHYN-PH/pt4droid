@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory() as temp:
     shadow.write_text((repo/'tests/shadow_recording_test.cpp').read_text() + '\nnamespace pt {\n' +
                       extract(util,'void UseTargets(').replace('void UseTargets(', 'static void UseTargets(',1) + '\n' +
                       extract(frame,'void SceneRenderer::InvalidateShadowCache(') + '\n' +
-                      extract(frame,'void SceneRenderer::PrepareShadowCasters(') + '\n' + extract(frame,'void SceneRenderer::RecordShadows(') + '\n}\n')
+                      extract(frame,'void SceneRenderer::PrepareShadowCasters(') + '\n' + extract(frame,'std::array<bool,16> SceneRenderer::RecordStaticShadows(') + '\n' + extract(frame,'void SceneRenderer::RecordShadows(') + '\n}\n')
     command = compiler + ['-std=c++20','-O2','-DVK_NO_PROTOTYPES'] + includes + [str(shadow),'-o',str(t/'shadow')]
     subprocess.run(command,check=True,timeout=120)
     subprocess.run([str(t/'shadow')],check=True,timeout=15)
