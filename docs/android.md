@@ -21,13 +21,13 @@ From the repository root:
 bash tools/android/build_test_release.sh
 ```
 
-The script defaults to version `0.2.1-test.10`, version code `52`, package `com.ptport.app.test`, and app label `pt4droid`. Override `PT_VERSION` and `PT_VERSION_CODE` for a future release, increasing the code each time. Reuse the signing key to allow upgrades that retain user data.
+The script defaults to version `0.2.1-test.12`, version code `54`, package `com.ptport.app.test`, and app label `pt4droid`. Override `PT_VERSION` and `PT_VERSION_CODE` for a future release, increasing the code each time. Reuse the signing key to allow upgrades that retain user data.
 
 Output: `android/app/build/outputs/apk/release/app-release.apk`. The script also runs release lint, which stops the build on errors.
 
 ## Validation and releases
 
-Host regression scripts are in `tools/android/tests`. Some need JDK 17, GLM/Vulkan headers, historical repository tags, and the importer fixtures specified in the [build validation record](android-test10-build-validation.md).
+Host regression scripts are in `tools/android/tests`. Some need JDK 17, GLM/Vulkan headers, historical repository tags, and the importer fixtures specified in the [build validation record](android-test12-build-validation.md).
 
 Before publishing, check the APK signature, package/version, staged assets and libraries, and 16 KB alignment. Host checks do not replace testing rendering, startup and sustained performance on Android hardware.
 
