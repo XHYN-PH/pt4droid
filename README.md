@@ -53,6 +53,22 @@ The US game dump, **CUSA01127**, is the reference version.
 
 </details>
 
+## Test 15 candidate
+
+This branch prepares **0.2.1-test.15** for device testing. The download above remains the published Test 14 build until a new release is approved.
+
+- Optional phone vibration follows the game's existing rumble, including the ending puzzle cue. Enable game rumble and **Controls → Phone vibration**.
+- A skippable teaser plays before the launcher, with **Replay teaser** in the footer. **GitHub (XHYN)** is at the bottom right.
+- Free camera, photo mode and third-person view are beside touch **Settings**. **Hide / Camera** folds the toolbar; **Panel** hides the photo panel. Use movement/look to fly, Up/Down to change height and Shutter to take a photo.
+- Controls contains layout editing and a configurable button timeout (0 = Never). Driver management is available only in the launcher.
+- Loading retries temporary texture preparation budget failures, retains unaffected collision geometry after removal, and starts ending preparation earlier.
+- **Mali safe lighting** adds explicit probe filtering and a supported half-float atlas. This candidate mitigation for dark lighting/black squares still needs Mali visual testing.
+- Bounded diagnostic export and clearer source/build/display information help testing.
+
+The launcher **FSR settings** page uses the game's existing fields. Its FSR 3 backend depends on a Windows DLL and is **unavailable in this Android build**; the page explains that limit. SGSR1 remains available in Performance & advanced. No separate FSR 1 implementation was added.
+
+[Candidate changes and remaining validation](docs/pt4droid-test.15.md).
+
 ## What's new in Test 14
 
 - Simpler settings, with separate pages for graphics and camera, controls, performance, and drivers.
@@ -69,14 +85,14 @@ The US game dump, **CUSA01127**, is the reference version.
 
 ## Controls and settings
 
-- **Touch controls:** move, resize or hide buttons with **Customize touch layout** in the in-game Android settings.
+- **Touch controls:** move, resize or hide buttons with **Customize touch layout** in **Settings → Controls** while in-game.
 - **Movement and looking:** use the invisible movement area and swipe-look controls. Adjust sensitivity in Settings.
 - **Controllers, keyboard and mouse:** supported, with separate sensitivity settings.
 - **Return to menu:** available in the in-game settings.
 - **Delete saves:** available only on the main menu.
 - **Ending voice input:** uses on-device recognition. The touch **Name** button or holding both controller triggers is also available.
 
-Open **Settings → Graphics & camera** for your FPS limit, effects, shadows and third-person view. Third-person view is experimental; scripted scenes can still use first person.
+Open **Settings → Game graphics** for your FPS limit, effects and shadows. Use the on-screen camera toolbar for third-person view. It is experimental; scripted scenes can still use first person.
 
 Open **Controls** for touch, mouse and controller options, and **Performance & advanced** for scene resolution and frame pacing. Options marked **Restart required** take effect after restarting the game.
 
@@ -96,7 +112,7 @@ On Mali, if the game runs out of texture memory, try **Compatibility texture siz
 
 [Report a problem](https://github.com/XHYN-PH/pt4droid/issues) with your phone model, Android version, game version, selected driver and what happened.
 
-If you can, turn logs on in Settings, tap **Apply**, and reproduce the problem. Attach the new log from **Download/PT-logs-test**; if shared storage is unavailable, check the app's data folder. Turn logs off afterwards.
+If you can, turn logs on in **Settings → Performance & advanced**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** there to open Android's share chooser, or attach the new log from **Download/PT-logs-test**; if shared storage is unavailable, check the app's data folder. Turn logs off afterwards.
 
 <details>
 <summary>Build the app from source</summary>
