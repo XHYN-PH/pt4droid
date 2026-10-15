@@ -1341,14 +1341,19 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             glm::mat4 base = c.world;
             base[3] = glm::vec4(world_pos, 1.0f);
             const glm::mat4 xf = base * EulerZyx(glm::vec3(rot)) * glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+            const bool cache_vertices=mesh->indices.size()>mesh->positions.size();
+            if(cache_vertices){build_mesh_vertices_.resize(mesh->positions.size());build_mesh_ready_.assign(mesh->positions.size(),0);}
             auto vertex = [&](uint32_t i) {
+                if(cache_vertices && build_mesh_ready_[i])return build_mesh_vertices_[i];
                 glm::vec3 p = glm::vec3(xf * glm::vec4(mesh->positions[i], 1.0f));
                 if (m.camera_z_offset != 0.0f) {
                     const glm::vec3 d = p - view.position;
                     const float len = glm::length(d);
                     p += len > 1e-5f ? d / len * m.camera_z_offset : glm::vec3(0.0f);
                 }
-                return glm::vec4(p, 1.0f);
+                const glm::vec4 result(p,1.0f);
+                if(cache_vertices){build_mesh_vertices_[i]=result;build_mesh_ready_[i]=1;}
+                return result;
             };
             auto texcoord = [&](uint32_t i) {
                 const glm::vec2 t = i < mesh->uvs.size() ? mesh->uvs[i] : glm::vec2(0.0f);

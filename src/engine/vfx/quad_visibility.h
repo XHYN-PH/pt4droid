@@ -7,6 +7,9 @@ inline bool QuadVisible(const glm::mat4& projection,const glm::vec4* corners){
  for(uint32_t i=0;i<4;++i){const glm::vec4 p=projection*glm::vec4(glm::vec3(corners[i]),1.0f);if(!std::isfinite(p.x+p.y+p.z+p.w))return true;
   // Generous padding also covers temporal jitter at low render scales.
   const float margin=.02f*(std::abs(p.w)+1.0f);const float planes[4]={p.w+p.x,p.w-p.x,p.w+p.y,p.w-p.y};for(uint32_t k=0;k<4;++k)outside[k]&=planes[k]<-margin;
+  // Once no plane rejects every corner seen so far, later corners cannot
+  // reject the quad. Most visible rain quads need only one transform.
+  if(!(outside[0]||outside[1]||outside[2]||outside[3]))return true;
  }return !(outside[0]||outside[1]||outside[2]||outside[3]);
 }
 }
