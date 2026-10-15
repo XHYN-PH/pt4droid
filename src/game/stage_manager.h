@@ -217,6 +217,7 @@ public:
     // On a floor change: the loaded copies' ShTrapExecLoadStage conditions load targetMazeFpk instead of targetFpk when the floor
     // is their nextMazeFloor (f100 loads hallway_maze_A at its clock), so that package is parsed ahead instead of another hallway
     void PrefetchMazeFor(std::string_view floor);
+    void PrefetchEnding();
     uint32_t LoadCount() const { return load_count_; }
     // false while the machine is low on memory (main.cpp's memory guard): no parse is kept ahead
     void SetPrefetchAllowed(bool allowed) {
@@ -248,6 +249,7 @@ private:
         uint32_t world = 0;
         uint32_t line = 0;
         uint32_t reflection = 0;
+        uint32_t stage_id = 0;
         glm::mat4 transform{1.0f};
         bool walk_detail=false;
         std::string label;

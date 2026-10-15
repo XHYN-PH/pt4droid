@@ -335,6 +335,7 @@ void GameController::RunStep(int step) {
         return;
     case 21:
         g.SpeedrunEnding();
+        g.Stages().PrefetchEnding();
         g.Scripts().CallStateFunction("OnPreEndingStopGame");
         // 0x922690 closes the pause menu (0x90D6B0 -> 0x9208C0: world resumed, option menu close requested) before the ending
         // loads. The port pauses the controller with the world while the menu is open, so this only meets a menu opened in the
