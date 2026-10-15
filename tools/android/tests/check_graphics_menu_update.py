@@ -26,8 +26,9 @@ public class GraphicsMenuTest {
   GameGraphicsData data=GameGraphicsData.load(a,"");ok(data.integer("graphics.shadow_quality",-1)==3 && data.enabled("graphics.motion_blur"),"launcher reads real game settings");
   ok(!data.text().contains("archive") && !data.text().contains("volume"),"graphics overlay cannot overwrite progress or audio");
   Files.writeString(inside.resolve("performance_profile_pending.txt"),"1\n");data=GameGraphicsData.load(a,"");ok(data.integer("graphics.shadow_quality",0)==1 && !data.enabled("graphics.motion_blur") && data.number("graphics.clarity",0)==.65f,"pending Maximum shows actual intended settings without resetting clarity");
-  data.put("graphics.shadow_quality",0);data.put("graphics.film_grain",.37f);data.put("display.fps_limit",120);data.save(a);
+  data.put("camera.third_person",1);data.put("graphics.shadow_quality",0);data.put("graphics.film_grain",.37f);data.put("display.fps_limit",120);data.save(a);
   ok(Files.readString(inside.resolve("performance_profile_pending.txt")).trim().equals("0") && a.prefs.getInt("performance_profile",-1)==0,"individual changes replace pending preset and label Custom");
+  ok(Files.readString(inside.resolve("game_graphics_pending.ini")).contains("third_person = 1"),"Android camera choice persists in overlay");
   data=GameGraphicsData.load(a,"[graphics]\nshadow_quality = 2\n[android_capabilities]\nray_tracing = 1\n");ok(data.integer("graphics.shadow_quality",-1)==0 && data.number("graphics.film_grain",0)==.37f && data.rayTracing,"pending graphics overlays live snapshot and preserves capability");
   Files.delete(inside.resolve("game_graphics_pending.ini"));data=GameGraphicsData.load(a,"[graphics]\nshadow_quality = 1\n[android_capabilities]\nray_tracing = 0\nray_reason = missing Vulkan ray queries\n");ok(data.integer("graphics.shadow_quality",-1)==1 && !data.rayTracing && data.rayReason.contains("missing"),"live game snapshot wins over old file");
   data.preset(3);ok(data.enabled("graphics.motion_blur") && data.integer("graphics.shadow_quality",0)==3 && data.number("graphics.film_grain",0)==1,"Original restored in model");
@@ -57,6 +58,12 @@ public class GraphicsMenuTest {
   for(int i=0;i<20;i++){android.os.SystemClock.now+=2500;DisplayRefresh.apply(a,s);}
   ok(s.calls-requests==3,"ignored display requests have a bounded recovery count");
   DisplayRefresh.invalidate();DisplayRefresh.apply(a,s);ok(s.calls-requests==4,"focus/surface invalidation permits recovery again");
+  Display.Mode middle=new Display.Mode(4,1080,2400,90);d.modes=new Display.Mode[]{low,middle,high};d.current=middle;
+  DisplayRefresh.setTarget(120);DisplayRefresh.invalidate();requests=s.calls;
+  for(int i=0;i<20;i++){android.os.SystemClock.now+=2500;DisplayRefresh.apply(a,s);}
+  ok(s.calls-requests==3,"120 on a 90 Hz override retries within the bound");
+  d.current=low;android.os.SystemClock.now+=2500;DisplayRefresh.apply(a,s);
+  ok(s.calls-requests==4 && s.rate==120,"a new display override rearms recovery without changing cap");
   System.out.println("Graphics menu/refresh checks passed: "+checks);
  }
 }'''

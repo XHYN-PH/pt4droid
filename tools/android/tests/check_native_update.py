@@ -113,9 +113,10 @@ int main(int argc,char** argv){
  pt::AppSettings settings;settings.audio.volume=1.7f;settings.progress.loops_reached=123;settings.progress.archive="keep";settings.input.mouse_sensitivity=2.5f;settings.display.width=2400;
  auto requested=settings;requested.audio.volume=.1f;requested.progress.archive="discard";requested.display.width=320;
  requested.graphics.shadow_quality=0;requested.graphics.anisotropy=16;requested.graphics.film_grain=.37f;requested.graphics.clarity=.81f;requested.graphics.enhanced_textures=true;
- requested.ray_tracing.shadows=2;requested.ray_tracing.contact_shadows=true;requested.display.fps_limit=120;requested.display.letterbox=2;requested.display.vsync=false;
+ requested.camera.third_person=true;requested.ray_tracing.shadows=2;requested.ray_tracing.contact_shadows=true;requested.display.fps_limit=120;requested.display.letterbox=2;requested.display.vsync=false;
  assert(pt::SaveAppSettings(graphics_path,requested));assert(pt::android::ApplyGameGraphicsOverrides(graphics_path,settings,true));
  assert(settings.graphics.shadow_quality==0 && settings.graphics.anisotropy==16 && settings.graphics.film_grain==.37f && settings.graphics.clarity==.81f && !settings.graphics.enhanced_textures);
+ assert(settings.camera.third_person);
  assert(settings.ray_tracing.shadows==2 && settings.ray_tracing.contact_shadows && settings.display.fps_limit==120 && settings.display.letterbox==2 && !settings.display.vsync);
  assert(settings.audio.volume==1.7f && settings.progress.loops_reached==123 && settings.progress.archive=="keep" && settings.input.mouse_sensitivity==2.5f && settings.display.width==2400);
  assert(pt::android::ApplyGameGraphicsOverrides(graphics_path,settings,false));assert(settings.ray_tracing==pt::AppSettings::RayTracing{});
