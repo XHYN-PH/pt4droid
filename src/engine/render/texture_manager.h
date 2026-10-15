@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "engine/assets/ftex.h"
+#include "engine/assets/compatible_texture.h"
 #include "engine/assets/texture_preparation_stream.h"
 #include "engine/render/vk_context.h"
 
@@ -68,8 +69,15 @@ public:
     bool Init(vk::Context& ctx);
     void Shutdown();
 
-    uint32_t Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t layers = 1, bool cube = false);
+    uint32_t Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t layers = 1, bool cube = false, std::shared_ptr<const BcMipChain> prepared = {});
     uint32_t Find(const std::string& name) const;
+    void BeginTextureUse() { texture_use_.clear(); }
+    void Touch(uint32_t texture);
+    void TouchCube(uint32_t slot);
+    void TouchMaterial(uint32_t material, bool alpha_only = false);
+    void FinishTextureUse();
+    bool HasConvertedTextures() const { return !converted_images_.empty(); }
+
     void BeginUploadBatch();
     void EndUploadBatch();
     void FlushUploads();
@@ -197,6 +205,18 @@ private:
     struct FormatSupport{VkFormatProperties properties{};VkImageFormatProperties image{};bool valid=false;};
     std::unordered_map<uint64_t,FormatSupport> format_support_;
     bool SupportsTexture(VkFormat format,uint32_t width,uint32_t height,uint32_t levels,uint32_t layers,bool cube);
+    struct ConvertedImage {
+        std::filesystem::path file; uint64_t bytes=0, last_use=0; VkFormat format=VK_FORMAT_UNDEFINED;
+        bool failed=false;
+    };
+    std::unordered_map<uint32_t,ConvertedImage> converted_images_;
+    std::unordered_set<uint32_t> texture_use_;
+    uint64_t texture_epoch_=1, residency_limit_=512ull*1024*1024;
+    bool residency_warning_=false;
+    std::unordered_map<std::string,std::string> failed_textures_;
+    bool restoring_=false;
+    void EvictConverted(uint64_t needed);
+    void WriteResidentDescriptor(uint32_t index);
     double read_ms_ = 0.0;
     double upload_ms_ = 0.0;
 };

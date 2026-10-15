@@ -11,6 +11,8 @@
 #include <bit>
 #include "engine/assets/bc_texture.h"
 #include "engine/render/gpu_types.h"
+#include "engine/platform/android.h"
+#include <SDL3/SDL_system.h>
 
 #include "engine/assets/ftex.h"
 #include "engine/assets/enhanced_textures.h"
@@ -118,6 +120,22 @@ uint32_t FormatBlockBytes(VkFormat format, bool& compressed) {
 
 bool TextureManager::Init(vk::Context& ctx) {
     ctx_ = &ctx;
+    std::array<bool,16> native{};
+    for(size_t i=0;i<native.size();++i)native[i]=SupportsTexture(VkFormat(VK_FORMAT_BC1_RGB_UNORM_BLOCK+i),4,4,1,1,false);
+    std::filesystem::path cache;
+    uint32_t max_side=0;
+#ifdef __ANDROID__
+    const char* cache_root=SDL_GetAndroidCachePath();
+    cache=std::filesystem::path(cache_root?cache_root:".")/"textures-bc-v1";
+    max_side=android::PerformanceOptions().compat_texture_size;
+#else
+    std::error_code cache_error;cache=std::filesystem::temp_directory_path(cache_error)/"pt4droid-bc-v1";
+#endif
+    ConfigureBcConversion(native,cache,max_side);
+    VkPhysicalDeviceMemoryProperties memory{};vkGetPhysicalDeviceMemoryProperties(ctx.physical,&memory);
+    uint64_t heap=0;for(uint32_t i=0;i<memory.memoryHeapCount;++i)if(memory.memoryHeaps[i].flags&VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)heap=std::max(heap,memory.memoryHeaps[i].size);
+    residency_limit_=std::clamp<uint64_t>(heap/4,256ull*1024*1024,1536ull*1024*1024);
+
     base_sampler_ = CreateSampler(0);
     sampler_ = base_sampler_;
 
@@ -205,6 +223,7 @@ void TextureManager::Shutdown() {
     StopDecodeWorkers();
     worker_prepared_.clear();
     read_stats_ = {};
+    converted_images_.clear();texture_use_.clear();failed_textures_.clear();
     decoding_.clear();
     prepared_.clear();
     pending_preparations_.clear();
@@ -281,7 +300,7 @@ int TextureManager::SetAnisotropy(int level) {
         if (enhanced_enabled_) {
             if (auto it = enhanced_images_.find(shown); it != enhanced_images_.end()) shown = it->second;
         }
-        infos[i] = {sampler, cube_[i] ? images_[kWhite].view : images_[shown].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        infos[i] = {sampler, cube_[i] ? images_[kWhite].view : (images_[shown].view ? images_[shown].view : images_[kWhite].view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     }
     if (!infos.empty()) {
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -324,32 +343,41 @@ void TextureManager::FlushUploads(){
     upload_ms_+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();upload_pending_.clear();upload_used_=0;
 }
 
-uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t layers, bool cube) {
+uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::span<const TextureMip> mips, uint32_t layers, bool cube, std::shared_ptr<const BcMipChain> prepared) {
     if (auto it = by_name_.find(name); it != by_name_.end()) {
         return it->second;
     }
+    if (failed_textures_.contains(name)) return kWhite;
     if (mips.empty() || !layers || mips.size()%layers || (cube && layers!=6) || images_.size() >= kMaxTextures) {
         return kWhite;
     }
     vk::Image image;
-    const uint32_t mip_count = static_cast<uint32_t>(mips.size()) / layers;
+    uint32_t mip_count = static_cast<uint32_t>(mips.size()) / layers;
     bool compressed=false;const uint32_t block_bytes=FormatBlockBytes(format,compressed);
     if(!mips[0].width || !mips[0].height || mips[0].width>16384 || mips[0].height>16384 || mip_count>std::bit_width(std::max(mips[0].width,mips[0].height)) || (cube && mips[0].width!=mips[0].height))return kWhite;
     for(size_t i=0;i<mips.size();++i){const uint32_t level=uint32_t(i)%mip_count,w=std::max(1u,mips[0].width>>level),h=std::max(1u,mips[0].height>>level);const auto& mip=mips[i];const uint64_t bytes=compressed?uint64_t((w+3)/4)*((h+3)/4)*block_bytes:uint64_t(w)*h*block_bytes;
         if(mip.width!=w || mip.height!=h || mip.data.size()!=bytes){LogError("textures: {} invalid face/mip {} size",name,i);return kWhite;}}
-    uint64_t converted_bytes=0;std::vector<std::vector<uint8_t>> converted;std::vector<TextureMip> compatible;
+    uint64_t converted_bytes=0;std::vector<TextureMip> compatible;
     if(!SupportsTexture(format,mips[0].width,mips[0].height,mip_count,layers,cube)){
         const VkFormat fallback=BcFallbackFormat(format);
-        if(fallback==VK_FORMAT_UNDEFINED || !SupportsTexture(fallback,mips[0].width,mips[0].height,mip_count,layers,cube)){LogError("textures: {} format {} is unsupported by this driver",name,int(format));return kWhite;}
-        const uint32_t channels=fallback==VK_FORMAT_R8_UNORM || fallback==VK_FORMAT_R8_SNORM?1u:fallback==VK_FORMAT_R8G8_UNORM || fallback==VK_FORMAT_R8G8_SNORM?2u:4u;
-        for(const auto& mip:mips)converted_bytes+=uint64_t(mip.width)*mip.height*channels;
-        if(converted_bytes>128ull*1024*1024 || fallback_bytes_+converted_bytes>2ull*1024*1024*1024){LogError("textures: {} BC fallback exceeds the conversion memory limit",name);return kWhite;}
-        if(ctx_->memory_budget){VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};vmaGetHeapBudgets(ctx_->allocator,budgets);VkPhysicalDeviceMemoryProperties memory{};vkGetPhysicalDeviceMemoryProperties(ctx_->physical,&memory);uint64_t available=0;
-            for(uint32_t i=0;i<memory.memoryHeapCount;++i)if(memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)available+=budgets[i].budget>budgets[i].usage?budgets[i].budget-budgets[i].usage:0;
-            if(converted_bytes+128ull*1024*1024>available){LogError("textures: {} BC fallback would exceed the current device memory budget",name);return kWhite;}}
-        converted.resize(mips.size());compatible.reserve(mips.size());
-        for(size_t i=0;i<mips.size();++i){if(!DecodeBcMip(format,mips[i].width,mips[i].height,mips[i].data,converted[i])){LogError("textures: {} invalid BC data at face/mip {}",name,i);return kWhite;}compatible.push_back({mips[i].width,mips[i].height,converted[i]});}
-        LogInfo("textures: experimental BC fallback {} format {} -> {} ({} KiB, {} layers, {} mips)",name,int(format),int(fallback),converted_bytes/1024,layers,mip_count);format=fallback;mips=compatible;
+        if(fallback==VK_FORMAT_UNDEFINED){failed_textures_[name]="unsupported format";LogError("textures: {} unsupported format {}",name,int(format));return kWhite;}
+        if(!prepared){std::vector<BcSourceMip> source;for(const auto& mip:mips)source.push_back({mip.width,mip.height,mip.data});prepared=PrepareBcMips(format,source,layers);}
+        if(!prepared || !SupportsTexture(fallback,prepared->width,prepared->height,prepared->levels,layers,cube)){
+            failed_textures_[name]="invalid or unsupported conversion";LogError("textures: {} conversion failed for format {}",name,int(format));return kWhite;
+        }
+        converted_bytes=prepared->bytes;mip_count=prepared->levels;
+        for(uint32_t face=0;face<layers;++face)for(uint32_t l=0;l<mip_count;++l)compatible.push_back({std::max(1u,prepared->width>>l),std::max(1u,prepared->height>>l),prepared->mips[face*mip_count+l]});
+        // Protect current-frame references. During stage loading unused cached
+        // images can be released; their stable descriptor slots are retained.
+        EvictConverted(converted_bytes);
+        if(fallback_bytes_+converted_bytes>residency_limit_ && !restoring_ && !prepared->cache_file.empty()){
+            const uint32_t slot=uint32_t(images_.size());
+            images_.push_back({});cube_.push_back(cube?1:0);by_name_[name]=slot;
+            if(cube && cube_slots_.size()<kMaxCubeTextures)cube_slots_[slot]=uint32_t(cube_slots_.size());
+            converted_images_[slot]={prepared->cache_file,converted_bytes,texture_epoch_,fallback,false};
+            WriteResidentDescriptor(slot);return slot;
+        }
+        format=fallback;mips=compatible;
     }
     if (!ctx_->CreateImage(image, format, {mips[0].width, mips[0].height, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                            mip_count, layers, VK_IMAGE_ASPECT_COLOR_BIT, cube)) {
@@ -420,8 +448,99 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
     images_.push_back(image);
     cube_.push_back(cube && index > 0 ? 1 : 0);
     by_name_[name] = index;
+    if(converted_bytes)converted_images_[index]={prepared->cache_file,converted_bytes,texture_epoch_,format,false};
     return index;
 }
+
+void TextureManager::WriteResidentDescriptor(uint32_t index) {
+    if(index>=images_.size() || images_.size()<4)return;
+    const VkImageView resident=images_[index].view;
+    VkDescriptorImageInfo info{sampler_,cube_[index]?images_[kWhite].view:(resident?resident:images_[kWhite].view),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet writes[2]{};writes[0]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    writes[0].dstSet=set_;writes[0].dstBinding=0;writes[0].dstArrayElement=index;writes[0].descriptorCount=1;
+    writes[0].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[0].pImageInfo=&info;
+    VkDescriptorImageInfo cube_info{base_sampler_,resident?resident:images_[3].view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    uint32_t count=1;
+    if(auto it=cube_slots_.find(index);it!=cube_slots_.end()){writes[1]=writes[0];writes[1].dstBinding=2;writes[1].dstArrayElement=it->second;writes[1].pImageInfo=&cube_info;count=2;}
+    vkUpdateDescriptorSets(ctx_->device,count,writes,0,nullptr);
+}
+
+void TextureManager::Touch(uint32_t texture) {
+    if(converted_images_.empty())return;
+    // Material redirection may change the texture sampled by a slot.
+    texture_use_.insert(texture);
+    if(auto it=redirects_.find(texture);it!=redirects_.end())texture_use_.insert(it->second);
+    if(enhanced_enabled_)if(auto it=enhanced_images_.find(texture);it!=enhanced_images_.end())texture_use_.insert(it->second);
+}
+void TextureManager::TouchCube(uint32_t slot) {
+    if(converted_images_.empty())return;
+    for(const auto& [index,cube_slot]:cube_slots_)if(slot==cube_slot){Touch(index);break;}
+}
+void TextureManager::TouchMaterial(uint32_t index,bool alpha_only) {
+    if(index>=materials_.size() || converted_images_.empty())return;
+    const auto& m=materials_[index];Touch(m.albedo);
+    if(alpha_only)return;
+    Touch(m.normal);Touch(m.specular);Touch(m.aux1);Touch(m.aux2);
+    if(m.kind==gpu::kKindGlass)TouchCube(m.aux0);else Touch(m.aux0);
+    if(m.flags&gpu::kMatEye)Touch(std::bit_cast<uint32_t>(m.extra.x));
+}
+
+void TextureManager::EvictConverted(uint64_t needed) {
+    if(fallback_bytes_+needed<=residency_limit_)return;
+    std::vector<uint32_t> candidates;
+    for(const auto& [index,entry]:converted_images_)
+        if(images_[index].image && !texture_use_.contains(index) && !entry.file.empty())candidates.push_back(index);
+    std::sort(candidates.begin(),candidates.end(),[&](uint32_t a,uint32_t b){return converted_images_.at(a).last_use<converted_images_.at(b).last_use;});
+    if(candidates.empty())return;
+    // A descriptor may still be read by the previous frame or by a queued
+    // upload. Wait once for this reclamation batch, before changing any slot.
+    FlushUploads();ctx_->RetireTextureUploads(true);vkDeviceWaitIdle(ctx_->device);
+    for(uint32_t index:candidates){
+        if(fallback_bytes_+needed<=residency_limit_)break;
+        auto& entry=converted_images_.at(index);
+        ctx_->DestroyImage(images_[index]);fallback_bytes_-=entry.bytes;WriteResidentDescriptor(index);
+    }
+}
+
+void TextureManager::FinishTextureUse() {
+    if(converted_images_.empty())return;
+    ++texture_epoch_;
+    if(texture_epoch_%300==0)LogInfo("texture residency: {} converted slots, {} of {} MiB live; compatibility size {}",converted_images_.size(),fallback_bytes_/1024/1024,residency_limit_/1024/1024,
+#ifdef __ANDROID__
+        android::PerformanceOptions().compat_texture_size
+#else
+        0
+#endif
+    );
+    for(uint32_t index:texture_use_)if(auto it=converted_images_.find(index);it!=converted_images_.end())it->second.last_use=texture_epoch_;
+    uint32_t restored=0;const auto started=std::chrono::steady_clock::now();
+    for(uint32_t index:texture_use_){
+        auto it=converted_images_.find(index);if(it==converted_images_.end() || images_[index].image || it->second.failed)continue;
+        const ConvertedImage entry=it->second;
+        EvictConverted(entry.bytes);
+        if(fallback_bytes_+entry.bytes>residency_limit_){
+            if(!residency_warning_){LogWarn("textures: active converted textures exceed {} MiB; select a smaller Compatibility texture size and restart",residency_limit_/1024/1024);residency_warning_=true;}
+            continue;
+        }
+        auto payload=ReadBcCache(entry.file);
+        if(!payload){it->second.failed=true;LogError("textures: conversion backing is unreadable for slot {}",index);continue;}
+        std::vector<TextureMip> mips;for(uint32_t face=0;face<payload->layers;++face)for(uint32_t l=0;l<payload->levels;++l)mips.push_back({std::max(1u,payload->width>>l),std::max(1u,payload->height>>l),payload->mips[face*payload->levels+l]});
+        const std::string temporary="builtin:residency-"+std::to_string(index);
+        // Restore through the existing validated upload path. Its temporary
+        // descriptor is never referenced by a material or submitted draw.
+        restoring_=true;uint32_t uploaded=kWhite;
+        try {uploaded=Create(temporary,entry.format,mips,payload->layers,cube_[index]!=0);}
+        catch(...){restoring_=false;throw;}
+        restoring_=false;
+        if(uploaded==kWhite)continue;
+        images_[index]=images_[uploaded];images_.pop_back();cube_.pop_back();cube_slots_.erase(uploaded);by_name_.erase(temporary);
+        fallback_bytes_+=entry.bytes;WriteResidentDescriptor(index);++restored;
+    }
+    if(restored)LogDebug("textures: restored {} converted images, {} MiB live, {:.2f} ms",restored,fallback_bytes_/1024/1024,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
+    // Keep the current set protected throughout the next frame's asset setup;
+    // clear it lazily on the first Touch of the following rendering epoch.
+}
+
 
 uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path, bool* ok, bool raw) {
     const std::string stem = FtexStem(path);
@@ -443,6 +562,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
             }
         }
     }
+    if (failed_textures_.contains(key)) {if(ok)*ok=false;return kWhite;}
     FtexTexture owned;
     std::shared_ptr<const FtexTexture> prepared;
     bool read = false;
@@ -480,6 +600,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         read_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
     const FtexTexture& ftex = prepared ? *prepared : owned;
+    if(!read){failed_textures_[key]="missing or unreadable source";LogWarn("textures: {} source is missing or unreadable",key);}
     if (!read || ftex.Format() == VK_FORMAT_UNDEFINED || ftex.depth > 1) {
         if (ok) {
             *ok = false;
@@ -507,7 +628,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     }
     const auto upload_started = std::chrono::steady_clock::now();
     const double upload_before=upload_ms_;
-    const uint32_t index = Create(key, ftex.Format(raw), mips, ftex.faces, ftex.faces == 6);
+    const uint32_t index = Create(key, ftex.Format(raw), mips, ftex.faces, ftex.faces == 6, ftex.compatible);
     if (auto it = prepared_variants_.find(stem); it != prepared_variants_.end()) {
         const uint8_t resident = uint8_t(by_name_.contains(stem)) | (uint8_t(by_name_.contains(stem + "#raw")) << 1);
         if ((resident & it->second) == it->second) {
@@ -706,7 +827,7 @@ void TextureManager::UpdateTextureDescriptor(uint32_t index) {
     if (enhanced_enabled_) {
         if (auto it = enhanced_images_.find(index); it != enhanced_images_.end()) shown = it->second;
     }
-    VkDescriptorImageInfo info{sampler_, images_[shown].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkDescriptorImageInfo info{sampler_, images_[shown].view ? images_[shown].view : images_[kWhite].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = set_; write.dstBinding = 0; write.dstArrayElement = index;
     write.descriptorCount = 1; write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; write.pImageInfo = &info;

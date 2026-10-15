@@ -828,7 +828,19 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
         }
         swapchain_owner_ = swapchain_hooks;
     } else {
-        const VkResult created_swapchain = vkCreateSwapchainKHR(device, &info, nullptr, &handle);
+        VkResult created_swapchain = vkCreateSwapchainKHR(device, &info, nullptr, &handle);
+#ifdef __ANDROID__
+        if(created_swapchain==VK_ERROR_INVALID_EXTERNAL_HANDLE && info.presentMode!=VK_PRESENT_MODE_FIFO_KHR && std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_FIFO_KHR)!=modes.end()){
+            LogWarn("vulkan: external buffer rejected; trying advertised FIFO mode at {}x{}",extent.width,extent.height);
+            DestroySwapchain();info.oldSwapchain=VK_NULL_HANDLE;
+            info.presentMode=VK_PRESENT_MODE_FIFO_KHR;
+            created_swapchain=vkCreateSwapchainKHR(device,&info,nullptr,&handle);
+        }
+        if(created_swapchain==VK_ERROR_INVALID_EXTERNAL_HANDLE){
+            init_error="The selected Vulkan driver cannot import this device's Android display buffers (VK_ERROR_INVALID_EXTERNAL_HANDLE). Return to Vulkan drivers, select System Vulkan driver, and restart the game.";
+            LogError("vulkan: WSI compatibility: format {}, usage {:#x}, extent {}x{}, transform {:#x}, alpha {:#x}, images {}; {}",int(info.imageFormat),info.imageUsage,info.imageExtent.width,info.imageExtent.height,uint32_t(info.preTransform),uint32_t(info.compositeAlpha),info.minImageCount,init_error);
+        }
+#endif
         if (!Check(created_swapchain, "vkCreateSwapchainKHR")) {
 #ifdef __ANDROID__
             /* a dead surface on a window Android handed back under the same pointer: made again on the next try, a little later
@@ -1079,7 +1091,8 @@ bool Context::CreateImage(Image& out, VkFormat format, VkExtent3D extent, VkImag
     out.mip_levels = mip_levels;
     out.layers = layers;
     out.usage = usage;
-    return Check(vkCreateImageView(device, &view_info, nullptr, &out.view), "vkCreateImageView");
+    if(!Check(vkCreateImageView(device, &view_info, nullptr, &out.view), "vkCreateImageView")){DestroyImage(out);return false;}
+    return true;
 }
 
 void Context::DestroyImage(Image& image) {
