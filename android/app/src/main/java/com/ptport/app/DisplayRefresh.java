@@ -19,6 +19,7 @@ public final class DisplayRefresh {
     private static long lastRecovery;
     private static int recoveryAttempts;
     private static float lastRequested=-1;
+    private static float lastObserved=-1;
     public static void invalidate(){surfaceRates.clear();lastRecovery=0;recoveryAttempts=0;}
     public static float actualRate(){return actualRate;}
     public static void setTarget(int fps){runtimeTarget=Math.max(0,fps);}
@@ -56,10 +57,12 @@ public final class DisplayRefresh {
             if(!Float.isFinite(requested) || requested<0)requested=0;
             if(requested!=lastRequested){lastRequested=requested;recoveryAttempts=0;lastRecovery=0;surfaceRates.clear();}
             actualRate=display.getRefreshRate();
+            boolean observedChange=Math.abs(actualRate-lastObserved)>.5f;lastObserved=actualRate;
             Display.Mode selected=choose(display.getSupportedModes(),display.getMode(),requested);float rate=selected.getRefreshRate();
             WindowManager.LayoutParams attributes=activity.getWindow().getAttributes();int modeId=selected.getModeId();
             long now=android.os.SystemClock.uptimeMillis();
             boolean mismatch=Math.abs(actualRate-rate)>.5f;
+            if(mismatch && observedChange){recoveryAttempts=0;lastRecovery=0;surfaceRates.clear();}
             if(!mismatch)recoveryAttempts=0;
             boolean recovery=mismatch && recoveryAttempts<3 && now-lastRecovery>=2000;
             if(recovery){lastRecovery=now;++recoveryAttempts;surfaceRates.clear();}

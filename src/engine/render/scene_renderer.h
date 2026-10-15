@@ -481,6 +481,7 @@ private:
     bool shadow_static_unavailable_=false;
     std::vector<ShadowCasterState> shadow_draw_states_;
     std::vector<uint8_t> shadow_draw_state_ready_;
+    std::vector<uint8_t> shadow_draw_stable_;
     std::array<ShadowMapState, 16> shadow_states_;
     std::array<std::vector<const Draw*>, 16> shadow_casters_;
     std::array<bool, 16> shadow_shared_{};
@@ -539,6 +540,8 @@ private:
     VkPipeline shadow_pipeline_ = VK_NULL_HANDLE;
     VkPipeline probe_ = VK_NULL_HANDLE;
     VkPipeline probe_cached_ = VK_NULL_HANDLE, probe_map_pipeline_ = VK_NULL_HANDLE;
+    VkFormat probe_map_format_ = VK_FORMAT_R32G32B32A32_SFLOAT;
+    bool mali_lighting_ = false, mali_probe_filter_ = false;
     VkPipeline probe_resolve_ = VK_NULL_HANDLE;
     VkPipeline light_ = VK_NULL_HANDLE;
     VkPipeline compose_ = VK_NULL_HANDLE;

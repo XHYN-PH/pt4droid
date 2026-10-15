@@ -48,9 +48,22 @@ final class MobileSettings {
     void show(){
         if(touch!=null)touch.releaseAll();
         LinearLayout v=column(activity);
+        text(v,"Choose what you want to change. Your settings and FPS limit stay as you set them.");
+        AlertDialog menu=new AlertDialog.Builder(activity).setTitle("Settings").setView(scroll(v)).setNegativeButton("Close",null).create();
+        button(v,"Graphics & camera",()->{menu.dismiss();GameGraphicsSettings.open(activity);});
+        button(v,"Controls",()->{menu.dismiss();showPage(false);});
+        button(v,"Performance & advanced",()->{menu.dismiss();showPage(true);});
+        button(v,"Graphics driver",()->{menu.dismiss();drivers();});
+        if(activity instanceof PTActivity)button(v,"Return to main menu",()->new AlertDialog.Builder(activity).setTitle("Return to main menu?").setMessage("Progress follows the game's normal save points.").setPositiveButton("Return",(d,b)->{menu.dismiss();((PTActivity)activity).returnToMenu();}).setNegativeButton("Stay",null).show());
+        menu.show();MenuStyle.styleDialog(menu);
+    }
+    private void showPage(boolean advanced){
+        if(touch!=null)touch.releaseAll();
+        LinearLayout v=column(activity);
         MenuStyle.section(v,"Graphics");
-        Spinner profile=choice(v,"Graphics preset",new String[]{"Custom • keep game settings","Maximum performance","Balanced • up to 60 FPS","Original (PS4)"},prefs.getInt("performance_profile",0));
-        text(v,"Maximum performance removes the frame cap and reduces shadows, texture detail and effects. Actual FPS depends on the scene and device temperature.");
+        final int originalProfile=prefs.getInt("performance_profile",0);
+        Spinner profile=choice(v,"Graphics preset",new String[]{"Custom • keep game settings","Maximum performance","Balanced • up to 60 FPS","Original (PS4)"},originalProfile);
+        text(v,"Selecting a different preset changes graphics and may change the FPS limit. Applying controls or other options keeps your current graphics.");
         float[] scale={scale()};TextView scaleText=new TextView(activity);scaleText.setText("Render scale: "+Math.round(scale[0]*100)+"%");v.addView(scaleText);
         slider(v,"Scene resolution",Math.round(scale[0]*100)-25,75,p->{scale[0]=(p+25)/100f;scaleText.setText("Render scale: "+(p+25)+"%");});
         CheckBox bloom=new CheckBox(activity);bloom.setText("Optimized mobile bloom");bloom.setChecked(prefs.getBoolean("optimized_bloom",true));v.addView(bloom);
@@ -70,6 +83,9 @@ final class MobileSettings {
         if(!sustained.isEnabled())sustained.setChecked(false);
         text(v,sustained.isEnabled()?"Asks Android for steadier performance during long sessions. Keeps your FPS limit and graphics settings. Android still controls temperature and clock speeds.":"This device does not support Android sustained performance mode.");
         text(v,String.format(Locale.ROOT,"Current display: %.2f Hz. FPS and display refresh are controlled together in Game graphics.",DisplayRefresh.display(activity).getRefreshRate()));
+        CheckBox mali=check(v,"Faster Mali lighting • restart required","mali_optimizations",true);
+        text(v,"Uses a separate lighting path on Mali. Snapdragon keeps its existing lighting. Turn off to compare visuals or report a problem.");
+        final int controlsStart=v.getChildCount();
         MenuStyle.section(v,"Controls");
         Spinner movement=choice(v,"Movement control",new String[]{"Visible joystick","Invisible left-half movement"},prefs.getInt("move_style",0));
         text(v,"Invisible movement: touch and drag on the left half, then hold to keep moving. Pair it with swipe look on the right. Lift to stop. Stick size and dead zone still apply; buttons and Settings take priority.");
@@ -85,35 +101,38 @@ final class MobileSettings {
         CheckBox gyro=check(v,"Gyroscope look", "gyro",false);gyro.setEnabled(MobileRuntime.hasGyro(activity));
         if(!gyro.isEnabled()){gyro.setChecked(false);text(v,"No gyroscope is available on this device.");}
         float[] gyroGain=gain(v,"Gyroscope sensitivity","gyro_sensitivity",1f,3f);
+        final int controlsEnd=v.getChildCount();
         MenuStyle.section(v,"Diagnostics");
         CheckBox logs=new CheckBox(activity);logs.setText("Enable logs");logs.setChecked(AppLog.enabled());logs.setButtonTintList(MenuStyle.accent());v.addView(logs);
         text(v,"Off stops app diagnostic files, console output and GPU timing collection. Turn on before reproducing a problem you want to report.");
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("pt4droid settings").setView(scroll(v)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
+        for(int i=0;i<v.getChildCount();i++)if(advanced ? i>=controlsStart&&i<controlsEnd : i<controlsStart||i>=controlsEnd)v.getChildAt(i).setVisibility(View.GONE);
+        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(advanced?"Performance & advanced":"Controls").setView(scroll(v)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
         button(v,"Customize touch layout",()->{dialog.dismiss();if(touch!=null)touch.beginEdit();else message("Start the game, then open Android settings to edit the layout.");});
-        button(v,"Vulkan drivers",()->{dialog.dismiss();drivers();});
-        button(v,"Game graphics",()->{dialog.dismiss();GameGraphicsSettings.open(activity);});
+        button(v,"Back to settings",()->{dialog.dismiss();show();});
         if(activity instanceof PTActivity)button(v,"Return to menu",()->{
             new AlertDialog.Builder(activity).setTitle("Return to menu?")
                     .setMessage("Leave the game and return to the launcher. Progress follows the game's normal save points.")
                     .setPositiveButton("Return",(d,b)->{dialog.dismiss();((PTActivity)activity).returnToMenu();})
                     .setNegativeButton("Stay",null).show();
         });
-        button(v,"Delete saves",()->{dialog.dismiss();deleteSaves();});
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
             try{
-                int selected=profile.getSelectedItemPosition();if(selected==1)scale[0]=Math.min(scale[0],.5f);
-                if(selected>0){Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_pending.ini").toPath());Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_applying.ini").toPath());}
+                int selected=profile.getSelectedItemPosition();
+                boolean presetChanged=advanced && selected!=originalProfile;
+                if(presetChanged && selected==1)scale[0]=Math.min(scale[0],.5f);
+                if(presetChanged && selected>0){Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_pending.ini").toPath());Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_applying.ini").toPath());}
                 write("render_scale.txt",Float.toString(scale[0]));write("performance_profile.txt",Integer.toString(selected));write("bloom_pass_limit.txt",bloom.isChecked()?"6":"0");
-                write("performance_profile_pending.txt",Integer.toString(selected));
+                if(presetChanged)write("performance_profile_pending.txt",Integer.toString(selected));
                 int compatibilitySize=new int[]{0,2048,1024,512}[compatibility.getSelectedItemPosition()];
                 prefs.edit().putInt("compat_texture_size",compatibilitySize).apply();
-                write("mobile_performance.ini","compat_texture_size="+compatibilitySize+"\n"+"frame_pacing="+(pacing.isChecked()?1:0)+"\nsgsr="+(sgsr.isChecked()?1:0)+"\nsharpness="+sharpness[0]+"\nao_quality="+ao.getSelectedItemPosition()+"\nreflection_quality="+reflections.getSelectedItemPosition()+"\nsustained="+(sustained.isChecked()?1:0)+"\ninvert_y="+(invert.isChecked()?1:0)+"\nmouse_sensitivity="+mouse[0]+"\ncontroller_sensitivity="+controller[0]);
+                write("mobile_performance.ini","mali_optimizations="+(mali.isChecked()?1:0)+"\ncompat_texture_size="+compatibilitySize+"\n"+"frame_pacing="+(pacing.isChecked()?1:0)+"\nsgsr="+(sgsr.isChecked()?1:0)+"\nsharpness="+sharpness[0]+"\nao_quality="+ao.getSelectedItemPosition()+"\nreflection_quality="+reflections.getSelectedItemPosition()+"\nsustained="+(sustained.isChecked()?1:0)+"\ninvert_y="+(invert.isChecked()?1:0)+"\nmouse_sensitivity="+mouse[0]+"\ncontroller_sensitivity="+controller[0]);
+                prefs.edit().putBoolean("mali_optimizations",mali.isChecked()).apply();
                 prefs.edit().putBoolean("frame_pacing",pacing.isChecked()).putBoolean("sgsr",sgsr.isChecked()).putFloat("sharpness",sharpness[0]).putInt("ao_quality",ao.getSelectedItemPosition()).putInt("reflection_quality",reflections.getSelectedItemPosition()).putBoolean("sustained",sustained.isChecked()).putBoolean("invert_y",invert.isChecked()).putFloat("mouse_sensitivity",mouse[0]).putFloat("controller_sensitivity",controller[0]).putBoolean("gyro",gyro.isChecked()).putFloat("gyro_sensitivity",gyroGain[0]).apply();
                 prefs.edit().putInt("performance_profile",selected).putFloat("sensitivity",sensitivity[0]).putInt("move_style",movement.getSelectedItemPosition()).putInt("look_style",look.getSelectedItemPosition()).putInt("overlay_mode",mode.getSelectedItemPosition()).putBoolean("optimized_bloom",bloom.isChecked()).apply();
                 DisplayRefresh.apply(activity,null);PTActivity.refreshDisplay();
                 AppLog.setEnabled(logs.isChecked());
                 if(touch!=null){touch.reloadPreferences();touch.setMode(mode.getSelectedItemPosition());}
-                if(PTActivity.gameRunning()){PTActivity.nativeSetRenderScale(scale[0]);PTActivity.nativeSetPerformanceProfile(selected);PTActivity.nativeSetBloomPassLimit(bloom.isChecked()?6:0);PTActivity.reloadPerformance();}
+                if(PTActivity.gameRunning()){PTActivity.nativeSetRenderScale(scale[0]);if(presetChanged)PTActivity.nativeSetPerformanceProfile(selected);PTActivity.nativeSetBloomPassLimit(bloom.isChecked()?6:0);PTActivity.reloadPerformance();}
                 dialog.dismiss();
             }catch(Throwable error){message("Could not apply settings: "+error.getMessage());}
         }));dialog.show();MenuStyle.styleDialog(dialog);

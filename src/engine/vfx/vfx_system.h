@@ -371,6 +371,8 @@ private:
     mutable std::vector<Quad> build_quads_;
     mutable std::vector<size_t> build_order_;
     mutable std::vector<BuildLitRef> build_lit_refs_;
+    mutable std::vector<glm::vec4> build_mesh_vertices_;
+    mutable std::vector<uint8_t> build_mesh_ready_;
 };
 
 uint32_t XorShift(uint32_t& state);

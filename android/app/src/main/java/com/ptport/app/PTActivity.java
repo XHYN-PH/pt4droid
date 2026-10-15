@@ -23,6 +23,31 @@ public class PTActivity extends SDLActivity {
     private GameSession gameSession;
     private boolean returningToMenu;
     private boolean menuOpened;
+    private android.widget.LinearLayout loadingPanel;
+    private android.widget.TextView loadingText;
+    private android.widget.ProgressBar loadingBar;
+    public static void loadingProgress(String label,int completed,int total){
+        final PTActivity a=current;if(a==null)return;
+        a.runOnUiThread(()->{
+            if(a.isFinishing())return;
+            if(label.isEmpty()){if(a.loadingPanel!=null)a.loadingPanel.setVisibility(android.view.View.GONE);return;}
+            if(a.loadingPanel==null){
+                a.loadingPanel=MobileSettings.column(a);a.loadingPanel.setPadding(MenuStyle.dp(a,12),MenuStyle.dp(a,6),MenuStyle.dp(a,12),MenuStyle.dp(a,6));
+                a.loadingText=new android.widget.TextView(a);a.loadingText.setTextColor(MenuStyle.TEXT);a.loadingPanel.addView(a.loadingText);
+                a.loadingBar=new android.widget.ProgressBar(a,null,android.R.attr.progressBarStyleHorizontal);a.loadingBar.setMax(100);a.loadingPanel.addView(a.loadingBar);
+                android.widget.FrameLayout.LayoutParams lp=new android.widget.FrameLayout.LayoutParams(MenuStyle.dp(a,280),-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);lp.bottomMargin=MenuStyle.dp(a,12);
+                a.addContentView(a.loadingPanel,lp);
+            }
+            a.loadingPanel.setVisibility(android.view.View.VISIBLE);
+            a.loadingText.setText(total>0?label+"  "+Math.min(100,Math.max(0,completed)*100/total)+"%":label+"…");
+            a.loadingBar.setIndeterminate(total<=0);if(total>0)a.loadingBar.setProgress(Math.min(100,Math.max(0,completed)*100/total));
+        });
+    }
+    public static void graphicsStartupFailed(String message){
+        final PTActivity a=current;if(a==null)return;
+        try{DriverImportJob.atomicWrite(new File(a.getFilesDir(),"driver_startup_failed.txt"),message.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+        catch(java.io.IOException error){AppLog.w("pt","Could not save driver recovery",error);}
+    }
     static native void nativeReloadPerformance();
     static native void nativeThermalStatus(int status);
     static native void nativeGyroDelta(float dx,float dy);

@@ -13,7 +13,7 @@ final class GameGraphicsData {
     final Map<String,String> values=new LinkedHashMap<>();
     boolean rayTracing;
     String rayReason="Start the game to check the selected driver's ray-query support.";
-    GameGraphicsData(){original();put("graphics.shadow_quality",2);put("graphics.ambient_occlusion",0);put("graphics.motion_blur",0);put("graphics.depth_of_field",0);put("display.vsync",1);put("display.fps_limit",0);put("display.letterbox",0);}
+    GameGraphicsData(){original();put("camera.third_person",0);put("graphics.shadow_quality",2);put("graphics.ambient_occlusion",0);put("graphics.motion_blur",0);put("graphics.depth_of_field",0);put("display.vsync",1);put("display.fps_limit",0);put("display.letterbox",0);}
     void original(){
         put("graphics.anisotropy",0);put("graphics.enhanced_textures",0);put("graphics.shadow_quality",3);
         for(String key:new String[]{"ambient_occlusion","reflections","bloom","depth_of_field","motion_blur","lens_distortion","lens_ghosts"})put("graphics."+key,1);
@@ -60,7 +60,7 @@ final class GameGraphicsData {
     void put(String key,float value){values.put(key,Float.toString(value));}
     String text(){
         StringBuilder out=new StringBuilder("; pt4droid graphics changes\n");
-        for(String section:new String[]{"graphics","raytracing","display"}){
+        for(String section:new String[]{"graphics","raytracing","display","camera"}){
             out.append('\n').append('[').append(section).append("]\n");
             for(Map.Entry<String,String> entry:values.entrySet())if(entry.getKey().startsWith(section+"."))out.append(entry.getKey().substring(section.length()+1)).append(" = ").append(entry.getValue()).append('\n');
         }

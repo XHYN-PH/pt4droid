@@ -1556,6 +1556,8 @@ void DrawSettingsWindow(App& app, pt::InputDevice& input, pt::game::GameSound& s
         changed = true;
     }
     ImGui::Separator();
+#ifndef __ANDROID__
+    // Android save deletion is available only on the launcher, after the game closes.
     if (game.SavesEnabled()) {
         if (ImGui::Button("Reset progress")) {
             ImGui::OpenPopup("Reset progress?");
@@ -1577,6 +1579,7 @@ void DrawSettingsWindow(App& app, pt::InputDevice& input, pt::game::GameSound& s
     } else {
         ImGui::TextDisabled("Progress reset: the next start is a first boot.");
     }
+#endif
     ImGui::End();
     if (changed && !app.settings_path.empty()) {
         pt::SaveAppSettings(app.settings_path, s);
@@ -2199,6 +2202,7 @@ public:
         out.push_back(std::move(controls));
 
         pt::game::PcSettingSection progress{"pc_section_progress", 1, {}};
+#ifndef __ANDROID__
         pt::game::PcSettingRow reset = Row(kReset, "pc_reset", {"pc_reset_value"}, 0, "pc_note_reset");
         reset.action = true;
         if (!game_.SavesEnabled()) {
@@ -2207,6 +2211,7 @@ public:
             reset.note = "pc_note_reset_done";
         }
         progress.rows.push_back(std::move(reset));
+#endif
         auto extras = Row(kExtras, "pc_extras", {"pc_graphics_value"}, 0, "pc_note_extras_archive");
         extras.link = true;
         progress.rows.push_back(std::move(extras));
@@ -2707,9 +2712,11 @@ public:
         if(id==kTextures) page_=kTexturesPage;
         if(id==kEffects) page_=kEffectsPage;
         if (id == kMods) page_ = kModsPage;
+#ifndef __ANDROID__
         if (id == kReset && game_.SavesEnabled()) {
             pt::LogInfo("save: progress reset from the PC settings page ({})", game_.ResetProgress() ? "accepted" : "failed");
         }
+#endif
         if (id == kGraphics) {
             page_ = kGraphicsPage;
         }
@@ -4011,6 +4018,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     // uploaded, at most 20 s: a first start that still has to generate them (minutes) goes on and swaps them in later
     bool boot_wait = true;
     const uint64_t boot_wait_start = SDL_GetTicksNS();
+    bool applied_third_person=app.settings.camera.third_person;
     float applied_volume = -1.0f;
     pt::ControllerSpeakerOutput controller_speaker;
     SDL_JoystickID speaker_gamepad_id = 0;
@@ -4033,6 +4041,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
         const SDL_Scancode next_voice_key = app.settings.voice.key.empty() ? SDL_SCANCODE_UNKNOWN : SDL_GetScancodeFromName(app.settings.voice.key.c_str());
         if(next_voice_key!=voice_key) { voice_key_press.Discard(); voice_key=next_voice_key; }
         bool visible = PumpEvents(app, &input, running, &voice_key_press, static_cast<uint32_t>(voice_key)) || vr != nullptr;
+#ifdef __ANDROID__
+        if(applied_third_person!=app.settings.camera.third_person){applied_third_person=app.settings.camera.third_person;game.SetThirdPerson(applied_third_person);}
+#endif
         if (vr) {
             vr->BeginLoop(running);
             if (!vr->Host().SessionRunning()) {
@@ -5393,6 +5404,9 @@ int main(int argc, char** argv) {
     // A start that fails before the first frame used to end without a word (issue #25 and pt.log reports: "Installed Vulkan doesn't
     // implement the VK_KHR_surface extension", "No available video device"): the player saw nothing happen at all.
     auto startup_failure = [&](const std::string& what, const std::string& advice) {
+#ifdef __ANDROID__
+        pt::android::LoadingProgress("",0,0);
+#endif
         pt::LogError("startup failed: {}", what);
         if (options.headless) {
             return;
@@ -5406,7 +5420,7 @@ int main(int argc, char** argv) {
     const std::string driver_advice = "Install the latest graphics driver from NVIDIA, AMD or Intel (a clean reinstall fixed this for other "
                                       "players), and close overlays such as RivaTuner or MSI Afterburner. P.T. needs a GPU with Vulkan 1.3.";
 #elif defined(__ANDROID__)
-    const std::string driver_advice="Choose Automatic or System Vulkan in pt4droid settings. Turnip needs supported Adreno; PanVK is experimental for Mali on Android 15+. The renderer requires Vulkan 1.3 and BC texture support.";
+    const std::string driver_advice="Return to the main menu and choose Retry with system driver. You can also change the driver in Settings. Turnip is for supported Snapdragon devices; PanVK is experimental for Mali on Android 15+.";
 #else
     const std::string driver_advice = "Make sure your graphics driver provides Vulkan 1.3 (Mesa 23 or newer, or the NVIDIA driver) and that "
                                       "P.T. runs inside your desktop session.";
@@ -5681,15 +5695,27 @@ int main(int argc, char** argv) {
     int result = 1;
     // PT_TEST_CRASH=devicelost: the lost device path right after the renderer starts (tests only)
     const bool test_device_lost = std::getenv("PT_TEST_CRASH") && std::string(std::getenv("PT_TEST_CRASH")) == "devicelost";
+#ifdef __ANDROID__
+    pt::android::LoadingProgress("Preparing graphics",0,0);
+#endif
     const bool renderer_ready = app.renderer.Init(app.window, settings);
     if (!renderer_ready) {
+#ifdef __ANDROID__
+        pt::android::GraphicsStartupFailed(app.renderer.Context().init_error);
+#endif
         startup_failure("The graphics device could not be set up (Vulkan). "+app.renderer.Context().init_error, driver_advice);
     }
     if (renderer_ready && test_device_lost) {
         app.renderer.Context().CheckDeviceLost(VK_ERROR_DEVICE_LOST, "PT_TEST_CRASH");
     }
-    if (renderer_ready && app.textures.Init(app.renderer.Context()) && app.scene.Init(app.renderer, app.textures)) {
+    const bool scene_ready=renderer_ready && app.textures.Init(app.renderer.Context()) && app.scene.Init(app.renderer, app.textures);
 #ifdef __ANDROID__
+    if(renderer_ready && !scene_ready){pt::android::GraphicsStartupFailed("Graphics preparation failed");startup_failure("The game could not prepare its graphics.",driver_advice);}
+#endif
+    if (scene_ready) {
+#ifdef __ANDROID__
+        pt::android::LoadingProgress("",0,0);
+        {std::error_code ec;const char* root=SDL_GetAndroidInternalStoragePath();if(root)std::filesystem::remove(std::filesystem::path(root)/"driver_startup_failed.txt",ec);}
         ApplyMobileGameGraphicsChanges(app);
         ApplyGraphicsSettings(app);
 #endif
