@@ -13,6 +13,7 @@
 #include "engine/core/log.h"
 #include "engine/core/parallel_for.h"
 #include "engine/fs/mods.h"
+#include "engine/platform/android.h"
 
 namespace pt::game {
 namespace {
@@ -247,6 +248,10 @@ void StageManager::PrefetchMazeFor(std::string_view floor) {
 }
 
 std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std::string& label) {
+#ifdef __ANDROID__
+    android::LoadingProgress("Reading area",0,0);
+    struct LoadingCleanup {~LoadingCleanup(){android::LoadingProgress("",0,0);}} loading_cleanup;
+#endif
     using clock = std::chrono::steady_clock;
     const auto ms = [](clock::time_point from, clock::time_point to) { return std::chrono::duration<double, std::milli>(to - from).count(); };
     const auto started = clock::now();
@@ -295,6 +300,8 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
     std::unordered_map<std::string, uint8_t> required_variants;
     std::unordered_set<std::string> planned;
     size_t placement_count = 0;
+    size_t total_placements=0;
+    for(const auto& file:stage->files)total_placements+=file->static_models.size();
     const auto known_textures = models_.Textures().Names();
     if (!mods::Active()) {
         for (const auto& file : stage->files) for (const auto& placement : file->static_models) {
@@ -330,6 +337,7 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
         }
     }
     size_t scheduled_waves=0;
+    std::unordered_set<std::string> prioritized_models;
     const auto schedule_through=[&](size_t last) {
         while (scheduled_waves<waves.size() && scheduled_waves<=last) {
             for(const auto& path:waves[scheduled_waves]) {
@@ -357,6 +365,21 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
                 schedule_through(wave + 1);
             }
             ++placement_count;
+            // Give both readers this model's first-use textures before Get()
+            // waits for any one of them, preserving the material read order.
+            if(stream && prioritized_models.insert(placement.model_file).second){
+                const auto model=parsed.models.find(placement.model_file);
+                if(model!=parsed.models.end() && model->second){
+                    for(auto material=model->second->materials.rbegin();material!=model->second->materials.rend();++material){
+                        auto uses=MaterialTextureReads(*material);
+                        for(auto use=uses.rbegin();use!=uses.rend();++use)stream->Prioritize(FtexStem(use->path));
+                    }
+                }
+            }
+#ifdef __ANDROID__
+            if(placement_count==1 || placement_count%16==0 || placement_count==total_placements)
+                android::LoadingProgress("Preparing area",int(placement_count),int(total_placements));
+#endif
             const auto model_started = clock::now();
             const auto pre_model = parsed.models.find(placement.model_file);
             const ModelEntry* model = models_.Get(placement.model_file, pre_model != parsed.models.end() ? pre_model->second.get() : nullptr);
