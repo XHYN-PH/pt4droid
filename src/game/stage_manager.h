@@ -248,6 +248,9 @@ private:
         uint32_t world = 0;
         uint32_t line = 0;
         uint32_t reflection = 0;
+        glm::mat4 transform{1.0f};
+        bool walk_detail=false;
+        std::string label;
     };
     struct CollisionEntry {
         const Stage* stage = nullptr;
@@ -284,6 +287,9 @@ private:
     uint64_t geom_generation_ = 0;
     // the collision generation the current or the pending worlds were built from
     uint64_t built_generation_ = 0;
+    const CollisionWorld* last_collision_world_=nullptr;
+    const CollisionWorld* last_line_world_=nullptr;
+    const CollisionWorld* last_reflection_world_=nullptr;
     std::vector<CollisionOwners> collision_owners_;
     std::unique_ptr<PendingCollision> pending_collision_;
     bool collision_deferrable_ = false;

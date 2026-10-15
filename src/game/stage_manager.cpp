@@ -211,7 +211,7 @@ void StageManager::StartPrefetch(const std::string& fpk_path) {
     for (const auto& [geom_file, lines] : line_cache_) {
         known->geoms.insert(geom_file);
     }
-    prefetch_ = std::async(std::launch::async, [&vfs = vfs_, fpk_path, known] { return Parse(vfs, fpk_path, known.get()); });
+    prefetch_ = std::async(std::launch::async, [&vfs = vfs_, fpk_path, known] { return Parse(vfs, fpk_path, known.get(), false); });
 }
 
 void StageManager::DropPrefetch() {
@@ -296,7 +296,7 @@ std::unique_ptr<Stage> StageManager::Load(const std::string& fpk_path, const std
     std::unordered_set<std::string> planned;
     size_t placement_count = 0;
     const auto known_textures = models_.Textures().Names();
-    if (!prefetched && !mods::Active()) {
+    if (!mods::Active()) {
         for (const auto& file : stage->files) for (const auto& placement : file->static_models) {
             const size_t wave = placement_count++ / kWavePlacements;
             if (waves.size() <= wave) waves.resize(wave + 1);
@@ -943,6 +943,7 @@ void StageManager::BuildWorlds(const std::vector<CollisionEntry>& entries, Colli
         const Stage::CollisionPiece& piece = *entry.piece;
         const Stage::CollisionPiece::Cache& cache = piece.cache;
         CollisionOwners owner{entry.stage, &piece, world.AddOwner(cache.owner), 0, 0};
+        owner.transform=cache.transform;owner.walk_detail=entry.stage->walk_detail_surfaces;owner.label=entry.label;
         world_blocks.push_back({&cache.world, owner.world});
         if (lines && piece.lines) {
             owner.line = lines->AddOwner(cache.owner);
@@ -972,7 +973,11 @@ void StageManager::BuildCollision(CollisionWorld& world, std::vector<SurfaceTria
     DropCollisionBuild();
     collision_deferrable_ = false;
     built_generation_ = collision_generation_;
-    BuildWorlds(CollisionEntries(), world, lines, reflections, collision_owners_);
+    const auto entries=CollisionEntries();
+    const bool same=last_collision_world_==&world && last_line_world_==lines && last_reflection_world_==reflections && entries.size()==collision_owners_.size() &&
+        std::equal(entries.begin(),entries.end(),collision_owners_.begin(),[](const auto& e,const auto& owner){return e.stage==owner.stage && e.piece==owner.piece && e.piece->cache.valid && owner.label==e.label && owner.walk_detail==e.stage->walk_detail_surfaces && owner.transform==e.stage->file_to_world*e.piece->file_transform;});
+    if(!same)BuildWorlds(entries, world, lines, reflections, collision_owners_);
+    last_collision_world_=&world;last_line_world_=lines;last_reflection_world_=reflections;
     UpdateCollisionActive(world, surfaces, lines, reflections);
     LogDebug("stage: collision {} triangles, {} material surfaces, {} line check triangles ({:.1f} ms)", world.ActiveTriangles(),
              surfaces ? surfaces->size() : 0, lines ? lines->ActiveTriangles() : 0,
@@ -1005,6 +1010,7 @@ void StageManager::FinishCollisionBuild(CollisionWorld& world, std::vector<Surfa
     std::swap(collision_owners_, pending_collision_->owners);
     const double built = pending_collision_->milliseconds;
     pending_collision_.reset();
+    last_collision_world_=&world;last_line_world_=&lines;last_reflection_world_=&reflections;
     UpdateCollisionActive(world, surfaces, &lines, &reflections);
     LogDebug("stage: collision {} triangles, {} material surfaces, {} line check triangles (worker {:.1f} ms, taken in {:.2f} ms)",
              world.ActiveTriangles(), surfaces ? surfaces->size() : 0, lines.ActiveTriangles(), built,

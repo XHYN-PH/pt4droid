@@ -1,4 +1,5 @@
 #include "game/demo_system.h"
+#include <chrono>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -338,6 +339,11 @@ void DemoSystem::IndexStage(Stage& stage) {
             }
             for(const auto& [name,path]:info->model_files)game_.Models().Prepare(path);
             demos_[info->demo_id] = info;
+            if(game_.Frame()==0){
+                PlayingDemo warm;warm.demo_id=info->demo_id;warm.info=info;warm.stream=LoadStream(*info);
+                for(const auto& c:info->control_characters)if(c.character_id=="Player")warm.player_model=c.model;
+                PreloadModels(warm);
+            }
         }
     }
 }
@@ -1128,6 +1134,7 @@ DemoSystem::ModelSource DemoSystem::ResolveModel(const PlayingDemo& demo, const 
 // stream's CreateModel events are built here, before the start: building plr0 at gc_p00_022's frame 0 stalled the first boot for
 // 0.68 s while its frame 0 fade in ran.
 void DemoSystem::PreloadModels(PlayingDemo& demo) {
+    const auto started=std::chrono::steady_clock::now();
     if (!demo.stream) {
         return;
     }
@@ -1149,6 +1156,8 @@ void DemoSystem::PreloadModels(PlayingDemo& demo) {
             LoadSimRig(PartsPath(demo, name), source.fmdl);
         }
     }
+    const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+    if(ms>2.0)LogInfo("demo: {} model/skeleton/simulation handover {:.2f} ms",demo.demo_id,ms);
 }
 
 void DemoSystem::CreateModel(PlayingDemo& demo, const anim::StreamEvent& e) {
