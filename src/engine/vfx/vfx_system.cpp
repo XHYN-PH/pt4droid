@@ -1167,6 +1167,10 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
     const glm::vec2 rain_angle=rain?m.rain_angle+m.rain_swing*glm::sin(state.rain_phase):glm::vec2(0);
     const glm::vec4 rain_rotation=rain?glm::vec4(std::sin(rain_angle.x),std::cos(rain_angle.x),std::sin(rain_angle.y),std::cos(rain_angle.y)):glm::vec4(0);
     const glm::vec4 rain_extra=rain?glm::vec4(m.texture_scale*.5f,std::sin(m.texture_angle),std::cos(m.texture_angle)):glm::vec4(0);
+    const float x0 = -shape.center_u, x1 = 1.0f - shape.center_u;
+    const float y0 = shape.center_v - 1.0f, y1 = shape.center_v;
+    const glm::mat3 local_frame(world);
+    const glm::vec2 local_sprite_scale=shape.local_space && !shape.world_position && shape.kind!=ShapeKind::Plane ? glm::vec2(glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1]))) : glm::vec2(1.0f);
     for (size_t pi = 0; pi < state.particles.size(); ++pi) {
         const Particle& p = state.particles[pi];
         c.particle = &p;
@@ -1191,10 +1195,6 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             continue;
         }
         Quad q;
-        const float x0 = -shape.center_u;
-        const float x1 = 1.0f - shape.center_u;
-        const float y0 = shape.center_v - 1.0f;
-        const float y1 = shape.center_v;
         if (shape.kind == ShapeKind::Sprite2D) {
             const float sw = static_cast<float>(shape.screen_width);
             const float sh = static_cast<float>(shape.screen_height);
@@ -1212,7 +1212,7 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             glm::vec3 ay;
             glm::vec2 size(scale.x, scale.y);
             if (shape.kind == ShapeKind::Plane) {
-                const glm::mat3 frame = shape.world_position ? glm::mat3(1.0f) : glm::mat3(c.world);
+                const glm::mat3 frame = shape.world_position ? glm::mat3(1.0f) : shape.local_space ? local_frame : glm::mat3(c.world);
                 glm::mat3 fix(1.0f);
                 if (shape.axis_fix >= 1 && shape.axis_fix <= 3) {
                     const glm::vec3 d = glm::inverse(frame) * (view.position - world_pos);
@@ -1240,8 +1240,8 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
                 ax = right;
                 ay = up;
                 if (!shape.world_position) {
-                    const glm::vec3 s = glm::vec3(glm::length(glm::vec3(c.world[0])), glm::length(glm::vec3(c.world[1])), 1.0f);
-                    size *= glm::vec2(s.x, s.y);
+                    const glm::vec2 sprite_scale = shape.local_space ? local_sprite_scale : glm::vec2(glm::length(glm::vec3(c.world[0])), glm::length(glm::vec3(c.world[1])));
+                    size *= sprite_scale;
                 }
             }
             if (m.camera_z_offset != 0.0f) {
