@@ -1,4 +1,4 @@
-These are archived notes for the initial Android releases. See the [Test 13 changelog](pt4droid-test.13.md) for the current test build and compatibility.
+These are archived notes for the first Android releases. See [Test 13](pt4droid-test.13.md) for the latest changes and installation help.
 
 Experimental Android build of LoreanXavier's native P.T. PC port (https://github.com/LoreanXavier/pt-pc). All the real
 work is theirs; this adds the Android layer.
