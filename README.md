@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.13">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -25,18 +25,18 @@
 
 Play **P.T. on Android** with touch controls, graphics settings and controller support. This is an unofficial port maintained by **XHYN-PH**.
 
-**Latest test release: [Test 13](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.13)** · Android 10+
+**Latest test release: [Test 14](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14)** · Android 10+
 
 Game files are not included. You need your own P.T. game dump. This is still a test release, so some phones may have problems.
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.13-arm64.apk** from the [Test 13 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.13) and install it.
+1. Download **pt4droid-v0.2.1-test.14-arm64.apk** from the [Test 14 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package. See the game-file help below if it will not import.
 3. Wait for the files to finish importing, then tap **Enter menu**.
 4. Adjust your settings and tap **Start**.
 
-**Updating from Test 12?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
+**Updating from Test 13?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
 
 <details>
 <summary>Game files and importing help</summary>
@@ -53,15 +53,19 @@ The US game dump, **CUSA01127**, is the reference version.
 
 </details>
 
-## What's new in Test 13
+## What's new in Test 14
 
-- Improved texture support for Mali phones.
-- Loading improvements for new areas and cutscenes.
-- Better recovery of your FPS and screen refresh settings after returning to the game.
-- Performance improvements for lighting and visual effects.
-- Clearer messages when a graphics driver cannot start the game.
+- Simpler settings, with separate pages for graphics and camera, controls, performance, and drivers.
+- An experimental **third-person view** option you can use with touch controls.
+- Changing controls or logging settings keeps your graphics settings and FPS limit.
+- **Delete saves** is available only on the main menu.
+- Loading progress during graphics preparation and area loading.
+- Further shadow, particle and loading improvements.
+- Better recovery when Android changes the screen refresh rate, while keeping your selected FPS limit, including **Unlimited**.
+- **Retry with system driver** if the game cannot start with your selected graphics driver.
+- A separate Mali lighting option; Snapdragon/Adreno keeps its existing lighting shaders and native textures.
 
-[Read the full Test 13 changes](docs/pt4droid-test.13.md).
+[Read the full Test 14 changes](docs/pt4droid-test.14.md).
 
 ## Controls and settings
 
@@ -69,8 +73,12 @@ The US game dump, **CUSA01127**, is the reference version.
 - **Movement and looking:** use the invisible movement area and swipe-look controls. Adjust sensitivity in Settings.
 - **Controllers, keyboard and mouse:** supported, with separate sensitivity settings.
 - **Return to menu:** available in the in-game settings.
-- **Delete saves:** available on the launcher.
+- **Delete saves:** available only on the main menu.
 - **Ending voice input:** uses on-device recognition. The touch **Name** button or holding both controller triggers is also available.
+
+Open **Settings → Graphics & camera** for your FPS limit, effects, shadows and third-person view. Third-person view is experimental; scripted scenes can still use first person.
+
+Open **Controls** for touch, mouse and controller options, and **Performance & advanced** for scene resolution and frame pacing. Options marked **Restart required** take effect after restarting the game.
 
 For graphics, start with **Balanced**. Try **Maximum performance** if the game feels slow. Keep logs Off during normal play.
 
@@ -80,9 +88,9 @@ You need Android 10 or newer on a compatible 64-bit phone, Vulkan 1.3 support, a
 
 Start with the **Automatic** graphics driver. **Mali and Xclipse support is experimental**; try **Automatic** or **System Vulkan driver** first.
 
-If a custom driver causes crashes, switch back to **Automatic** or **System Vulkan driver** and restart. The optional **PanVK** driver needs Android 15 or newer and compatible hardware; it may still fail on some phones.
+If a custom driver cannot start the game, use **Retry with system driver** on the main menu. You can also switch back to **Automatic** or **System Vulkan driver** in **Settings → Graphics driver** and restart. The optional **PanVK** driver needs Android 15 or newer and compatible hardware; it may still fail on some phones.
 
-On Mali, if the game runs out of texture memory, try **Compatibility texture size → 1024 or 512** in the graphics settings, then restart. Smaller textures use less memory and may look less sharp.
+On Mali, if the game runs out of texture memory, try **Compatibility texture size → 1024 or 512** in **Settings → Performance & advanced**, then restart. Smaller textures use less memory and may look less sharp. The **Mali lighting** option is also there; restart after changing it, and turn it off to compare with Test 13's lighting.
 
 ## Need help?
 
@@ -117,3 +125,4 @@ The original PC project README is preserved in [README_UPSTREAM.md](README_UPSTR
 </details>
 
 The port code is licensed under [MIT](LICENSE). P.T. and its artwork belong to their respective rights holders, including Konami and Kojima Productions. This project is unofficial and is not affiliated with or endorsed by them.
+
