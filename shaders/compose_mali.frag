@@ -72,6 +72,9 @@ void main() {
         vec3 specular = ImgFetch(IMG_SPECULAR, pixel).rgb;
         uint ao = COMPOSE_AO == 0xFFFFFFFFu ? pass.ids.y : COMPOSE_AO;
         float occlusion = ao != 0u ? ImgFetch(IMG_AO_BLUR, pixel).x : 1.0;
+        if(any(isnan(diffuse))||any(isinf(diffuse)))diffuse=vec3(0.0);
+        if(any(isnan(specular))||any(isinf(specular)))specular=vec3(0.0);
+        if(isnan(occlusion)||isinf(occlusion))occlusion=1.0;
         color = (diffuse * albedo + specular) * occlusion;
         z = ViewZ(v, depth);
     }
@@ -105,6 +108,7 @@ void main() {
         TppFog(fog_delta, inscatter, transmittance);
         color = color * transmittance + inscatter;
     }
+    if(any(isnan(color))||any(isinf(color)))color=vec3(0.0);
     float bloom_alpha = BloomAlpha(color);
     if ((tpp & 2u) != 0u) {
         color = TppShoulder(color);

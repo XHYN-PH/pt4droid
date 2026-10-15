@@ -155,7 +155,7 @@ bool PrepareLight(Light l, View v, vec3 world, vec3 P, out vec3 L, out vec3 radi
 bool ShadeLight(Light l,View v,Surface s,bool shadows,vec2 frag,vec3 L,vec3 radiance,float shadow_cone,float d,out vec3 diffuse,out vec3 specular){
     diffuse=vec3(0.0);specular=vec3(0.0);const vec3 dither_frag=vec3(frag,v.exposure.w);bool spot=l.position.w>0.5;
     float shadow = 1.0;
-    if (l.info.x >= 0 && shadows) {
+    if (l.info.x >= 0 && shadows && l.scales.z != 0.0 && (!spot || shadow_cone != 0.0)) {
 #ifdef PT_RT_SHADOWS
         // rays only where the light can add something: a surface facing it, or a translucent one (the diffuse and specular
         // terms below are 0 otherwise)

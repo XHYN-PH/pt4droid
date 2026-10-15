@@ -17,11 +17,13 @@ layout(location = 0) out vec4 out_diffuse;
 
 #include "probe_sh.glsl"
 layout(constant_id = 0) const bool cached_probe_map = false;
+layout(constant_id = 1) const bool hardware_probe_filter = true;
 
 vec3 ProbeTexel(Probe p, View v, ivec2 texel) {
     if (!cached_probe_map) return SphereMapTexel(p, v, texel);
     ivec2 cell = ivec2(int(pass.ids.y % 32u), int(pass.ids.y / 32u));
-    return ImgFetch(IMG_PROBE_MAP, cell * 16 + texel).rgb;
+    vec3 e=ImgFetch(IMG_PROBE_MAP, cell * 16 + texel).rgb;
+    return any(isnan(e))||any(isinf(e))?SphereMapTexel(p,v,texel):e;
 }
 
 // SSLighting2_SH_MultiBlend reads the atlas at r = 0.40625 sqrt(0.5 N.z + 0.5) from the cell centre along -normalize(N.xy),
@@ -35,7 +37,7 @@ vec3 SphereMapLookup(Probe p, View v, vec3 n_view) {
     vec2 s = 0.5 - r * dir;
     // Each sample stays inside its own 16x16 cell, including the half-texel
     // footprint. One hardware bilinear lookup replaces four fetches and mixes.
-    if (cached_probe_map) {
+    if (cached_probe_map && hardware_probe_filter) {
         vec2 cell = vec2(pass.ids.y % 32u, pass.ids.y / 32u);
         return ImgLod(IMG_PROBE_MAP, SMP_LINEAR_CLAMP, (cell + s) * vec2(1.0 / 32.0, 1.0 / 16.0), 0.0).rgb;
     }
@@ -83,5 +85,6 @@ void main() {
 #ifdef PT_RT_AO
     e *= imageLoad(rt_ao, pixel).x;
 #endif
+    if(any(isnan(e))||any(isinf(e)))e=vec3(0.0);
     out_diffuse = vec4(max(vec3(0.0), weight * e), max(0.0, 1.0 - weight));
 }
