@@ -77,6 +77,8 @@ int TouchControlsMode(int fallback){int value=fallback;Activity("getTouchControl
 void OpenMobileSettings(){Activity("openMobileSettings","()V",[](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m);});}
 void GameGraphicsPresetSelected(int preset){profile=-1;std::error_code ec;std::filesystem::remove(PrivateFile("performance_profile_pending.txt"),ec);Activity("gameGraphicsPresetSelected","(I)V",[&](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m,preset);});}
 void GameGraphicsSettingsFailed(const std::string& text){Activity("gameGraphicsSettingsFailed","(Ljava/lang/String;)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value);e->DeleteLocalRef(value);});}
+void LoadingProgress(const std::string& text,int completed,int total){Activity("loadingProgress","(Ljava/lang/String;II)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value,completed,total);e->DeleteLocalRef(value);});}
+void GraphicsStartupFailed(const std::string& text){Activity("graphicsStartupFailed","(Ljava/lang/String;)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value);e->DeleteLocalRef(value);});}
 }
 extern "C" JNIEXPORT jfloat JNICALL Java_com_ptport_app_PTActivity_nativeGetRenderScale(JNIEnv*,jclass){return pt::android::RenderScale();}
 extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_PTActivity_nativeSetRenderScale(JNIEnv*,jclass,jfloat value){pt::android::SetRenderScale(value);}

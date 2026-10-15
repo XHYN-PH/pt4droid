@@ -10,6 +10,7 @@ inline int ThermalFrameLimit(int requested,int status,bool enabled) {
 }
 struct MobilePerformanceOptions {
     bool frame_pacing=false,sgsr=false,sustained=false,invert_y=false;
+    bool mali_optimizations=true;
     float sharpness=1.f,mouse_sensitivity=1.f,controller_sensitivity=1.f;
     int ao_quality=0,reflection_quality=0,compat_texture_size=0;
 };

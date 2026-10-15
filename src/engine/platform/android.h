@@ -40,6 +40,8 @@ int TouchControlsMode(int fallback);
 void OpenMobileSettings();
 void GameGraphicsPresetSelected(int preset);
 void GameGraphicsSettingsFailed(const std::string& message);
+void LoadingProgress(const std::string& message, int completed, int total);
+void GraphicsStartupFailed(const std::string& message);
 void PublishGameGraphicsSettings(std::string text);
 bool ConsumeGameGraphicsChanges();
 std::filesystem::path GameGraphicsChangesFile();

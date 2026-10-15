@@ -13,6 +13,7 @@ inline bool ApplyGameGraphicsOverrides(const std::filesystem::path& path, AppSet
     settings.display.fps_limit = requested.display.fps_limit;
     settings.display.letterbox = requested.display.letterbox;
     settings.display.hdr = false;
+    settings.camera.third_person = requested.camera.third_person;
     return true;
 }
 }
