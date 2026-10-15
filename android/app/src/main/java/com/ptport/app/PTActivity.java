@@ -55,9 +55,9 @@ public class PTActivity extends SDLActivity {
         });
     }
     @Override protected void onActivityResult(int request,int result,Intent data){if(mobileSettings!=null && mobileSettings.activityResult(request,result,data))return;super.onActivityResult(request,result,data);}
-    @Override protected void onResume(){super.onResume();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
+    @Override protected void onResume(){super.onResume();DisplayRefresh.invalidate();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
     @Override protected void onPause(){if(mobileRuntime!=null)mobileRuntime.pause();if(touchControls!=null)touchControls.releaseAll();super.onPause();}
-    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(mobileRuntime!=null)mobileRuntime.focus(focus);if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(mobileRuntime!=null)mobileRuntime.focus(focus);if(focus){DisplayRefresh.invalidate();refreshDisplay();}if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
     void returnToMenu() {
         if (returningToMenu || isFinishing()) return;
         returningToMenu = true;

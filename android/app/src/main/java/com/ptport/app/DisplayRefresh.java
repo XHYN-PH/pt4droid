@@ -16,6 +16,10 @@ public final class DisplayRefresh {
     private static final WeakHashMap<Surface,Float> surfaceRates=new WeakHashMap<>();
     private static volatile int runtimeTarget=-1;
     private static volatile float actualRate;
+    private static long lastRecovery;
+    private static int recoveryAttempts;
+    private static float lastRequested=-1;
+    public static void invalidate(){surfaceRates.clear();lastRecovery=0;recoveryAttempts=0;}
     public static float actualRate(){return actualRate;}
     public static void setTarget(int fps){runtimeTarget=Math.max(0,fps);}
     static String label(Activity activity,int fps){Display d=display(activity);float hz=choose(d.getSupportedModes(),d.getMode(),fps).getRefreshRate();return String.format(Locale.ROOT,"%s / %.0f Hz",fps==0?"Unlimited":fps+" FPS",hz);}
@@ -50,13 +54,20 @@ public final class DisplayRefresh {
         try{
             Display display=display(activity);float requested=runtimeTarget>=0?runtimeTarget:activity.getSharedPreferences("touch_layout_v1",0).getInt("frame_target",0);
             if(!Float.isFinite(requested) || requested<0)requested=0;
+            if(requested!=lastRequested){lastRequested=requested;recoveryAttempts=0;lastRecovery=0;surfaceRates.clear();}
             actualRate=display.getRefreshRate();
             Display.Mode selected=choose(display.getSupportedModes(),display.getMode(),requested);float rate=selected.getRefreshRate();
             WindowManager.LayoutParams attributes=activity.getWindow().getAttributes();int modeId=selected.getModeId();
-            if(attributes.preferredDisplayModeId!=modeId || attributes.preferredRefreshRate!=rate){attributes.preferredDisplayModeId=modeId;attributes.preferredRefreshRate=rate;activity.getWindow().setAttributes(attributes);}
+            long now=android.os.SystemClock.uptimeMillis();
+            boolean mismatch=Math.abs(actualRate-rate)>.5f;
+            if(!mismatch)recoveryAttempts=0;
+            boolean recovery=mismatch && recoveryAttempts<3 && now-lastRecovery>=2000;
+            if(recovery){lastRecovery=now;++recoveryAttempts;surfaceRates.clear();}
+            if(recovery || attributes.preferredDisplayModeId!=modeId || attributes.preferredRefreshRate!=rate){attributes.preferredDisplayModeId=modeId;attributes.preferredRefreshRate=rate;activity.getWindow().setAttributes(attributes);}
             if(Build.VERSION.SDK_INT>=30 && surface!=null && surface.isValid()){
                 float contentRate=requested>0?requested:rate;
-                if(!Float.valueOf(contentRate).equals(surfaceRates.get(surface))){surface.setFrameRate(contentRate,Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);surfaceRates.put(surface,contentRate);}
+                if(!Float.valueOf(contentRate).equals(surfaceRates.get(surface))){if(Build.VERSION.SDK_INT>=31)surface.setFrameRate(contentRate,Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+                    else surface.setFrameRate(contentRate,Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);surfaceRates.put(surface,contentRate);}
             }
         }catch(Exception error){AppLog.w("pt","Refresh rate request failed",error);}
     }
