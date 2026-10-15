@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12">Download APK (Test 12)</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -25,7 +25,9 @@
 
 An unofficial native Android port of **P.T.**, with customizable touch controls, graphics settings and Vulkan driver support.
 
-**Current build: [0.2.1-test.12](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12)** · ARM64 · Android 10+
+**Current source: [0.2.1-test.13 release candidate](docs/pt4droid-test.13.md)** · ARM64 · Android 10+
+
+**Latest published APK: [0.2.1-test.12](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12)**. The Test 13 source includes the verified compatibility and performance refinements; Adreno/Mali phone validation is still required before a stable release.
 
 Game files are not included. You need your own P.T. game dump. This is an experimental test build; compatibility and performance vary by device.
 
@@ -39,7 +41,7 @@ Game files are not included. You need your own P.T. game dump. This is an experi
 
 Already have extracted files? Choose **I already have the extracted files**, place `chunk1.psarc`, `texture.qar` and `pathid_list_ps4.bin` in Downloads, loose or inside `CUSA01127`, and allow storage access. The US release **CUSA01127** is the reference data.
 
-**Updating:** install over the matching Test 11 or earlier test app to keep game files, saves, settings and touch layouts. Avoid uninstalling first.
+**Updating:** install over the matching Test 12 or earlier test app to keep game files, saves, settings and touch layouts. Avoid uninstalling first.
 
 ## Device compatibility
 
@@ -51,7 +53,7 @@ Already have extracted files? Choose **I already have the extracted files**, pla
 
 **Automatic** uses bundled Turnip on Adreno 6xx/7xx and the system driver on other GPUs, including Adreno 8xx.
 
-**Mali and Xclipse support is experimental.** Test 12 adds clipping fallbacks for drivers without `shaderClipDistance` and no longer requires unused wireframe support. For Mali on Android 14, start with **Automatic** or **System Vulkan driver**. Other Vulkan requirements still apply. Bundled PanVK requires Android 15+ and compatible hardware.
+**Mali and Xclipse support is experimental.** Test 12 adds clipping fallbacks for drivers without `shaderClipDistance` and no longer requires unused wireframe support. For Mali on Android 14, start with **Automatic** or **System Vulkan driver**. Other Vulkan requirements still apply. Bundled PanVK requires Android 15+ and compatible hardware. Test 13 adds exact BC texture conversion when the selected driver cannot sample a compressed format. Native supported textures bypass conversion. If converted textures exceed memory, explicitly select a smaller **Compatibility texture size** and restart. PanVK buffer-import recovery remains experimental; use System Vulkan if it cannot start.
 
 To import a compatible driver, use **Settings → Vulkan drivers → Import driver ZIP**, then fully close and reopen the game. If it causes problems, select **Automatic** or **System Vulkan driver** and restart.
 
@@ -69,7 +71,7 @@ Use **Settings → Game graphics** for presets, FPS/display refresh, textures, s
 
 The FPS setting requests a matching display refresh rate or a supported multiple. Render scale and optional Android frame pacing are in Settings. Sustained performance keeps your chosen FPS limit; Android still controls temperature and clocks. Keep logs Off during normal play.
 
-Test 12 refines pacing, prepares player assets earlier, reduces repeated lighting work, and adds Mali feature fallbacks. See the [changelog](docs/releases/pt4droid-v0.2.1-test.12.md). Phone performance comparisons still need testing.
+Test 13 adds a bounded converted-texture cache and residency management, continues texture preparation after prefetch, prepares opening cutscene assets, reuses unchanged collision worlds and reduces repeated VFX/probe work. Refresh recovery covers all FPS targets, including Unlimited. See the [Test 13 changes and compatibility limits](docs/pt4droid-test.13.md). Phone performance comparisons still need testing.
 
 ## Reporting a problem
 
@@ -81,7 +83,7 @@ Enable logs in **Settings**, tap **Apply**, and reproduce the issue. [Open an is
 
 ## For developers
 
-[Android build instructions](docs/android.md) · [Test 12 changes](docs/releases/pt4droid-v0.2.1-test.12.md) · [Build validation](docs/android-test12-build-validation.md) · [Earlier releases](https://github.com/XHYN-PH/pt4droid/releases)
+[Android build instructions](docs/android.md) · [Test 13 changes](docs/pt4droid-test.13.md) · [Build validation](docs/android-test13-build-validation.md) · [Earlier releases](https://github.com/XHYN-PH/pt4droid/releases)
 
 ## Credits
 
