@@ -100,6 +100,14 @@ public class SetupActivity extends Activity {
     @Override protected void onDestroy(){cancelled=true;if(mobileSettings!=null)mobileSettings.detach();super.onDestroy();if(handoffToGame)android.os.Process.killProcess(android.os.Process.myPid());}
     private void showReady(){
         panel.removeAllViews();brand();
+        File driverFailure=new File(getFilesDir(),"driver_startup_failed.txt");
+        if(driverFailure.isFile()){
+            text("The graphics driver could not start the game. Try the phone's built-in driver.");
+            button("Retry with system driver",v->{
+                try{DriverImportJob.atomicWrite(new File(getFilesDir(),"driver.txt"),"system\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));java.nio.file.Files.deleteIfExists(driverFailure.toPath());startGame();}
+                catch(java.io.IOException error){showError("Could not change graphics driver: "+error.getMessage());}
+            });
+        }
         button("Start",v->startGame()).requestFocus();
         button("Settings",v->mobileSettings.show());
         button("Delete saves",v->mobileSettings.deleteSaves());

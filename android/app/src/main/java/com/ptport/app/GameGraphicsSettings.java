@@ -22,6 +22,9 @@ final class GameGraphicsSettings {
     }
     private void amount(String title,String key){float current=data.number(key,0);TextView label=new TextView(activity);label.setTextColor(MenuStyle.TEXT);label.setText(title+": "+Math.round(current*100)+"%");column.addView(label);MobileSettings.slider(column,title,Math.round(current*100),100,value->{data.put(key,value/100f);label.setText(title+": "+value+"%");});}
     private void show(){
+        MenuStyle.section(column,"Camera");
+        toggle("Third-person view • experimental","camera.third_person",true);
+        note("Switches the camera behind the player during free movement. Scripted scenes may use first person.");
         MenuStyle.section(column,"Display");
         List<Integer> fps=new ArrayList<>();fps.add(0);float maximum=DisplayRefresh.maximum(activity);
         for(int rate:new int[]{30,40,45,60,90,120,144,165,240})if(rate<=maximum+.5f)fps.add(rate);
@@ -41,13 +44,13 @@ final class GameGraphicsSettings {
         toggle("Bloom","graphics.bloom",true);toggle("Depth of field","graphics.depth_of_field",true);toggle("Motion blur","graphics.motion_blur",true);
         toggle("Lens distortion","graphics.lens_distortion",true);toggle("Lens flare ghosts","graphics.lens_ghosts",true);
         amount("Film grain","graphics.film_grain");amount("Clarity","graphics.clarity");
+        if(data.rayTracing){
         MenuStyle.section(column,"Ray tracing");
-        if(!data.rayTracing)note("Unavailable: "+data.rayReason);
         choice("Traced shadows","raytracing.shadows",new String[]{"Off","Sharp","Soft"},new int[]{0,1,2},data.rayTracing);
         toggle("Traced ambient occlusion","raytracing.ambient_occlusion",data.rayTracing);toggle("Traced contact shadows","raytracing.contact_shadows",data.rayTracing);toggle("Traced reflections","raytracing.reflections",data.rayTracing);
         choice("Ray quality","graphics.ray_quality",new String[]{"Balanced","High","Ultra"},new int[]{0,1,2},data.rayTracing);
-        MenuStyle.section(column,"Build support");
-        note("HDR, enhanced texture generation, desktop upscalers and frame generation are unavailable in this Android build. Scene resolution and optimized mobile bloom are in Android settings.");
+        }
+        note("Scene resolution and extra performance options are in Performance & advanced.");
         AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Game graphics").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try{data.save(activity);activity.getSharedPreferences("touch_layout_v1",0).edit().putInt("frame_target",data.integer("display.fps_limit",0)).apply();if(PTActivity.gameRunning())PTActivity.nativeApplyGameGraphicsSettings();else {DisplayRefresh.setTarget(data.integer("display.fps_limit",0));DisplayRefresh.apply(activity,null);}dialog.dismiss();Toast.makeText(activity,PTActivity.gameRunning()?"Graphics saved. Applying to the game.":"Graphics saved for the next game start.",Toast.LENGTH_LONG).show();}
