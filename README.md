@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12">Download APK (Test 12)</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.13">Download APK (Test 13)</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -27,13 +27,13 @@ An unofficial native Android port of **P.T.**, with customizable touch controls,
 
 **Current source: [0.2.1-test.13 release candidate](docs/pt4droid-test.13.md)** · ARM64 · Android 10+
 
-**Latest published APK: [0.2.1-test.12](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12)**. The Test 13 source includes the verified compatibility and performance refinements; Adreno/Mali phone validation is still required before a stable release.
+**Latest test APK: [0.2.1-test.13](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.13)**. The Test 13 source includes the verified compatibility and performance refinements; Adreno/Mali phone validation is still required before a stable release.
 
 Game files are not included. You need your own P.T. game dump. This is an experimental test build; compatibility and performance vary by device.
 
 ## Getting started
 
-1. Download **`pt4droid-v0.2.1-test.12-arm64.apk`** from the [Test 12 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.12) and install it.
+1. Download **`pt4droid-v0.2.1-test.13-arm64.apk`** from the [Test 13 prerelease](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.13) and install it.
 2. Open **pt4droid** and choose **Choose your P.T. .pkg**.
 3. Select a fake PKG made from your own game dump. Extract ZIP/RAR/7z archives first; encrypted PlayStation Store packages are unsupported.
 4. Wait for extraction, then tap **Enter menu**.
