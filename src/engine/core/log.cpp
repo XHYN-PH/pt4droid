@@ -17,6 +17,14 @@ namespace {
 std::mutex g_log_mutex;
 std::atomic<bool> g_enabled{[] {const char* value=std::getenv("PT_LOGS");return !value || std::string_view(value)!="0";}()};
 FILE* g_log_file = nullptr;
+std::filesystem::path g_log_path;
+uint64_t g_log_bytes=0;
+constexpr uint64_t kLogLimit=8ull*1024*1024;
+void RotateLog(){
+    if(g_log_file)std::fclose(g_log_file);
+    std::error_code ec;auto previous=g_log_path;previous+=".previous";std::filesystem::remove(previous,ec);ec.clear();std::filesystem::rename(g_log_path,previous,ec);
+    g_log_file=os::OpenFile(g_log_path,"w");g_log_bytes=0;
+}
 std::chrono::steady_clock::time_point g_last_flush{};
 uint64_t g_tick = 0;
 const bool g_log_ticks = [] {
@@ -50,12 +58,14 @@ void LogSetFile(const std::filesystem::path& path, bool append) {
         std::fclose(g_log_file);
         g_log_file=nullptr;
     }
-    if(LogEnabled())g_log_file = os::OpenFile(path, append ? "a" : "w");
+    g_log_path=path;std::error_code size_error;g_log_bytes=append?std::filesystem::file_size(path,size_error):0;if(size_error)g_log_bytes=0;
+    if(LogEnabled()){if(g_log_bytes>=kLogLimit)RotateLog();else g_log_file = os::OpenFile(path, append ? "a" : "w");}
     g_last_flush=std::chrono::steady_clock::now();
 }
 
 void LogWrite(LogLevel level, std::string_view text) {
     if(!LogEnabled())return;
+    text=text.substr(0,16*1024);
     using namespace std::chrono;
     static const auto start = steady_clock::now();
     const double seconds = duration<double>(steady_clock::now() - start).count();
@@ -74,7 +84,10 @@ void LogWrite(LogLevel level, std::string_view text) {
     std::fprintf(stderr, "[%9.3f] %-5s %s%.*s\n", seconds, LevelTag(level), tick, static_cast<int>(text.size()), text.data());
 #endif
     if (g_log_file) {
-        std::fprintf(g_log_file, "[%9.3f] %-5s %s%.*s\n", seconds, LevelTag(level), tick, static_cast<int>(text.size()), text.data());
+        if(g_log_bytes+text.size()+80>kLogLimit)RotateLog();
+        if(!g_log_file)return;
+        const int written=std::fprintf(g_log_file, "[%9.3f] %-5s %s%.*s\n", seconds, LevelTag(level), tick, static_cast<int>(text.size()), text.data());
+        if(written>0)g_log_bytes+=static_cast<uint64_t>(written);
 #ifdef __ANDROID__
         const auto now=steady_clock::now();
         if(level==LogLevel::Warn || level==LogLevel::Error || now-g_last_flush>=std::chrono::seconds(1)) {
