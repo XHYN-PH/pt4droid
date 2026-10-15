@@ -1,6 +1,8 @@
 #include "engine/render/scene_renderer.h"
 #include "engine/assets/compatible_texture.h"
 #include "engine/assets/bc_texture.h"
+#include "engine/platform/android.h"
+#include "engine/render/mobile_gpu_policy.h"
 #include <bit>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -114,6 +116,10 @@ bool SceneRenderer::Init(Renderer& renderer, TextureManager& textures) {
     textures_ = &textures;
     vk::Context& ctx = renderer.Context();
     device_ = ctx.device;
+    mali_lighting_=false;
+#ifdef __ANDROID__
+    mali_lighting_=UseMaliLighting(ctx.properties.vendorID,android::PerformanceOptions().mali_optimizations);
+#endif
 
     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler.maxLod = VK_LOD_CLAMP_NONE;
@@ -305,15 +311,27 @@ bool SceneRenderer::CreatePipelines() {
     // Full float cells preserve the original SH arithmetic and four-tap mix.
     // Unsupported devices retain the original shader without a startup failure.
     VkFormatProperties map_support{};
-    vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical, VK_FORMAT_R32G32B32A32_SFLOAT, &map_support);
+    probe_map_format_=VK_FORMAT_R32G32B32A32_SFLOAT;
+    mali_probe_filter_=false;
+    vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical, probe_map_format_, &map_support);
+    if(mali_lighting_){
+        const auto required=VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        if((map_support.optimalTilingFeatures&required)==required)mali_probe_filter_=true;
+        else {
+            VkFormatProperties half{};vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical,VK_FORMAT_R16G16B16A16_SFLOAT,&half);
+            if((half.optimalTilingFeatures&required)==required){probe_map_format_=VK_FORMAT_R16G16B16A16_SFLOAT;map_support=half;mali_probe_filter_=true;}
+        }
+    }
     const auto map_required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     if ((map_support.optimalTilingFeatures & map_required) == map_required) {
         volume.fragment_constants = {{0, 1}};
+        if(mali_probe_filter_)volume.fragment="probe_mali.frag";
         probe_cached_ = CreateGraphicsPipeline(device_, volume);
+        volume.fragment="probe.frag";
         volume.fragment_constants.clear();
         PipelineDesc map;
         map.layout = layout_; map.fragment = "probe_map.frag";
-        map.colors = {VK_FORMAT_R32G32B32A32_SFLOAT};
+        map.colors = {probe_map_format_};
         probe_map_pipeline_ = CreateGraphicsPipeline(device_, map);
     }
     {
@@ -338,9 +356,16 @@ bool SceneRenderer::CreatePipelines() {
     PipelineDesc full;
     full.layout = layout_;
     full.fragment = "compose.frag";
+    if(mali_lighting_){full.vertex="compose_mali.vert";full.fragment="compose_mali.frag";}
     full.colors = {kHdrFormat};
     // Composition reads depth as a sampled image, without depth testing.
     compose_ = CreateGraphicsPipeline(device_, full);
+    if(!compose_ && mali_lighting_){
+        full.vertex="fullscreen.vert";full.fragment="compose.frag";mali_lighting_=false;
+        compose_=CreateGraphicsPipeline(device_,full);
+        LogWarn("Mali composition unavailable; using original shader");
+    }
+    LogInfo("lighting path: composition {}, probe lookup {}, atlas format {}",mali_lighting_?"Mali":"original",mali_probe_filter_?"Mali filtered":"original",int(probe_map_format_));
 #ifdef __ANDROID__
     full.fragment_constants = {{0, 0}, {1, 1}};
     compose_plain_ = CreateGraphicsPipeline(device_, full);
@@ -721,7 +746,7 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
               CreateTarget(ldr_[1], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
               CreateTarget(history_,ldr_format_,output,color | VK_IMAGE_USAGE_TRANSFER_DST_BIT,c);
     if (probe_cached_ && probe_map_pipeline_) {
-        if (!CreateTarget(probe_map_, VK_FORMAT_R32G32B32A32_SFLOAT, {512, 256}, color, c))
+        if (!CreateTarget(probe_map_, probe_map_format_, {512, 256}, color, c))
             LogWarn("probes: map allocation failed; using per-pixel SH");
     }
     ok=ok && EnsureOptionalTargets(extent,output,upscaling,false);

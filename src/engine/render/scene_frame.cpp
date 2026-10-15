@@ -1413,6 +1413,7 @@ void SceneRenderer::PrepareShadowCasters() {
     const uint32_t tile_size = shadow_.Extent().width / kShadowTiles;
     shadow_draw_states_.resize(draws_.size());
     shadow_draw_state_ready_.assign(draws_.size(), 0);
+    shadow_draw_stable_.assign(draws_.size(), 0);
     // Pose snapshots are immutable: a moving skeleton invalidates its tile,
     // while an unchanged pose can reuse the exact previous depth.
     for (const ShadowView& sv : shadow_views_) {
@@ -1476,9 +1477,11 @@ void SceneRenderer::PrepareShadowCasters() {
                                 pose=std::make_shared<const std::vector<glm::mat4>>(begin,begin+d.skin_count);
                         }
                     } else pose.reset();
-                    metadata = {reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
+                    ShadowCasterState next = {reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
                         d.material, uint32_t(d.sub->shadow_double_sided) | (uint32_t(d.sub->skinned)<<1), d.transform,
                         textures_->ShadowAlphaState(d.material), std::move(pose)};
+                    shadow_draw_stable_[index]=metadata==next;
+                    metadata=std::move(next);
                     shadow_draw_state_ready_[index] = 1;
                 }
                 if (d.sub->skinned && d.skin_base!=gpu::kInvalid && !shadow_draw_states_[index].pose) state.reusable=false;
@@ -1546,10 +1549,14 @@ std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, cons
         const uint32_t tile=uint32_t(sv.rect.offset.x)/tile_size+kShadowTiles*(uint32_t(sv.rect.offset.y)/tile_size);
         if(shadow_shared_[tile])continue;
         auto& state=shadow_static_states_[tile];
-        state=shadow_states_[tile];state.casters.clear();
+        state.CopyProjection(shadow_states_[tile]);
         auto& casters=shadow_static_casters_[tile];casters.clear();
         for(const Draw* d:shadow_casters_[tile]) {
-            if(d->sub->skinned || d->skin_base!=gpu::kInvalid)continue;
+            // An unchanged, immutable pose may join the template only after
+            // consecutive observations. Pose/transform/alpha changes remove it
+            // immediately; cache equality then rebuilds the template.
+            const size_t index=size_t(d-draws_.data());
+            if((d->sub->skinned || d->skin_base!=gpu::kInvalid) && (!shadow_draw_stable_[index] || !shadow_draw_states_[index].pose))continue;
             casters.push_back(d);state.casters.push_back(shadow_draw_states_[size_t(d-draws_.data())]);
         }
         const bool eligible=state.reusable && casters.size()>=32 && casters.size()<shadow_casters_[tile].size();

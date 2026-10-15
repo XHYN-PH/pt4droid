@@ -33,6 +33,11 @@ struct ShadowMapState {
     // Exact alpha and immutable pose snapshots permit reuse only while unchanged.
     bool reusable = true;
     bool operator==(const ShadowMapState&) const = default;
+    void CopyProjection(const ShadowMapState& source) {
+        view_projection=source.view_projection;view=source.view;projection_param=source.projection_param;
+        eye=source.eye;shadow=source.shadow;bias_constant=source.bias_constant;bias_slope=source.bias_slope;
+        cull=source.cull;caster_views=source.caster_views;reusable=source.reusable;casters.clear();
+    }
 };
 
 // The caster masks may differ for camera and mirror views. Sharing is safe
