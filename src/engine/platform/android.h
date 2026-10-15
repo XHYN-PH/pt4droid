@@ -74,6 +74,9 @@ PFN_vkGetInstanceProcAddr LoadVulkanDriver(std::string& name);
    other pad: attached on the first touch, its sticks and buttons set from what the overlay last sent. Called once a frame
    before the events are pumped. */
 void PumpTouchControls();
+uint32_t ConsumeCameraActions();
+float CameraRise();
+void PublishCameraState(uint32_t state);
 /* The touch controls setting (AppSettings display.touch_controls): off keeps the overlay away whatever is touched. */
 void SetTouchControlsEnabled(bool enabled);
 /* An SDL event from a real (not the touch controls') gamepad: a pressed button or a stick or trigger past half puts the
