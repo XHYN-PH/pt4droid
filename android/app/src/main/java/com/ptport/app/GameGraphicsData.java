@@ -12,8 +12,10 @@ import java.util.Map;
 final class GameGraphicsData {
     final Map<String,String> values=new LinkedHashMap<>();
     boolean rayTracing;
+    boolean fsrAvailable;
+    String fsrReason="This Android build does not include the game’s FSR 3 backend. SGSR1 remains available in Performance & advanced.";
     String rayReason="Start the game to check the selected driver's ray-query support.";
-    GameGraphicsData(){original();put("camera.third_person",0);put("graphics.shadow_quality",2);put("graphics.ambient_occlusion",0);put("graphics.motion_blur",0);put("graphics.depth_of_field",0);put("display.vsync",1);put("display.fps_limit",0);put("display.letterbox",0);}
+    GameGraphicsData(){values.put("upscaling.upscaler","off");values.put("upscaling.quality","quality");put("upscaling.scale",.667f);put("upscaling.sharpness",0f);original();put("camera.third_person",0);put("graphics.shadow_quality",2);put("graphics.ambient_occlusion",0);put("graphics.motion_blur",0);put("graphics.depth_of_field",0);put("display.vsync",1);put("display.fps_limit",0);put("display.letterbox",0);}
     void original(){
         put("graphics.anisotropy",0);put("graphics.enhanced_textures",0);put("graphics.shadow_quality",3);
         for(String key:new String[]{"ambient_occlusion","reflections","bloom","depth_of_field","motion_blur","lens_distortion","lens_ghosts"})put("graphics."+key,1);
@@ -37,7 +39,10 @@ final class GameGraphicsData {
             if(line.startsWith("[") && line.endsWith("]")){section=line.substring(1,line.length()-1).trim();continue;}
             int eq=line.indexOf('=');if(eq<0)continue;
             String key=section+"."+line.substring(0,eq).trim(),value=line.substring(eq+1).trim();
+            if(key.equals("upscaling.upscaler")&&(value.equals("fsr")||value.equals("fsr31")))value="fsr3";
             if(values.containsKey(key))values.put(key,value);
+            if(key.equals("android_capabilities.fsr_available"))fsrAvailable=value.equals("1");
+            if(key.equals("android_capabilities.fsr_reason")&&!value.isEmpty())fsrReason=value;
             if(key.equals("android_capabilities.ray_tracing"))rayTracing=value.equals("1");
             if(key.equals("android_capabilities.ray_reason") && !value.isEmpty())rayReason=value;
         }
@@ -60,7 +65,7 @@ final class GameGraphicsData {
     void put(String key,float value){values.put(key,Float.toString(value));}
     String text(){
         StringBuilder out=new StringBuilder("; pt4droid graphics changes\n");
-        for(String section:new String[]{"graphics","raytracing","display","camera"}){
+        for(String section:new String[]{"graphics","raytracing","display","camera","upscaling"}){
             out.append('\n').append('[').append(section).append("]\n");
             for(Map.Entry<String,String> entry:values.entrySet())if(entry.getKey().startsWith(section+"."))out.append(entry.getKey().substring(section.length()+1)).append(" = ").append(entry.getValue()).append('\n');
         }
@@ -68,9 +73,11 @@ final class GameGraphicsData {
     }
     void save(Context context)throws IOException {
         File root=context.getFilesDir();
-        DriverImportJob.atomicWrite(new File(root,"performance_profile_pending.txt"),"0\n".getBytes(StandardCharsets.UTF_8));
-        DriverImportJob.atomicWrite(new File(root,"game_graphics_pending.ini"),text().getBytes(StandardCharsets.UTF_8));
-        DriverImportJob.atomicWrite(new File(root,"performance_profile.txt"),"0\n".getBytes(StandardCharsets.UTF_8));
-        context.getSharedPreferences("touch_layout_v1",0).edit().putInt("performance_profile",0).apply();
+        Map<File,byte[]> changes=new LinkedHashMap<>();
+        changes.put(new File(root,"game_graphics_pending.ini"),text().getBytes(StandardCharsets.UTF_8));
+        changes.put(new File(root,"performance_profile.txt"),SettingsFiles.text("0"));
+        changes.put(new File(root,"performance_profile_pending.txt"),SettingsFiles.text("0"));
+        Map<String,Object> preferences=new LinkedHashMap<>();preferences.put("performance_profile",0);
+        SettingsFiles.commit(changes,context.getSharedPreferences("touch_layout_v1",0),preferences);
     }
 }

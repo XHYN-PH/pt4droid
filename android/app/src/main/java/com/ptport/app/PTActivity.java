@@ -16,6 +16,15 @@ import org.libsdl.app.SDLActivity;
    loaded here: libadrenotools opens them itself when the game starts Vulkan (src/engine/platform/android.cpp). */
 public class PTActivity extends SDLActivity {
     private SecondScreen secondScreen;
+    private CameraControls cameraControls;
+    private PhoneHaptics phoneHaptics;
+    private boolean hapticsActive;
+    static native void nativeCameraAction(int action);
+    static native void nativeCameraRise(float amount);
+    public static void phoneRumble(int low,int high){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.phoneHaptics!=null&&a.hapticsActive)a.phoneHaptics.rumble(low,high);});}
+    public static void cameraState(int state){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.cameraControls!=null)a.cameraControls.state(state);});}
+    static void touchOverlayShown(boolean shown){final PTActivity a=current;if(a!=null&&a.cameraControls!=null)a.cameraControls.allowed(shown);}
+    static void cameraToolbarBounds(int left,int top){final PTActivity a=current;if(a==null||a.cameraControls==null)return;android.widget.FrameLayout.LayoutParams lp=(android.widget.FrameLayout.LayoutParams)a.cameraControls.getLayoutParams();if(lp.leftMargin!=left||lp.topMargin!=top){lp.leftMargin=left;lp.topMargin=top;a.cameraControls.setLayoutParams(lp);}}
     private TouchControls touchControls;
     private static volatile PTActivity current;
     private MobileSettings mobileSettings;
@@ -80,9 +89,9 @@ public class PTActivity extends SDLActivity {
         });
     }
     @Override protected void onActivityResult(int request,int result,Intent data){if(mobileSettings!=null && mobileSettings.activityResult(request,result,data))return;super.onActivityResult(request,result,data);}
-    @Override protected void onResume(){super.onResume();DisplayRefresh.invalidate();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
-    @Override protected void onPause(){if(mobileRuntime!=null)mobileRuntime.pause();if(touchControls!=null)touchControls.releaseAll();super.onPause();}
-    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(mobileRuntime!=null)mobileRuntime.focus(focus);if(focus){DisplayRefresh.invalidate();refreshDisplay();}if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
+    @Override protected void onResume(){super.onResume();hapticsActive=true;DisplayRefresh.invalidate();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
+    @Override protected void onPause(){hapticsActive=false;if(phoneHaptics!=null)phoneHaptics.cancel();if(cameraControls!=null)cameraControls.clear();if(mobileRuntime!=null)mobileRuntime.pause();if(touchControls!=null)touchControls.releaseAll();super.onPause();}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);hapticsActive=focus;if(!focus){if(phoneHaptics!=null)phoneHaptics.cancel();if(cameraControls!=null)cameraControls.clear();}if(mobileRuntime!=null)mobileRuntime.focus(focus);if(focus){DisplayRefresh.invalidate();refreshDisplay();}if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
     void returnToMenu() {
         if (returningToMenu || isFinishing()) return;
         returningToMenu = true;
@@ -169,6 +178,7 @@ public class PTActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         current = this;
+        phoneHaptics = new PhoneHaptics(this);
         try { gameSession = GameSession.start(this); }
         catch (java.io.IOException error) {
             android.widget.Toast.makeText(this,error.getMessage(),android.widget.Toast.LENGTH_LONG).show();
@@ -183,6 +193,9 @@ public class PTActivity extends SDLActivity {
         mobileSettings = new MobileSettings(this,touchControls);
         mobileRuntime = new MobileRuntime(this);
         addContentView(touchControls, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        cameraControls=new CameraControls(this);
+        android.widget.FrameLayout.LayoutParams cameraLayout=new android.widget.FrameLayout.LayoutParams(-1,MenuStyle.dp(this,36),android.view.Gravity.TOP|android.view.Gravity.LEFT);cameraLayout.leftMargin=MenuStyle.dp(this,100);cameraLayout.rightMargin=MenuStyle.dp(this,12);
+        addContentView(cameraControls,cameraLayout);cameraControls.allowed(touchControls.toolbarVisible());
     }
 
     // a real controller in use puts the touch controls away (a touch brings them back); the event goes on to the game

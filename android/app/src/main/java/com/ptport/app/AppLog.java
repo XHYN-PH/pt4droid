@@ -43,6 +43,7 @@ public final class AppLog {
         File base=context.getExternalFilesDir(null);if(base==null)base=context.getFilesDir();
         File file=new File(base,"data/"+name);File parent=file.getParentFile();
         if(!parent.isDirectory() && !parent.mkdirs())return;
+        if(file.length()>1024*1024){File previous=new File(file.getPath()+".previous");if(previous.exists())previous.delete();file.renameTo(previous);}
         try(FileWriter out=new FileWriter(file,true)){out.write(new Date()+" "+message+"\n");}catch(IOException ignored){}
     }
     public static int v(String tag,String text){return enabled?Log.v(tag,text):0;}
