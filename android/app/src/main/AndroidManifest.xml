@@ -32,17 +32,16 @@
         android:hardwareAccelerated="true">
 
         <!-- the launcher offers Start when game files are ready, otherwise sets them up from the player's .pkg -->
-        <activity android:name=".SetupActivity"
-            android:label="${ptAppLabel}"
-            android:theme="@style/AppTheme"
-            android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+        <activity android:name=".IntroActivity" android:label="${ptAppLabel}"
+            android:theme="@style/AppTheme" android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
+        <activity android:name=".SetupActivity" android:label="${ptAppLabel}"
+            android:theme="@style/AppTheme" android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation" android:exported="false" />
+        <provider android:name=".DiagnosticsProvider" android:authorities="${applicationId}.diagnostics"
+            android:exported="false" android:grantUriPermissions="true" />
 
         <activity android:name=".PTActivity"
             android:process=":game"
