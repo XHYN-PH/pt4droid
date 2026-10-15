@@ -293,6 +293,7 @@ private:
         glm::vec3 center{0.0f};
         float radius = 0.0f;
         uint8_t hidden_views = 0;
+        mutable uint8_t visibility_known = 0,visibility_result = 0;
         bool character_shadow = false;
         GeometryBounds shadow_bounds;
         glm::vec3 shadow_center{0.0f};

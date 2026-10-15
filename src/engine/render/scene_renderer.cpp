@@ -314,18 +314,21 @@ bool SceneRenderer::CreatePipelines() {
     probe_map_format_=VK_FORMAT_R32G32B32A32_SFLOAT;
     mali_probe_filter_=false;
     vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical, probe_map_format_, &map_support);
+    bool mali_safe=false;
+#ifdef __ANDROID__
+    mali_safe=mali_lighting_&&android::PerformanceOptions().mali_safe_lighting;
+#endif
     if(mali_lighting_){
-        const auto required=VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        const auto required=VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|(mali_safe?0:VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
+        VkFormatProperties half{};vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical,VK_FORMAT_R16G16B16A16_SFLOAT,&half);
+        if(mali_safe&&(half.optimalTilingFeatures&required)==required){probe_map_format_=VK_FORMAT_R16G16B16A16_SFLOAT;map_support=half;}
         if((map_support.optimalTilingFeatures&required)==required)mali_probe_filter_=true;
-        else {
-            VkFormatProperties half{};vkGetPhysicalDeviceFormatProperties(renderer_->Context().physical,VK_FORMAT_R16G16B16A16_SFLOAT,&half);
-            if((half.optimalTilingFeatures&required)==required){probe_map_format_=VK_FORMAT_R16G16B16A16_SFLOAT;map_support=half;mali_probe_filter_=true;}
-        }
+        else if((half.optimalTilingFeatures&required)==required){probe_map_format_=VK_FORMAT_R16G16B16A16_SFLOAT;map_support=half;mali_probe_filter_=true;}
     }
     const auto map_required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     if ((map_support.optimalTilingFeatures & map_required) == map_required) {
         volume.fragment_constants = {{0, 1}};
-        if(mali_probe_filter_)volume.fragment="probe_mali.frag";
+        if(mali_probe_filter_){volume.fragment="probe_mali.frag";volume.fragment_constants.push_back({1,mali_safe?0u:1u});}
         probe_cached_ = CreateGraphicsPipeline(device_, volume);
         volume.fragment="probe.frag";
         volume.fragment_constants.clear();
@@ -365,7 +368,7 @@ bool SceneRenderer::CreatePipelines() {
         compose_=CreateGraphicsPipeline(device_,full);
         LogWarn("Mali composition unavailable; using original shader");
     }
-    LogInfo("lighting path: composition {}, probe lookup {}, atlas format {}",mali_lighting_?"Mali":"original",mali_probe_filter_?"Mali filtered":"original",int(probe_map_format_));
+    LogInfo("lighting path: composition {}, probe lookup {}, atlas format {}",mali_lighting_?"Mali":"original",mali_probe_filter_?(mali_safe?"Mali explicit filtered":"Mali hardware filtered"):"original",int(probe_map_format_));
 #ifdef __ANDROID__
     full.fragment_constants = {{0, 0}, {1, 1}};
     compose_plain_ = CreateGraphicsPipeline(device_, full);

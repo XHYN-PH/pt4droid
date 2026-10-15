@@ -344,7 +344,15 @@ bool SceneRenderer::Visible(const Draw& draw, const glm::vec4* planes) const {
 }
 
 bool SceneRenderer::Visible(const Draw& draw, const ViewSetup& view) const {
+#ifdef __ANDROID__
+    const uint8_t bit=&view==&main_view_?1:&view==&mirror_view_?2:0;
+    if(bit&&(draw.visibility_known&bit))return (draw.visibility_result&bit)!=0;
+    const bool visible=(draw.hidden_views&view.view_bit)==0&&Visible(draw,view.planes);
+    if(bit){draw.visibility_known|=bit;if(visible)draw.visibility_result|=bit;}
+    return visible;
+#else
     return (draw.hidden_views & view.view_bit) == 0 && Visible(draw, view.planes);
+#endif
 }
 
 void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawItem>& items, const SceneLighting& lighting) {
