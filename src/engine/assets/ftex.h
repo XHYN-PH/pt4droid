@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "engine/assets/texture_read_budget.h"
 
 namespace pt {
+struct BcMipChain;
 
 struct FtexTexture {
     // 0..7 are Fox formats; 8 is the port's generated BC7 cache format.
@@ -25,6 +27,7 @@ struct FtexTexture {
     uint8_t filter = 0;
     uint16_t address_mode = 0;
     std::vector<std::vector<uint8_t>> mips;
+    std::shared_ptr<const BcMipChain> compatible;
 
     bool Srgb() const { return (flags & 2) != 0; }
     bool Cube() const { return (flags & 4) != 0; }

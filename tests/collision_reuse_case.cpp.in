@@ -1,0 +1,23 @@
+#include <glm/glm.hpp>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+struct Piece{glm::mat4 file_transform{1};struct{bool valid=true;}cache;};
+struct Stage{glm::mat4 file_to_world{1};bool walk_detail_surfaces=false;};
+struct Entry{const Stage*stage;std::string label;const Piece*piece;};
+struct Owner{const Stage*stage;const Piece*piece;glm::mat4 transform{1};bool walk_detail=false;std::string label;};
+int main(){Stage stage;Piece piece;int marker=1,other=2;int& world=marker;const int* lines=nullptr;const int* reflections=nullptr;
+auto last_collision_world_=&world;auto last_line_world_=lines;auto last_reflection_world_=reflections;
+std::vector<Entry> entries{{&stage,"hallway",&piece}};std::vector<Owner> collision_owners_{{&stage,&piece,glm::mat4(1),false,"hallway"}};
+auto match=[&](){/* PRODUCTION_CONDITION */
+return same;};
+assert(match());stage.file_to_world[3].x=1;assert(!match());
+// A discarded worker changing a cache must not overwrite the published-world signature.
+piece.cache.valid=true;assert(!match());collision_owners_[0].transform=stage.file_to_world;assert(match());
+piece.cache.valid=false;assert(!match());piece.cache.valid=true;
+stage.walk_detail_surfaces=true;assert(!match());stage.walk_detail_surfaces=false;
+entries[0].label="changed";assert(!match());entries[0].label="hallway";
+last_collision_world_=&other;assert(!match());last_collision_world_=&marker;assert(match());entries.clear();assert(!match());
+puts("Production collision reuse condition passed: unchanged worlds, moved geometry, discarded workers, invalidation, walk data, labels and world identity");}

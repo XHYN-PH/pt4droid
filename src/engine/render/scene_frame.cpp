@@ -1243,7 +1243,7 @@ void SceneRenderer::SetTppFog(const TppAtmosphereSettings& tpp) {
     // Precomputed fog coefficients; the unused area box term remains omitted.
     const glm::vec3 sigma=tpp.fog_mie+tpp.fog_rayleigh;
     frame_->fog[4]=glm::vec4(sigma,.07957747f*(1.0f-tpp.fog_mie_anisotropy*tpp.fog_mie_anisotropy));
-    frame_->fog[5]=glm::vec4(1.0f/glm::max(glm::vec3(1e-6f),sigma),0.0f);
+    frame_->fog[5]=glm::vec4(1.0f/glm::max(glm::vec3(1e-6f),sigma),tpp.fog_near*0.01f);
     frame_->fog[6]=glm::vec4(frame_->fog[3].w*glm::vec3(frame_->fog[5]),0.0f);
     frame_->fog[7] = glm::vec4(tpp.light_dir, 0.0f);
 }
@@ -1871,6 +1871,9 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
         mesh_draw_state_.Reset();
         BeginPass(cmd, map_area, {{&probe_map_, false, {}, true}});
         gpu::PassPush map_push; map_push.ids = {view.index, probe_count_, 0, 0};
+        std::array<uint32_t,16> visible{};
+        for(uint32_t i=0;i<probe_count_;++i)if(probe_bounds[i].extent.width && probe_bounds[i].extent.height)visible[i/32]|=1u<<(i%32);
+        std::memcpy(&map_push.m,visible.data(),sizeof(map_push.m));
         Fullscreen(cmd, probe_map_pipeline_, map_push);
         vkCmdEndRendering(cmd);
         UseTargets(cmd, {{&probe_map_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
@@ -1891,6 +1894,13 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             gpu::PassPush push;
             push.ids = glm::uvec4(view.index, i, shrink_flag, 0);
             push.m = p.box_world;
+            // The affine view-to-probe transform is invariant for this draw.
+            // Keep full float precision and leave the box-volume vertex path intact.
+            const glm::mat4 view_to_probe=frame_->probes[i].box*frame_->views[view.index].inv_view;
+            push.f0=glm::vec4(view_to_probe[0][0],view_to_probe[1][0],view_to_probe[2][0],view_to_probe[3][0]);
+            push.f1=glm::vec4(view_to_probe[0][1],view_to_probe[1][1],view_to_probe[2][1],view_to_probe[3][1]);
+            push.f2=glm::vec4(view_to_probe[0][2],view_to_probe[1][2],view_to_probe[2][2],view_to_probe[3][2]);
+            push.ids.w=1u;
             // Same accumulation order; skip only pixels outside the projected
             // box. Camera/near-plane crossings keep the original full target.
             const VkRect2D bounds = probe_bounds[i];
@@ -2947,6 +2957,14 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
     UpdateDominantLight(camera, *lighting_, timed_ ? pending_time_ : dt);
     pending_time_ = 0.0f;
     PrepareFrame(camera, items, *lighting_);
+    if(textures_->HasConvertedTextures()) {
+        for(const auto& d:draws_) {
+            if(Visible(d,main_view_) || (view_count_>1 && Visible(d,mirror_view_)))textures_->TouchMaterial(d.material);
+            else if(textures_->MaterialFlags(d.material)&gpu::kMatAlphaTest)textures_->TouchMaterial(d.material,true);
+        }
+        for(const auto* light:light_sources_)if(light->mask_texture>=0)textures_->Touch(uint32_t(light->mask_texture));
+        textures_->TouchCube(reflection_cube_);textures_->FinishTextureUse();textures_->FlushUploads();
+    }
     SetTppFog(lighting_->tpp);
     UploadFrame(slot);
     if (!adaptation_valid_ && lighting_->valid && toggles.adaptation) {

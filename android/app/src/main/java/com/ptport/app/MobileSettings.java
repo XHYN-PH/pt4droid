@@ -61,6 +61,9 @@ final class MobileSettings {
         float[] sharpness=gain(v,"Upscaling sharpness","sharpness",1f,2f);
         Spinner ao=choice(v,"Ambient occlusion",new String[]{"Original quality","Performance • fewer samples"},prefs.getInt("ao_quality",0));
         Spinner reflections=choice(v,"Screen reflections",new String[]{"Original quality","Performance • fewer steps"},prefs.getInt("reflection_quality",0));
+        int savedSize=prefs.getInt("compat_texture_size",0);
+        Spinner compatibility=choice(v,"Compatibility texture size",new String[]{"Original detail","2048 px","1024 px","512 px"},savedSize==2048?1:savedSize==1024?2:savedSize==512?3:0);
+        text(v,"Only affects formats the selected driver cannot sample. Smaller existing mip levels use less memory and texture detail. Native textures stay unchanged. Restart the game after changing this option.");
         CheckBox sustained=check(v,"Sustained performance", "sustained",false);
         android.os.PowerManager power=(android.os.PowerManager)activity.getSystemService(Context.POWER_SERVICE);
         sustained.setEnabled(power!=null&&power.isSustainedPerformanceModeSupported());
@@ -102,7 +105,9 @@ final class MobileSettings {
                 if(selected>0){Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_pending.ini").toPath());Files.deleteIfExists(new File(activity.getFilesDir(),"game_graphics_applying.ini").toPath());}
                 write("render_scale.txt",Float.toString(scale[0]));write("performance_profile.txt",Integer.toString(selected));write("bloom_pass_limit.txt",bloom.isChecked()?"6":"0");
                 write("performance_profile_pending.txt",Integer.toString(selected));
-                write("mobile_performance.ini","frame_pacing="+(pacing.isChecked()?1:0)+"\nsgsr="+(sgsr.isChecked()?1:0)+"\nsharpness="+sharpness[0]+"\nao_quality="+ao.getSelectedItemPosition()+"\nreflection_quality="+reflections.getSelectedItemPosition()+"\nsustained="+(sustained.isChecked()?1:0)+"\ninvert_y="+(invert.isChecked()?1:0)+"\nmouse_sensitivity="+mouse[0]+"\ncontroller_sensitivity="+controller[0]);
+                int compatibilitySize=new int[]{0,2048,1024,512}[compatibility.getSelectedItemPosition()];
+                prefs.edit().putInt("compat_texture_size",compatibilitySize).apply();
+                write("mobile_performance.ini","compat_texture_size="+compatibilitySize+"\n"+"frame_pacing="+(pacing.isChecked()?1:0)+"\nsgsr="+(sgsr.isChecked()?1:0)+"\nsharpness="+sharpness[0]+"\nao_quality="+ao.getSelectedItemPosition()+"\nreflection_quality="+reflections.getSelectedItemPosition()+"\nsustained="+(sustained.isChecked()?1:0)+"\ninvert_y="+(invert.isChecked()?1:0)+"\nmouse_sensitivity="+mouse[0]+"\ncontroller_sensitivity="+controller[0]);
                 prefs.edit().putBoolean("frame_pacing",pacing.isChecked()).putBoolean("sgsr",sgsr.isChecked()).putFloat("sharpness",sharpness[0]).putInt("ao_quality",ao.getSelectedItemPosition()).putInt("reflection_quality",reflections.getSelectedItemPosition()).putBoolean("sustained",sustained.isChecked()).putBoolean("invert_y",invert.isChecked()).putFloat("mouse_sensitivity",mouse[0]).putFloat("controller_sensitivity",controller[0]).putBoolean("gyro",gyro.isChecked()).putFloat("gyro_sensitivity",gyroGain[0]).apply();
                 prefs.edit().putInt("performance_profile",selected).putFloat("sensitivity",sensitivity[0]).putInt("move_style",movement.getSelectedItemPosition()).putInt("look_style",look.getSelectedItemPosition()).putInt("overlay_mode",mode.getSelectedItemPosition()).putBoolean("optimized_bloom",bloom.isChecked()).apply();
                 DisplayRefresh.apply(activity,null);PTActivity.refreshDisplay();

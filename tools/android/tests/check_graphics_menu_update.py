@@ -8,11 +8,12 @@ stubs={
 'android/content/SharedPreferences.java':'''package android.content;import java.util.*;public class SharedPreferences{public Map<String,Object> data=new HashMap<>();public float getFloat(String k,float v){return data.containsKey(k)?(Float)data.get(k):v;}public int getInt(String k,int v){return data.containsKey(k)?(Integer)data.get(k):v;}public Editor edit(){return new Editor();}public class Editor{public Editor putFloat(String k,float v){data.put(k,v);return this;}public Editor putInt(String k,int v){data.put(k,v);return this;}public void apply(){}}}''',
 'android/content/Context.java':'''package android.content;import java.io.File;public class Context{public File internal,external;public SharedPreferences prefs=new SharedPreferences();public Context(File i,File e){internal=i;external=e;}public File getFilesDir(){return internal;}public File getExternalFilesDir(String ignored){return external;}public SharedPreferences getSharedPreferences(String k,int mode){return prefs;}}''',
 'android/app/Activity.java':'''package android.app;import android.content.Context;import android.view.*;import java.io.File;public class Activity extends Context{public Window window=new Window();public WindowManager manager=new WindowManager();public Activity(File i,File e){super(i,e);}public Window getWindow(){return window;}public WindowManager getWindowManager(){return manager;}}''',
+'android/os/SystemClock.java':'''package android.os;public class SystemClock { public static long now=5000;public static long uptimeMillis(){return now;} }''',
 'android/os/Build.java':'''package android.os;public class Build{public static class VERSION{public static int SDK_INT=35;}}''',
 'android/view/Display.java':'''package android.view;public class Display{public Mode current;public Mode[] modes;public Mode getMode(){return current;}public Mode[] getSupportedModes(){return modes;}public float getRefreshRate(){return current.rate;}public static class Mode{public int id,w,h;public float rate;public Mode(int i,int w,int h,float r){id=i;this.w=w;this.h=h;rate=r;}public int getModeId(){return id;}public int getPhysicalWidth(){return w;}public int getPhysicalHeight(){return h;}public float getRefreshRate(){return rate;}}}''',
 'android/view/Window.java':'''package android.view;public class Window{public int updates;public WindowManager.LayoutParams attributes=new WindowManager.LayoutParams();public WindowManager.LayoutParams getAttributes(){return attributes;}public void setAttributes(WindowManager.LayoutParams a){updates++;attributes=a;}}''',
 'android/view/WindowManager.java':'''package android.view;public class WindowManager{public Display display=new Display();public Display getDefaultDisplay(){return display;}public static class LayoutParams{public int preferredDisplayModeId;public float preferredRefreshRate;}}''',
-'android/view/Surface.java':'''package android.view;public class Surface{public static final int FRAME_RATE_COMPATIBILITY_DEFAULT=0;public boolean valid=true;public int generation=1,calls;public float rate;public boolean isValid(){return valid;}public int getGenerationId(){return generation;}public void setFrameRate(float rate,int compatibility){if(compatibility!=0)throw new AssertionError("game compatibility");calls++;this.rate=rate;}}''',
+'android/view/Surface.java':'''package android.view;public class Surface{public static final int FRAME_RATE_COMPATIBILITY_DEFAULT=0,CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS=0;public boolean valid=true;public int generation=1,calls;public float rate;public boolean isValid(){return valid;}public int getGenerationId(){return generation;}public void setFrameRate(float rate,int compatibility,int strategy){setFrameRate(rate,compatibility);}public void setFrameRate(float rate,int compatibility){if(compatibility!=0)throw new AssertionError("game compatibility");calls++;this.rate=rate;}}''',
 'com/ptport/app/AppLog.java':'''package com.ptport.app;public class AppLog{public static int errors;public static void w(String t,String text,Throwable e){errors++;}}''',
 'com/ptport/app/DriverImportJob.java':'''package com.ptport.app;import java.io.*;import java.nio.file.*;class DriverImportJob{static void atomicWrite(File file,byte[] bytes)throws IOException{Path temp=Paths.get(file+".tmp");Files.write(temp,bytes);Files.move(temp,file.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}}''',
 'com/ptport/app/GraphicsMenuTest.java':r'''package com.ptport.app;
@@ -47,6 +48,15 @@ public class GraphicsMenuTest {
   DisplayRefresh.setTarget(40);DisplayRefresh.apply(a,s);ok(s.rate==40&&a.window.attributes.preferredRefreshRate==120,"one runtime cap drives surface content rate and compatible display mode");
   DisplayRefresh.setTarget(60);DisplayRefresh.apply(a,s);ok(s.rate==60&&a.window.attributes.preferredRefreshRate==60,"live cap selects exact mode");
   DisplayRefresh.setTarget(0);DisplayRefresh.apply(a,s);ok(s.rate==120,"unlimited restores highest display rate");
+  for(int fps:new int[]{0,20,24,25,30,40,45,48,50,60,72,90,120,144,165,240}){
+   DisplayRefresh.setTarget(fps);DisplayRefresh.invalidate();DisplayRefresh.apply(a,s);
+   ok(s.rate==(fps==0?120:fps),"every supported/unsupported target preserves selected content FPS");
+  }
+  DisplayRefresh.setTarget(60);d.current=high;DisplayRefresh.invalidate();
+  int requests=s.calls;
+  for(int i=0;i<20;i++){android.os.SystemClock.now+=2500;DisplayRefresh.apply(a,s);}
+  ok(s.calls-requests==3,"ignored display requests have a bounded recovery count");
+  DisplayRefresh.invalidate();DisplayRefresh.apply(a,s);ok(s.calls-requests==4,"focus/surface invalidation permits recovery again");
   System.out.println("Graphics menu/refresh checks passed: "+checks);
  }
 }'''

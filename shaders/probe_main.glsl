@@ -59,8 +59,14 @@ void main() {
         discard;
     }
     vec3 P = ViewPosition(v, PixelNdc(v, frag), depth);
-    vec3 world = (v.inv_view * vec4(P, 1.0)).xyz;
-    vec3 q = (p.box * vec4(world, 1.0)).xyz;
+    vec4 point = vec4(P, 1.0);
+    vec3 q;
+    if (pass.ids.w != 0u) {
+        q = vec3(dot(pass.f0, point), dot(pass.f1, point), dot(pass.f2, point));
+    } else {
+        vec3 world = (v.inv_view * point).xyz;
+        q = (p.box * vec4(world, 1.0)).xyz;
+    }
     vec3 f = min(clamp((1.0 - q) * p.positive.xyz, 0.0, 1.0), clamp((1.0 + q) * p.negative.xyz, 0.0, 1.0));
     float weight = p.positive.w * f.x * f.y * f.z;
     if (weight <= 0.0) {

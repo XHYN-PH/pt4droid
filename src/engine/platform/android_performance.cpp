@@ -30,6 +30,7 @@ void Reload() {
         else if(key=="sharpness")next.sharpness=std::clamp(value,0.f,2.f);
         else if(key=="mouse_sensitivity")next.mouse_sensitivity=std::clamp(value,.25f,3.f);
         else if(key=="controller_sensitivity")next.controller_sensitivity=std::clamp(value,.25f,3.f);
+        else if(key=="compat_texture_size")next.compat_texture_size=value==512||value==1024||value==2048?int(value):0;
         else if(key=="ao_quality")next.ao_quality=value>0?1:0;
         else if(key=="reflection_quality")next.reflection_quality=value>0?1:0;
     }

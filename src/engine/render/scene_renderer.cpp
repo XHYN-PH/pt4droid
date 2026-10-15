@@ -1,4 +1,7 @@
 #include "engine/render/scene_renderer.h"
+#include "engine/assets/compatible_texture.h"
+#include "engine/assets/bc_texture.h"
+#include <bit>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -909,80 +912,63 @@ void SceneRenderer::WriteImageDescriptors() {
     }
 }
 
-bool SceneRenderer::UploadImage(vk::Image& image, VkFormat format, VkExtent3D extent, const void* data, size_t size) {
-    vk::Context& ctx = renderer_->Context();
-    if (!image.image || image.format != format || image.extent.width != extent.width || image.extent.height != extent.height ||
-        image.extent.depth != extent.depth) {
-        if (image.image) {
-            vkDeviceWaitIdle(device_);
-            ctx.DestroyImage(image);
-        }
-        if (!ctx.CreateImage(image, format, extent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
-            return false;
-        }
+bool SceneRenderer::UploadImage(vk::Image& image,VkFormat format,VkExtent3D extent,const void* data,size_t size) {
+    if(extent.depth==1){
+        std::vector<std::vector<uint8_t>> mips(1);
+        mips[0].assign(static_cast<const uint8_t*>(data),static_cast<const uint8_t*>(data)+size);
+        return UploadImageMips(image,format,extent,mips);
     }
-    vk::Buffer staging;
-    if (!ctx.CreateBuffer(staging, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true)) {
-        return false;
-    }
-    std::memcpy(staging.mapped, data, size);
-    vmaFlushAllocation(ctx.allocator, staging.allocation, 0, size);
-    ctx.Submit([&](VkCommandBuffer cmd) {
-        vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-                         VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = extent;
-        vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-        vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    });
-    ctx.DestroyBuffer(staging);
-    return true;
+    // The small native 3D LUT has no BC compatibility conversion.
+    auto& ctx=renderer_->Context();vk::Image replacement;
+    if(!ctx.CreateImage(replacement,format,extent,VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT))return false;
+    vk::Buffer staging;if(!ctx.CreateBuffer(staging,size,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true)){ctx.DestroyImage(replacement);return false;}
+    std::memcpy(staging.mapped,data,size);vmaFlushAllocation(ctx.allocator,staging.allocation,0,size);
+    const bool uploaded=ctx.Submit([&](VkCommandBuffer cmd){
+        vk::ImageBarrier(cmd,replacement.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,0,VK_IMAGE_LAYOUT_UNDEFINED,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy region{};region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};region.imageExtent=extent;
+        vkCmdCopyBufferToImage(cmd,staging.buffer,replacement.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
+        vk::ImageBarrier(cmd,replacement.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    });ctx.DestroyBuffer(staging);
+    if(!uploaded){ctx.DestroyImage(replacement);return false;}
+    ctx.DestroyImage(image);image=replacement;return true;
 }
 
-bool SceneRenderer::UploadImageMips(vk::Image& image, VkFormat format, VkExtent3D extent, const std::vector<std::vector<uint8_t>>& mips) {
-    vk::Context& ctx = renderer_->Context();
-    const uint32_t levels = static_cast<uint32_t>(mips.size());
-    if (image.image) {
-        vkDeviceWaitIdle(device_);
-        ctx.DestroyImage(image);
+bool SceneRenderer::UploadImageMips(vk::Image& image,VkFormat format,VkExtent3D extent,const std::vector<std::vector<uint8_t>>& original) {
+    auto& ctx=renderer_->Context();
+    if(original.empty() || extent.depth!=1 || !extent.width || !extent.height || extent.width>16384 || extent.height>16384 || original.size()>std::bit_width(std::max(extent.width,extent.height)))return false;
+    bool compressed=false;uint32_t block=FormatBlockBytes(format,compressed);
+    for(uint32_t l=0;l<original.size();++l){uint32_t w=std::max(1u,extent.width>>l),h=std::max(1u,extent.height>>l);
+        uint64_t bytes=compressed?uint64_t((w+3)/4)*((h+3)/4)*block:uint64_t(w)*h*block;
+        if(original[l].size()!=bytes){LogError("scene renderer: invalid resource mip {}; keeping fallback",l);return false;}}
+
+    VkFormatProperties properties{};vkGetPhysicalDeviceFormatProperties(ctx.physical,format,&properties);
+    const auto required=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    std::shared_ptr<const BcMipChain> converted;const auto* mips=&original;
+    if((properties.optimalTilingFeatures&required)!=required){
+        std::vector<BcSourceMip> source;for(uint32_t i=0;i<original.size();++i)source.push_back({std::max(1u,extent.width>>i),std::max(1u,extent.height>>i),original[i]});
+        converted=PrepareBcMips(format,source,1);
+        if(!converted){LogError("scene renderer: unsupported resource format {}; keeping fallback",int(format));return false;}
+        format=converted->format;extent={converted->width,converted->height,1};mips=&converted->mips;
     }
-    if (levels == 0 || !ctx.CreateImage(image, format, extent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, levels)) {
-        return false;
+    const uint32_t levels=uint32_t(mips->size());vk::Image replacement;
+    if(!ctx.CreateImage(replacement,format,extent,VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT,levels)){ctx.DestroyImage(replacement);return false;}
+    size_t total=0;for(const auto& mip:*mips)total+=(mip.size()+15)&~size_t(15);
+    vk::Buffer staging;if(!ctx.CreateBuffer(staging,total,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,true)){ctx.DestroyImage(replacement);return false;}
+    std::vector<VkBufferImageCopy> regions;size_t offset=0;
+    for(uint32_t level=0;level<levels;++level){
+        std::memcpy(static_cast<uint8_t*>(staging.mapped)+offset,(*mips)[level].data(),(*mips)[level].size());
+        VkBufferImageCopy region{};region.bufferOffset=offset;region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,level,0,1};
+        region.imageExtent={std::max(1u,extent.width>>level),std::max(1u,extent.height>>level),1};regions.push_back(region);
+        offset+=((*mips)[level].size()+15)&~size_t(15);
     }
-    size_t total = 0;
-    for (const std::vector<uint8_t>& mip : mips) {
-        total += mip.size();
-    }
-    vk::Buffer staging;
-    if (!ctx.CreateBuffer(staging, total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true)) {
-        return false;
-    }
-    std::vector<VkBufferImageCopy> regions;
-    size_t offset = 0;
-    for (uint32_t level = 0; level < levels; ++level) {
-        std::memcpy(static_cast<uint8_t*>(staging.mapped) + offset, mips[level].data(), mips[level].size());
-        VkBufferImageCopy region{};
-        region.bufferOffset = offset;
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
-        region.imageExtent = {std::max(1u, extent.width >> level), std::max(1u, extent.height >> level), 1};
-        regions.push_back(region);
-        offset += mips[level].size();
-    }
-    vmaFlushAllocation(ctx.allocator, staging.allocation, 0, total);
-    ctx.Submit([&](VkCommandBuffer cmd) {
-        vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-                         VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels, 1);
-        vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()),
-                               regions.data());
-        vk::ImageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, levels, 1);
-    });
-    ctx.DestroyBuffer(staging);
-    return true;
+    vmaFlushAllocation(ctx.allocator,staging.allocation,0,total);
+    const bool uploaded=ctx.Submit([&](VkCommandBuffer cmd){
+        vk::ImageBarrier(cmd,replacement.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,0,VK_IMAGE_LAYOUT_UNDEFINED,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,levels,1);
+        vkCmdCopyBufferToImage(cmd,staging.buffer,replacement.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(regions.size()),regions.data());
+        vk::ImageBarrier(cmd,replacement.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,levels,1);
+    });ctx.DestroyBuffer(staging);
+    if(!uploaded){ctx.DestroyImage(replacement);return false;}
+    ctx.DestroyImage(image);image=replacement;return true;
 }
 
 void SceneRenderer::CreateBuiltinResources() {

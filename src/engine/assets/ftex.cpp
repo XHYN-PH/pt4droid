@@ -1,4 +1,5 @@
 #include "engine/assets/ftex.h"
+#include "engine/assets/compatible_texture.h"
 
 #include <zlib.h>
 
@@ -82,6 +83,7 @@ std::optional<std::vector<uint8_t>> ReadTextureFile(const QarArchive& qar, const
 }
 
 bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out, TextureReadBudget* budget) {
+    out.compatible.reset();
     const std::string stem = FtexStem(path);
     // a mod's .ftex brings its own .ftexs: the game's streams belong to the game's header
     auto header = mods::ReadOverride(stem + ".ftex");
@@ -143,6 +145,7 @@ bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out, Te
             out.mips[i].assign(source->begin() + block, source->begin() + block + unpacked);
         }
     }
+    PrepareBcTexture(out, budget);
     return true;
 }
 

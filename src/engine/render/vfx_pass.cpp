@@ -210,7 +210,7 @@ uint32_t VfxPass::Texture(const std::string& path) {
     const auto started = std::chrono::steady_clock::now();
     const uint32_t index = textures_->LoadFox(vfs_->Textures(), path, &ok);
     if (!ok) {
-        LogWarn("vfx: texture {} not found", path);
+        LogWarn("vfx: texture {} could not be loaded; see the texture diagnostic", path);
     }
     if (const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(); ms > 5.0) {
         LogInfo("vfx: texture {} loaded in {:.1f} ms", path, ms);
@@ -258,6 +258,10 @@ void VfxPass::Submit(vfx::RenderList& list) {
     // frame that first draws them
     if (textures_ && vfs_) {
         textures_->PumpDecoded(vfs_->Textures(), 1);
+    }
+    if(textures_ && textures_->HasConvertedTextures()) {
+        textures_->BeginTextureUse();
+        for(const auto& q:list.quads){textures_->Touch(q.info.x);if(q.info.y & vfx::kQuadLiquid)textures_->TouchCube(q.info.z);else if(q.info.y & vfx::kQuadRain)textures_->Touch(q.info.z);}
     }
     std::swap(list_, list);
     list.Clear();

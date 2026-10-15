@@ -29,7 +29,7 @@ void TppFog(vec3 eye, vec3 point, out vec3 inscatter, out float transmittance) {
     float dist = length(dh);
     float cos_theta = dot(frame.fog[7].xyz, dh / max(0.0001, dist));
     float height = max(1.0e-6, 100.0 * g0.y * dh.y);
-    float amount = g0.x * pow(max(0.0, dist - g0.z * 0.01), g1.w);
+    float amount = g0.x * max(0.0, dist - frame.fog[5].w);
     float depth = (amount * 100.0 - 100.0 * amount * exp(-height)) / height;
     float rayleigh_phase = 0.059683103 * cos_theta * cos_theta + 0.059683103;
     float m = 1.0 - cos_theta * mie.w;
