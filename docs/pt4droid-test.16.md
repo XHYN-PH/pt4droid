@@ -4,7 +4,7 @@ This is a test candidate, package com.ptport.app.test, version code 58. It follo
 
 ## Launcher and controls
 
-- The teaser has a small text-only **Hold to skip** control. Hold continuously for three seconds; release, dragging away, focus loss and backgrounding cancel it. Controller B/Start and keyboard Enter/Space/Back use the same duration. Video completion or decoding failure still enters the launcher. Replay remains available.
+- The teaser has a small text-only **Hold to skip** control. Hold continuously for three seconds; release, dragging away, focus loss and backgrounding cancel it. Controller A/B/Start and keyboard Enter/Space/Back use the same duration. Video completion or decoding failure still enters the launcher. Replay remains available.
 - FSR settings are inside **Settings → Game graphics → FSR settings** in the launcher. The separate launcher-home button is removed. This relocation does not introduce a backend.
 - The camera toolbar uses the touch controls' pale outline, pressed fill and live opacity, including restoring opacity when an edit is cancelled. The opaque toolbar backing and menu-style button rectangles are removed.
 - Controls has **Phone vibration strength**, from 0 to 100 percent. The game's master rumble must also be enabled. Phones without amplitude control can only use hardware-default vibration or Off; the page explains this.
