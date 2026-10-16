@@ -41,6 +41,8 @@ void OpenMobileSettings();
 void GameGraphicsPresetSelected(int preset);
 void GameGraphicsSettingsFailed(const std::string& message);
 void LoadingProgress(const std::string& message, int completed, int total);
+/* A PNG already saved in DataDir()/photos; Android publishes it through MediaStore. */
+void PhotoSaved(const std::string& path);
 void GraphicsStartupFailed(const std::string& message);
 void PublishGameGraphicsSettings(std::string text);
 bool ConsumeGameGraphicsChanges();

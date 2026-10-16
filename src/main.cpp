@@ -1850,7 +1850,11 @@ std::filesystem::path PhotoPath() {
     } else if (const std::string home = pt::os::GetEnv("HOME"); !home.empty()) {
         base = pt::os::PathFromUtf8(home);
     }
+#ifdef __ANDROID__
+    const std::filesystem::path dir = pt::android::DataDir() / "photos";
+#else
     const std::filesystem::path dir = base / "Pictures" / "PT Photos";
+#endif
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     const std::time_t now = std::time(nullptr);
@@ -5072,7 +5076,11 @@ int RunGame(App& app, pt::Vfs& vfs) {
             }
             for (const std::string& shot : shots) {
                 const glm::vec4 crop = photo_capture && !photo_four_k ? glm::vec4(photo_crop.x,photo_crop.y,photo_crop.width,photo_crop.height) : glm::vec4(0,0,1,1);
-                if (!app.renderer.SaveScreenshot(shot,crop) && photo_capture) {
+                const bool shot_saved=app.renderer.SaveScreenshot(shot,crop);
+#ifdef __ANDROID__
+                if(shot_saved && photo_capture)pt::android::PhotoSaved(shot);
+#endif
+                if (!shot_saved && photo_capture) {
                     photo_status = std::string(pt::game::PcText("pc_photo_save_failed", std::clamp(game.Options().subtitle_language, 0, pt::game::UiAssets::kLanguageCount - 1)));
                     photo_status_time=4.0f;
                 }

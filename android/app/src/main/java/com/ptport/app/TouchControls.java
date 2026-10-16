@@ -289,6 +289,7 @@ public class TouchControls extends View {
         }
         this.settingsHit.set(this.safe.left, this.safe.top, this.safe.left + dp(90.0f), this.safe.top + dp(36.0f));
         PTActivity.cameraToolbarBounds(Math.round(settingsHit.right+dp(6)),Math.round(safe.top));
+        PTActivity.cameraToolbarStyle(this.opacity);
         float fMin = Math.min(dp(104.0f), this.safe.width() / 5.0f);
         for (int i2 = 0; i2 < 4; i2++) {
             float f4 = i2;
@@ -670,6 +671,7 @@ public class TouchControls extends View {
     /* renamed from: lambda$showEditorOptions$3$com-ptport-app-TouchControls, reason: not valid java name */
     /* synthetic */ void m31lambda$showEditorOptions$3$comptportappTouchControls(int i) {
         this.opacity = (i + 15) / 100.0f;
+        PTActivity.cameraToolbarStyle(this.opacity);
         invalidate();
     }
 

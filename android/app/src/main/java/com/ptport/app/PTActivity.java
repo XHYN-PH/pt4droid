@@ -25,6 +25,8 @@ public class PTActivity extends SDLActivity {
     public static void cameraState(int state){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.cameraControls!=null)a.cameraControls.state(state);});}
     static void touchOverlayShown(boolean shown){final PTActivity a=current;if(a!=null&&a.cameraControls!=null)a.cameraControls.allowed(shown);}
     static void cameraToolbarBounds(int left,int top){final PTActivity a=current;if(a==null||a.cameraControls==null)return;android.widget.FrameLayout.LayoutParams lp=(android.widget.FrameLayout.LayoutParams)a.cameraControls.getLayoutParams();if(lp.leftMargin!=left||lp.topMargin!=top){lp.leftMargin=left;lp.topMargin=top;a.cameraControls.setLayoutParams(lp);}}
+    static void cameraToolbarStyle(float opacity){final PTActivity a=current;if(a!=null&&a.cameraControls!=null)a.cameraControls.appearance(opacity);}
+    public static void photoSaved(String path){final PTActivity a=current;if(a!=null)PhotoStore.publish(a,path);}
     private TouchControls touchControls;
     private static volatile PTActivity current;
     private MobileSettings mobileSettings;

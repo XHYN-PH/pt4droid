@@ -31,14 +31,6 @@ Android/Bionic Vulkan imports use the existing generic custom-driver path. PanVK
 - Native logs rotate at 8 MiB with one previous file; app logs rotate near 1 MiB. Diagnostic export creates a bounded ZIP of logs, device/refresh identity and selected configuration files. It excludes saves and microphone audio, and opens Android's share chooser. Nothing is sent automatically.
 - Refresh reporting separates physical mode refresh from Android's app-visible rate. It preserves the selected FPS cap. Local changes receive a source fingerprint instead of an ambiguous dirty suffix.
 
-## Validation and limitations
-
-The accompanying verification report records build/source identity, APK hash and checks. Host checks cover queue release/demand/cancellation, collision retirement with actual queries, archive bounds, settings page isolation/rollback, touch behavior, graphics/refresh targets, shaders, compilation and packaging. They complement device testing.
-
-Before stable, compare matched Test 14/Test 15 routes on Adreno 750, Adreno 650 and Mali: dark hallways, mirrors, flashlight shadows, fog/particles, ending and street walk. Verify microphone/manual progression and phone rumble timing in a fresh playthrough, camera controls/teaser on a phone, sustained memory/thermal behavior, each cap/pacing choice, and supported imported drivers. No phone benchmarks or performance-percentage claims are made here.
-
-The 27 ending texture failures require the actual game dump to classify missing versus unreadable assets. Parser safeguards do not establish their repair. GPU-pass profiling, the startup registration delay and street-walk collision preparation remain follow-ups. Save/update continuity and broad lifecycle/recovery testing remain outside the requested scope.
-
 ## Build
 
 Use the normal Android build instructions and persistent test signing environment. tools/android/build_test_release.sh defaults to Test 15/version code 57. If Gradle dependency downloads are unavailable, configure/build/stage native code first, then run tools/android/package_sdk.py with ANDROID_HOME, JAVA_HOME and the same signing environment. The fallback includes Swappy's Java runtime and native integration. Never commit signing material.

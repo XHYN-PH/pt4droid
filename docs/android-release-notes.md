@@ -1,31 +1,12 @@
-These are archived notes for the first Android releases. See [Test 13](pt4droid-test.13.md) for the latest changes and installation help.
+# pt4droid 0.2.1-test.16
 
-Experimental Android build of LoreanXavier's native P.T. PC port (https://github.com/LoreanXavier/pt-pc). All the real
-work is theirs; this adds the Android layer.
+Test release for Android 10+ ARM64. Requires your own game files.
 
-What's new in v0.2.0:
-
-- Say the name at the end out loud. The game listens through the microphone, recognized on your device with whisper.cpp
-  (nothing is recorded or sent anywhere, and the app has no internet access). The app asks for the microphone once before
-  the first start. Holding both triggers still works if you'd rather not. You can try it in Settings > Microphone test.
-- Touch controls for playing without a controller: drag on the left to walk, on the right to look, plus Use, Zoom, Back,
-  Pause and Name buttons. They show up when you touch the screen and fade out after a few seconds or when a controller is
-  used. Turn them off in Settings > Display > Touch controls.
-- The sticks now work in the pause menu's language list and brightness bar (they only took the d-pad before).
-- The APK is bigger (about 80 MB) because it carries the speech model.
-
-From v0.1.1:
-
-- Dual-screen handhelds (AYN Thor and similar): the bottom screen shows the hallway's clock, the loop you're on and the
-  radio subtitles, with *static* where the voice drops out. Settings > Display > Second screen.
-- Subtitles keep up with the radio when it repeats its broadcast in the later loops.
-
-Still true:
-
-- Snapdragon (Adreno 6xx/7xx) only, Android 10+. Tested on an AYN Thor Max.
-- No game files included. On first start, choose your own P.T. fake PKG (made from your dump) and the app sets the game up
-  from it. The three extracted files (chunk1.psarc, texture.qar, pathid_list_ps4.bin) in Download work too.
-- Logs go to Download/PT-logs. Please attach pt.log (and pt-crash.txt if there is one) with your device and chip when
-  reporting a problem.
-
-See the README for details and known issues.
+- Small text-only intro control: hold three seconds to skip; replay remains available.
+- FSR settings moved into launcher Settings → Game graphics. Android temporal FSR remains unavailable; SGSR1 is unchanged.
+- Adjustable phone vibration strength and camera buttons matching touch styling/opacity.
+- Photo captures use a writable app path and publish through MediaStore to Pictures/PT Photos.
+- Better refresh voting for app-visible overrides and SDL surface changes; selected FPS caps remain intact.
+- Gameplay area-loading progress hidden; initial graphics preparation feedback retained.
+- Bundled Mr. Purple Turnip T30 with verified upstream checksum and 16 KiB alignment. Android 10 and Adreno 710/720 use System. Imported driver selections remain selected.
+- External driver-project buttons removed. Separate experimental Mali Bifrost and Xclipse 920/530 import packages are available with the release.

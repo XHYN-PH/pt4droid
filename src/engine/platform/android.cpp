@@ -354,12 +354,17 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     std::string lower = choice;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (lower == "turnip" && !BundledTurnipCompatible(SystemGpuName())) {
-        name = "system driver (bundled Turnip is for Adreno)";
+        name = "system driver (bundled Turnip needs compatible Adreno)";
         LogInfo("android: incompatible bundled Turnip selection ignored; using the system driver");
         return nullptr;
     }
     if (lower == "system" || (lower=="auto" && !AutoUsesTurnip())) {
         name = "system driver (driver.txt)";
+        return nullptr;
+    }
+    if ((lower=="turnip"||lower=="auto") && !BundledTurnipSupportsRuntime(SDL_GetAndroidSDKVersion(),sysconf(_SC_PAGESIZE))) {
+        name="system driver (Mr. Purple T30 needs Android 11+ and supported page size)";
+        LogInfo("android: Mr. Purple T30 runtime requirements not met; using System");
         return nullptr;
     }
     const std::string lib_dir = ApplicationInfoString("nativeLibraryDir");
@@ -371,7 +376,7 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     const std::string hook_dir = lib_dir + "/";
     std::string driver_dir = hook_dir;
     std::string driver_file = "libvulkan_turnip.so";
-    std::string label = "Mesa Turnip (bundled)";
+    std::string label = "Mr. Purple Turnip T30 (bundled)";
     if(lower=="panvk"){
         if(SDL_GetAndroidSDKVersion()<35||!IsMaliGpu(SystemGpuName())){name="system driver (experimental PanVK needs Mali and Android 15+)";return nullptr;}
         driver_file="libvulkan_panfrost.so";label="PanVK Kbase RC3 (experimental Mali)";

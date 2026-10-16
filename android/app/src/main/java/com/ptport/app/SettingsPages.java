@@ -72,7 +72,10 @@ final class SettingsPages {
             check("Invert vertical look","invert_y",false);gain("Mouse sensitivity","mouse_sensitivity",1f,3f);gain("Controller sensitivity","controller_sensitivity",1f,3f);
             CheckBox gyro=check("Gyroscope look","gyro",false);gyro.setEnabled(MobileRuntime.hasGyro(activity));if(!gyro.isEnabled())gyro.setChecked(false);gain("Gyroscope sensitivity","gyro_sensitivity",1f,3f);
             CheckBox vibration=check("Phone vibration for game rumble","phone_vibration",true);PhoneHaptics haptics=new PhoneHaptics(activity);vibration.setEnabled(haptics.available());
-            note("The game's controller rumble option must also be enabled. Vibration strength depends on the phone.");
+            int strength=Math.max(0,Math.min(100,prefs.getInt("phone_vibration_strength",100)));values.put("phone_vibration_strength",strength);
+            TextView strengthLabel=new TextView(activity);strengthLabel.setTextColor(MenuStyle.TEXT);strengthLabel.setText("Phone vibration strength: "+strength+"%");column.addView(strengthLabel);
+            MobileSettings.slider(column,"Vibration strength • 0 = Off",strength,100,p->{values.put("phone_vibration_strength",p);strengthLabel.setText("Phone vibration strength: "+p+"%");});
+            note(haptics.amplitudeControl()?"The game's controller rumble must also be enabled.":"The game's controller rumble must also be enabled. This phone has no amplitude control: strength 0 turns vibration off; nonzero levels use the hardware default.");
             note(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED?"Microphone permission is enabled. The Name touch button is also available for the ending puzzle.":"Microphone permission is off. Use the Name touch button for the ending puzzle, or enable microphone access in Android app settings.");
         }
         AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(advanced?"Performance & advanced":"Controls").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();

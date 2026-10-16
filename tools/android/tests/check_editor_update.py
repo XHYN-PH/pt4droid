@@ -68,7 +68,7 @@ public class EditorTest {
    void apply(){data.putAll(pending);}}
   Editor edit(){return new Editor();}
  }
- static class PTActivity {static void openMobileSettings(){}static void setTouchLayoutEditing(boolean v){}static void cameraToolbarBounds(int left,int top){}static void touchOverlayShown(boolean shown){}}
+ static class PTActivity {static void openMobileSettings(){}static void setTouchLayoutEditing(boolean v){}static void cameraToolbarBounds(int left,int top){}static void cameraToolbarStyle(float opacity){}static void touchOverlayShown(boolean shown){}}
  static final int[] ACTION_BITS={1,8,2,4,16};static final String[] ACTION_NAMES={"Use","Zoom","Back","Pause","Name"};
  static final long HIDE_AFTER_MS=5000;long hideAfterMs(){return HIDE_AFTER_MS;}void focusReturned(){}boolean toolbarVisible(){return shown&&!editing&&mode!=1;}
  Control[] controls=new Control[7];Stick move=new Stick(),look=new Stick();
