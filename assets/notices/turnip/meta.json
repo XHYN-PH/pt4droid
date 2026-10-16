@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "Turnip Adreno Driver T30 (@Mr_Purple_666)",
+  "description": "Open-source Vulkan driver build, MrPurple still alive. Big thanks to DISKDVD",
+  "author": "Mr_Purple_666",
+  "packageVersion": "T30",
+  "vendor": "Mesa",
+  "driverVersion": "26.3.0-T30-1.4.359",
+  "minApi": 30,
+  "libraryName": "vulkan.purple.so"
+}

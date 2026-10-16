@@ -1,15 +1,18 @@
-# Bundled WinNative Turnip 1.19 Balanced
+# Bundled Mr. Purple Turnip T30
 
-Binary package: https://github.com/WinNative-Emu/Drivers/releases/download/v1.19/WN-Turnip-1.19-b_Axxx.zip
+Author: Mr_Purple_666. This is an unmodified upstream Adrenotools binary.
 
-Package SHA-256: 1a4fbae36c0062826b93179e99be00b3679b945dcd7fc7b062ba1db54e3cf55c
+Release: https://github.com/MrPurple666/purple-turnip/releases/tag/vturnip_mrpurple_T30-toasted.adpkg
 
-Corresponding build scripts and patches: https://github.com/WinNative-Emu/Drivers/tree/v1.19
+Binary: https://github.com/MrPurple666/purple-turnip/releases/download/vturnip_mrpurple_T30-toasted.adpkg/turnip_mrpurple_T30-toasted.adpkg.zip
 
-Mesa source revision: 30da39187 (26.3.0-devel), as recorded by the upstream v1.19 release. Source: https://gitlab.freedesktop.org/mesa/mesa/-/tree/30da39187
+Archive SHA-256: f65b2d3353fd4aa7190bb5426b94468e99ffea7a58a830bc0c4651db89353227 (matches GitHub release asset digest).
 
-Upstream package metadata: minApi 29, Android ARM64, library libvulkan_freedreno.so.
+vulkan.purple.so SHA-256: 1d80dfa019659b008e4669311db5b1e4a02af59ff1d5458a98e2f5fe18ed013b
 
-This app loads the unmodified driver as a separate optional Vulkan implementation through Adrenotools. The Balanced variant is bundled; the Performance variant forces GPU power constraints and is not the default. Existing explicitly imported driver choices are preserved. The upstream ELF LOAD segments have 4 KiB alignment; this exact binary is not claimed to support 16 KiB memory pages. The app uses System instead for its bundled/automatic selection on 16 KiB phones.
+Upstream metadata is preserved in meta.json: Mesa 26.3.0-T30, Vulkan 1.4.359, min API 30. All ELF LOAD segments have 16 KiB alignment. The file is packaged as libvulkan_turnip.so because Android extracts lib*.so names; its bytes are unchanged.
 
-The WinNative repository LICENSE at this tag is GPL-3.0 and is reproduced alongside this notice. Mesa contains component-specific licenses; consult the corresponding source above. Upstream README and repository license labels differ; retaining the repository license does not relicense the port's MIT source code. No claim of device validation is made.
+Upstream partially dropped Adreno 710/720 support; the bundled selector uses System on those models and Android 10. Automatic remains conservative on Adreno 6xx/7xx. Other GPUs use System; Adreno 8xx is an explicit selection. Imported choices remain unchanged.
+
+Mesa component license information is reproduced in Mesa-license.rst; source and author acknowledgments are linked by the release above and Mesa: https://gitlab.freedesktop.org/mesa/mesa
+The release repository distributes binaries and does not identify an exact corresponding Mesa revision/build recipe. Do not claim that this package can be reproduced bit-for-bit from that repository. No device validation or performance improvement is claimed.
