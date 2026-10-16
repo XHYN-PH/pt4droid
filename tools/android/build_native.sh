@@ -13,9 +13,10 @@ APP="$ROOT/android/app"
 NDK="${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME to the NDK folder}"
 GLSLC="${GLSLC:-$(command -v glslc)}"
 
-# Mesa Turnip for Adreno 6xx/7xx (MIT), the KIMCHI build packaged for libadrenotools
-TURNIP_URL="https://github.com/K11MCH1/AdrenoToolsDrivers/releases/download/v26.0.0-rc08/Turnip_v26.0.0_R8.zip"
-TURNIP_SHA256="e634db0f929e2205e95511c769071817d0390180ec72c8e690bc76375e813715"
+# WinNative Turnip 1.19 Balanced, Android/Bionic Adrenotools package.
+# Preserve upstream notices/source information in assets/notices/turnip/.
+TURNIP_URL="https://github.com/WinNative-Emu/Drivers/releases/download/v1.19/WN-Turnip-1.19-b_Axxx.zip"
+TURNIP_SHA256="1a4fbae36c0062826b93179e99be00b3679b945dcd7fc7b062ba1db54e3cf55c"
 PANVK_URL="https://github.com/zenithblue-oss/panvk-kbase-android/releases/download/panvk-kbase-v0.1.0-rc3/libvulkan_panfrost-android-aarch64.so"
 PANVK_SHA256="b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
 
