@@ -13,10 +13,10 @@ APP="$ROOT/android/app"
 NDK="${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME to the NDK folder}"
 GLSLC="${GLSLC:-$(command -v glslc)}"
 
-# WinNative Turnip 1.19 Balanced, Android/Bionic Adrenotools package.
+# Mr. Purple T30, unmodified Android/Bionic Adrenotools package (Android 11+).
 # Preserve upstream notices/source information in assets/notices/turnip/.
-TURNIP_URL="https://github.com/WinNative-Emu/Drivers/releases/download/v1.19/WN-Turnip-1.19-b_Axxx.zip"
-TURNIP_SHA256="1a4fbae36c0062826b93179e99be00b3679b945dcd7fc7b062ba1db54e3cf55c"
+TURNIP_URL="https://github.com/MrPurple666/purple-turnip/releases/download/vturnip_mrpurple_T30-toasted.adpkg/turnip_mrpurple_T30-toasted.adpkg.zip"
+TURNIP_SHA256="f65b2d3353fd4aa7190bb5426b94468e99ffea7a58a830bc0c4651db89353227"
 PANVK_URL="https://github.com/zenithblue-oss/panvk-kbase-android/releases/download/panvk-kbase-v0.1.0-rc3/libvulkan_panfrost-android-aarch64.so"
 PANVK_SHA256="b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
 
