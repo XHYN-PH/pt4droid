@@ -69,10 +69,11 @@ final class MobileSettings {
         text(v,"Automatic uses bundled Turnip on supported Adreno 6xx/7xx and System on other GPUs. PanVK is experimental for Mali v9–v13 with mali_kbase and Android 15+. Game compatibility and performance are not verified. Older Mali GPUs and other kernel drivers may fail. Fully close and reopen after a driver change.");
         AlertDialog d=new AlertDialog.Builder(activity).setTitle("Vulkan drivers").setView(scroll(v)).setPositiveButton("Select",(a,b)->{try{String driver=selections.get(selection.getSelectedItemPosition());if(driver.equals("panvk")&&android.os.Build.VERSION.SDK_INT<35)throw new IOException("Bundled PanVK requires Android 15 or later. Use System or an Android-compatible imported driver.");write("driver.txt",driver);message("Driver selected. Fully close and reopen the game to load it.");}catch(IOException ex){message(ex.getMessage());}}).setNegativeButton("Close",null).create();
         text(v,"Imported Android/Bionic Vulkan packages can target Mali (PanVK) or supported Xclipse GPUs (RADV). Match the package to your exact GPU and Android version. Linux/glibc and OpenGL drivers do not work here.");
-        button(v,"Mali & Xclipse driver projects",()->activity.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://github.com/JimVulkan/mesa-unified-drivers"))));
-        button(v,"PanVK Kbase project",()->activity.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://github.com/zenithblue-oss/panvk-kbase-android"))));
+        button(v,"Mali & Xclipse driver projects",()->openDriverProject("https://github.com/JimVulkan/mesa-unified-drivers"));
+        button(v,"PanVK Kbase project",()->openDriverProject("https://github.com/zenithblue-oss/panvk-kbase-android"));
         button(v,"Import driver ZIP",()->{d.dismiss();pickDriver();});d.show();MenuStyle.styleDialog(d);
     }
+    private void openDriverProject(String url){try{activity.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url)));}catch(ActivityNotFoundException error){message("Open this address in a browser: "+url);}}
     private void pickDriver(){try{Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream","application/x-zip-compressed"});activity.startActivityForResult(intent,PICK_DRIVER);}catch(Exception ex){message("Could not open file picker: "+ex.getMessage());}}
     boolean activityResult(int request,int result,Intent data){
         if(request!=PICK_DRIVER)return false;

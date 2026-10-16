@@ -21,6 +21,8 @@ final class Diagnostics {
                 try(ZipOutputStream zip=new ZipOutputStream(new FileOutputStream(temp))){
                     String version=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0).versionName;
                     entry(zip,"device.txt",("pt4droid "+version+"\n"+Build.MANUFACTURER+" "+Build.MODEL+"\nAndroid "+Build.VERSION.RELEASE+" (API "+Build.VERSION.SDK_INT+")\n"+DisplayRefresh.describe(activity)+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    String snapshot=PTActivity.gameRunning()?PTActivity.nativeGetGameGraphicsSettings():"";
+                    entry(zip,"settings/effective_graphics.ini",GameGraphicsData.load(activity,snapshot).text().getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     for(String name:new String[]{"driver.txt","render_scale.txt","mobile_performance.ini","performance_profile.txt","game_graphics_pending.ini"})copy(zip,new File(activity.getFilesDir(),name),"settings/"+name,64*1024);
                     File ext=activity.getExternalFilesDir(null);
                     File[] dirs={new File("/storage/emulated/0/Download/PT-logs-test"),new File(activity.getFilesDir(),"data"),ext==null?null:new File(ext,"data")};

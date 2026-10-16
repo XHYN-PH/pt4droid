@@ -307,6 +307,7 @@ public class TouchControls extends View {
         } else if (i2 == 2) {
             setShown(true);
         }
+        focusReturned();
     }
 
     void setAllowed(boolean z) {
