@@ -14,8 +14,8 @@ intro=(app/'IntroActivity.java').read_text()
 tick=intro[intro.index('    private final Runnable holdTick='):intro.index('    private VideoView video;')]
 core=r'''
 class Clock {static long now;} class SystemClock {static long uptimeMillis(){return Clock.now;}}
-class KeyEvent {static final int KEYCODE_BUTTON_START=108,KEYCODE_BUTTON_B=97,KEYCODE_DPAD_CENTER=23,KEYCODE_ENTER=66,KEYCODE_SPACE=62,KEYCODE_BACK=4;int repeat;KeyEvent(int n){repeat=n;}int getRepeatCount(){return repeat;}}
-class BaseActivity {public boolean onKeyDown(int k,KeyEvent e){return false;}public boolean onKeyUp(int k,KeyEvent e){return false;}}
+class KeyEvent {static final int ACTION_DOWN=0,ACTION_UP=1,KEYCODE_BUTTON_A=96,KEYCODE_BUTTON_START=108,KEYCODE_BUTTON_B=97,KEYCODE_DPAD_CENTER=23,KEYCODE_ENTER=66,KEYCODE_SPACE=62,KEYCODE_BACK=4;int repeat,key,action;KeyEvent(int n){repeat=n;}KeyEvent(int key,int action){this.key=key;this.action=action;}int getRepeatCount(){return repeat;}int getKeyCode(){return key;}int getAction(){return action;}}
+class BaseActivity {int childDispatches;public boolean dispatchKeyEvent(KeyEvent e){childDispatches++;return false;}public boolean onKeyDown(int k,KeyEvent e){return false;}public boolean onKeyUp(int k,KeyEvent e){return false;}}
 public class IntroCoreTest extends BaseActivity {
  static final long HOLD_MS=3000;boolean resumed=true,finished;int holdKey=-1,holdPointer=-1,leaves;long holdStarted=-1;
  static class Label {String text;void setText(String s){text=s;}} Label skip=new Label();
@@ -31,10 +31,12 @@ public class IntroCoreTest extends BaseActivity {
   a.onKeyDown(KeyEvent.KEYCODE_BUTTON_B,new KeyEvent(0));a.advance(1500);a.onKeyDown(KeyEvent.KEYCODE_BUTTON_B,new KeyEvent(1));a.advance(1499);ok(a.leaves==0,"key repeat neither skips nor resets hold");a.advance(1);ok(a.leaves==1,"controller hold follows same duration");
   a=new IntroCoreTest();a.onKeyDown(KeyEvent.KEYCODE_ENTER,new KeyEvent(0));a.advance(1000);a.onKeyUp(KeyEvent.KEYCODE_ENTER,new KeyEvent(0));a.advance(4000);ok(a.leaves==0,"key release cancels skip");
   a.beginHold();a.advance(1000);a.resumed=false;a.cancelHold();a.advance(4000);ok(a.leaves==0,"background/focus cancellation cannot skip");a.beginHold();ok(a.holdStarted<0,"background cannot start a new hold");
+  a=new IntroCoreTest();a.dispatchKeyEvent(new KeyEvent(KeyEvent.KEYCODE_ENTER,KeyEvent.ACTION_DOWN));a.advance(3000);ok(a.leaves==1&&a.childDispatches==0,"Enter hold bypasses focused text control consumption");
+  a=new IntroCoreTest();a.dispatchKeyEvent(new KeyEvent(KeyEvent.KEYCODE_BUTTON_A,KeyEvent.ACTION_DOWN));a.advance(2000);a.dispatchKeyEvent(new KeyEvent(KeyEvent.KEYCODE_BUTTON_A,KeyEvent.ACTION_UP));a.advance(3000);ok(a.leaves==0&&a.childDispatches==0,"controller activation release cancels before child click handling");
   System.out.println("Intro hold checks passed: duration, cancellation, repeated presses, controller repeat, background");
  }
 }
-'''.replace('TICK',tick).replace('METHODS','\n'.join(method(intro,s) for s in ['private void beginHold()','private void cancelHold()','private boolean skipKey(','public boolean onKeyDown(','public boolean onKeyUp(']))
+'''.replace('TICK',tick).replace('METHODS','\n'.join(method(intro,s) for s in ['private void beginHold()','private void cancelHold()','private boolean skipKey(','public boolean dispatchKeyEvent(','public boolean onKeyDown(','public boolean onKeyUp(']))
 haptic='''public class HapticTest {METHOD public static void main(String[] args){
  for(int gain=0;gain<=100;gain++)for(int input:new int[]{0,1,128,32768,65535,100000,Integer.MAX_VALUE}){
  int a=amplitude(input,0,gain);if(a<0||a>255||(gain==0&&a!=0)||(input==0&&a!=0))throw new AssertionError("bounds");
