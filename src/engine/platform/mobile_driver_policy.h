@@ -6,6 +6,8 @@
 #include <string_view>
 
 namespace pt::android {
+// WinNative 1.19 is an unmodified 4 KiB-aligned ELF. Do not load it on 16 KiB devices.
+inline bool BundledTurnipSupportsPageSize(long bytes){return bytes>0&&bytes<=4096;}
 inline bool IsMaliGpu(std::string_view device_name){
     std::string name(device_name);std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
     return name.find("mali")!=std::string::npos||name.find("immortalis")!=std::string::npos;

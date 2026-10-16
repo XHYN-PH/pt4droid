@@ -362,6 +362,11 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
         name = "system driver (driver.txt)";
         return nullptr;
     }
+    if ((lower=="turnip"||lower=="auto") && !BundledTurnipSupportsPageSize(sysconf(_SC_PAGESIZE))) {
+        name="system driver (WinNative Turnip 1.19 requires 4 KiB pages)";
+        LogInfo("android: WinNative Turnip 1.19 has 4 KiB ELF alignment; using System on this page-size configuration");
+        return nullptr;
+    }
     const std::string lib_dir = ApplicationInfoString("nativeLibraryDir");
     if (lib_dir.empty()) {
         LogWarn("android: nativeLibraryDir unknown, using the system driver");
@@ -371,7 +376,7 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     const std::string hook_dir = lib_dir + "/";
     std::string driver_dir = hook_dir;
     std::string driver_file = "libvulkan_turnip.so";
-    std::string label = "Mesa Turnip (bundled)";
+    std::string label = "WinNative Turnip 1.19 Balanced (bundled)";
     if(lower=="panvk"){
         if(SDL_GetAndroidSDKVersion()<35||!IsMaliGpu(SystemGpuName())){name="system driver (experimental PanVK needs Mali and Android 15+)";return nullptr;}
         driver_file="libvulkan_panfrost.so";label="PanVK Kbase RC3 (experimental Mali)";
