@@ -21,12 +21,13 @@ Surface requests may now use Android's non-seamless change strategy when switchi
 
 ## Bundled driver
 
-The build pins **WinNative Turnip 1.19 Balanced**:
+The build pins **Mr. Purple Turnip T30** (Mesa 26.3.0-devel / Vulkan 1.4.359):
 
-- https://github.com/WinNative-Emu/Drivers/releases/tag/v1.19
-- WN-Turnip-1.19-b_Axxx.zip SHA-256: 1a4fbae36c0062826b93179e99be00b3679b945dcd7fc7b062ba1db54e3cf55c
-- The unmodified upstream library has 4 KiB ELF LOAD alignment. Bundled/automatic selection uses System on 16 KiB phones. Explicitly imported selections are preserved.
-- License/source notices are included under assets/notices/turnip. The upstream repository's tag LICENSE is GPL-3.0; Mesa component licenses also apply. The Performance variant's power-lock behavior is not the bundled default.
+- https://github.com/MrPurple666/purple-turnip/releases/tag/vturnip_mrpurple_T30-toasted.adpkg
+- Archive SHA-256: f65b2d3353fd4aa7190bb5426b94468e99ffea7a58a830bc0c4651db89353227, matching the official release asset digest.
+- All unmodified upstream ELF LOAD segments have 16 KiB alignment. Android 11+ is required. Android 10 uses System.
+- Upstream partially dropped Adreno 710/720 because of device bugs; those models use System. Automatic remains conservative on other Adreno 6xx/7xx; Adreno 8xx needs an explicit selection. Imported selections are preserved.
+- Author attribution, upstream metadata and Mesa license/source information are included under assets/notices/turnip. The binary release does not specify an exact reproducible source revision.
 
 Optional Mali/Xclipse driver builds require GPU-specific kernel support. They are experimental, not a compatibility promise. The unified source currently targets Bifrost Mali through kbase and Xclipse 920/530; its Bifrost backend does not establish Immortalis support. The separately bundled PanVK Kbase RC3 has its own modern-GPU and Android requirements. Do not combine these support lists or assume every Mali/Immortalis/Xclipse phone works.
 
@@ -38,4 +39,4 @@ A native Android temporal FSR backend is feasible in principle. The engine alrea
 
 Focused host checks cover hold timing/cancellation, vibration scaling, MediaStore copy/publish/rollback, refresh votes and overrides, settings-page isolation, touch input and layout editing. The accompanying verification report records the final build, package identity, hash and checks.
 
-On phones, test tap versus three-second hold, replay, camera opacity during edit/cancel, all toolbar modes, 0/50/100 percent rumble and the ending cue, gallery PNG visibility and failure feedback, selected caps with VSync/pacing, and background/focus/surface transitions affecting these new controls. Compare bundled WinNative 1.19 against System and the previous imported driver with matched settings. Complete a full playthrough and sustained memory/thermal checks before stable.
+On phones, test tap versus three-second hold, replay, camera opacity during edit/cancel, all toolbar modes, 0/50/100 percent rumble and the ending cue, gallery PNG visibility and failure feedback, selected caps with VSync/pacing, and background/focus/surface transitions affecting these new controls. Compare bundled Mr. Purple T30 against System and the previous imported driver with matched settings. Complete a full playthrough and sustained memory/thermal checks before stable.
