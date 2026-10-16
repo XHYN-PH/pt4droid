@@ -58,6 +58,7 @@ public class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if(playIntro())return;
         if(GameSession.isActive(this) && !getIntent().getBooleanExtra("returned_from_game",false)){
             launchGame();
             return;
@@ -91,6 +92,12 @@ public class SetupActivity extends Activity {
         }
         System.loadLibrary("ptsetup");
         showWelcome();
+    }
+
+    // Keep the existing launcher component so saved home-screen shortcuts remain valid.
+    private boolean playIntro(){
+        if(getIntent().getBooleanExtra("intro_played",false)||getIntent().getBooleanExtra("returned_from_game",false))return false;
+        startActivity(new Intent(this,IntroActivity.class));finish();return true;
     }
 
     @Override

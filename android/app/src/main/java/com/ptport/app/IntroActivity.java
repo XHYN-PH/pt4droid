@@ -26,7 +26,7 @@ public final class IntroActivity extends Activity {
         skip.requestFocus();
     }
     private void complete(){if(resumed)leave();else advanceOnResume=true;}
-    private void leave(){if(finished)return;finished=true;if(video!=null)video.stopPlayback();if(!getIntent().getBooleanExtra("replay",false))startActivity(new Intent(this,SetupActivity.class));finish();}
+    private void leave(){if(finished)return;finished=true;if(video!=null)video.stopPlayback();if(!getIntent().getBooleanExtra("replay",false))startActivity(new Intent(this,SetupActivity.class).putExtra("intro_played",true));finish();}
     @Override public void onBackPressed(){leave();}
     @Override public boolean onKeyUp(int key,KeyEvent event){if(key==KeyEvent.KEYCODE_BUTTON_START||key==KeyEvent.KEYCODE_BUTTON_B){leave();return true;}return super.onKeyUp(key,event);}
     @Override protected void onPause(){resumed=false;if(video!=null){position=video.getCurrentPosition();video.pause();}super.onPause();}
