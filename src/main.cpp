@@ -4349,7 +4349,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             if(photo_mode&&(camera_actions&8u))photo_overlay=!photo_overlay;
             if(photo_mode&&(camera_actions&16u))photo_shot=true;
         }
-        pt::android::PublishCameraState((freecam?1u:0u)|(photo_mode?2u:0u)|(game.ThirdPerson()?4u:0u));
+        pt::android::PublishCameraState((freecam?1u:0u)|(photo_mode?2u:0u)|(game.ThirdPerson()?4u:0u)|(camera_usable?8u:0u));
 #endif
         if (app.window) {
             const bool* keys = SDL_GetKeyboardState(nullptr);
