@@ -19,7 +19,7 @@ public final class DisplayRefresh {
     private static long lastRecovery;
     private static int recoveryAttempts;
     private static float lastRequested=-1;
-    private static float lastObserved=-1;
+    private static float lastObserved=-1,lastVisible=-1;
     public static void invalidate(){surfaceRates.clear();lastRecovery=0;recoveryAttempts=0;}
     public static float actualRate(){return actualRate;}
     static String describe(Activity activity){Display d=display(activity);int target=runtimeTarget>=0?runtimeTarget:activity.getSharedPreferences("touch_layout_v1",0).getInt("frame_target",0);return String.format(Locale.ROOT,"Target %s, selected %.2f Hz, physical %.2f Hz, app-visible %.2f Hz",target==0?"Unlimited":target+" FPS",choose(d.getSupportedModes(),d.getMode(),target).getRefreshRate(),d.getMode().getRefreshRate(),d.getRefreshRate());}
@@ -58,19 +58,23 @@ public final class DisplayRefresh {
             if(!Float.isFinite(requested) || requested<0)requested=0;
             if(requested!=lastRequested){lastRequested=requested;recoveryAttempts=0;lastRecovery=0;surfaceRates.clear();}
             actualRate=display.getMode().getRefreshRate();
-            boolean observedChange=Math.abs(actualRate-lastObserved)>.5f;lastObserved=actualRate;
+            float visibleRate=display.getRefreshRate();
+            boolean observedChange=Math.abs(actualRate-lastObserved)>.5f||Math.abs(visibleRate-lastVisible)>.5f;lastObserved=actualRate;lastVisible=visibleRate;
             Display.Mode selected=choose(display.getSupportedModes(),display.getMode(),requested);float rate=selected.getRefreshRate();
             WindowManager.LayoutParams attributes=activity.getWindow().getAttributes();int modeId=selected.getModeId();
             long now=android.os.SystemClock.uptimeMillis();
-            boolean mismatch=Math.abs(actualRate-rate)>.5f;
+            float minimumRate=Math.min(requested>0?requested:rate,rate);
+            boolean mismatch=Math.abs(actualRate-rate)>.5f||(Float.isFinite(visibleRate)&&visibleRate>0&&visibleRate<minimumRate-.5f);
             if(mismatch && observedChange){recoveryAttempts=0;lastRecovery=0;surfaceRates.clear();}
             if(!mismatch)recoveryAttempts=0;
             boolean recovery=mismatch && recoveryAttempts<3 && now-lastRecovery>=2000;
             if(recovery){lastRecovery=now;++recoveryAttempts;surfaceRates.clear();}
             if(recovery || attributes.preferredDisplayModeId!=modeId || attributes.preferredRefreshRate!=rate){attributes.preferredDisplayModeId=modeId;attributes.preferredRefreshRate=rate;activity.getWindow().setAttributes(attributes);}
             if(Build.VERSION.SDK_INT>=30 && surface!=null && surface.isValid()){
+                // The selected game rate may require a non-seamless display-mode change.
+                // Requests stay cached, with the existing bounded recovery policy.
                 float contentRate=requested>0?requested:rate;
-                if(!Float.valueOf(contentRate).equals(surfaceRates.get(surface))){if(Build.VERSION.SDK_INT>=31)surface.setFrameRate(contentRate,Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+                if(!Float.valueOf(contentRate).equals(surfaceRates.get(surface))){if(Build.VERSION.SDK_INT>=31)surface.setFrameRate(contentRate,Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,Surface.CHANGE_FRAME_RATE_ALWAYS);
                     else surface.setFrameRate(contentRate,Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);surfaceRates.put(surface,contentRate);}
             }
         }catch(Exception error){AppLog.w("pt","Refresh rate request failed",error);}

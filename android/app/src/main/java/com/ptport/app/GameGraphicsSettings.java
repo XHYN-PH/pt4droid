@@ -62,6 +62,10 @@ final class GameGraphicsSettings {
         toggle("Traced ambient occlusion","raytracing.ambient_occlusion",data.rayTracing);toggle("Traced contact shadows","raytracing.contact_shadows",data.rayTracing);toggle("Traced reflections","raytracing.reflections",data.rayTracing);
         choice("Ray quality","graphics.ray_quality",new String[]{"Balanced","High","Ultra"},new int[]{0,1,2},data.rayTracing);
         }
+        if(!(activity instanceof PTActivity)){
+            MenuStyle.section(column,"Upscaling");
+            Button fsr=new Button(activity);fsr.setText("FSR settings");MenuStyle.button(fsr);fsr.setOnClickListener(v->openUpscaling(activity));column.addView(fsr);
+        }
         note("Scene resolution and extra performance options are in Performance & advanced.");
         saveDialog("Game graphics");
     }

@@ -123,7 +123,6 @@ public class SetupActivity extends Activity {
         }
         button("Start",v->startGame()).requestFocus();
         button("Settings",v->mobileSettings.show());
-        button("FSR settings",v->GameGraphicsSettings.openUpscaling(this));
         button("Delete saves",v->mobileSettings.deleteSaves());
         button("Quit",v->finish());
 

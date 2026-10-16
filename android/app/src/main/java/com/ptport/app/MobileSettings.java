@@ -59,21 +59,18 @@ final class MobileSettings {
     }
     private void showPage(boolean advanced){new SettingsPages(activity,touch,this::show).show(advanced);}
     private void drivers(){
-        LinearLayout v=column(activity);List<String> names=new ArrayList<>(Arrays.asList("Automatic • match device","Mesa Turnip • bundled (Adreno)","System Vulkan driver","PanVK Kbase RC3 • experimental (Mali, Android 15+)"));List<String> selections=new ArrayList<>(Arrays.asList("auto","turnip","system","panvk"));
+        LinearLayout v=column(activity);List<String> names=new ArrayList<>(Arrays.asList("Automatic • match device","WinNative Turnip 1.19 • Balanced (Adreno)","System Vulkan driver","PanVK Kbase RC3 • experimental (Mali, Android 15+)"));List<String> selections=new ArrayList<>(Arrays.asList("auto","turnip","system","panvk"));
         File[] folders=new File(activity.getFilesDir(),"drivers").listFiles();if(folders!=null){Arrays.sort(folders,Comparator.comparing(File::getName));for(File folder:folders){
             if(!folder.isDirectory() || folder.getName().startsWith("."))continue;
             try{JSONObject info=new JSONObject(new String(Files.readAllBytes(new File(folder,"package.json").toPath()),StandardCharsets.UTF_8));String lib=info.getString("library");File file=DriverArchive.contained(folder,lib);DriverArchive.validateElf(file);names.add(info.optString("name",folder.getName())+(info.optBoolean("experimental",false)?" • experimental ("+info.optString("family","Mali")+")":""));selections.add("imported/"+folder.getName()+"/"+lib);}catch(Exception ignored){}
         }}
         int selected=0;try{selected=selections.indexOf(new String(Files.readAllBytes(new File(activity.getFilesDir(),"driver.txt").toPath()),StandardCharsets.UTF_8).trim());}catch(Exception ignored){}
         Spinner selection=choice(v,"Vulkan driver",names.toArray(new String[0]),selected);
-        text(v,"Automatic uses bundled Turnip on supported Adreno 6xx/7xx and System on other GPUs. PanVK is experimental for Mali v9–v13 with mali_kbase and Android 15+. Game compatibility and performance are not verified. Older Mali GPUs and other kernel drivers may fail. Fully close and reopen after a driver change.");
+        text(v,"Automatic uses WinNative Turnip 1.19 Balanced on supported Adreno 6xx/7xx with 4 KiB pages. The upstream 1.19 binary has 4 KiB alignment; 16 KiB phones use System instead. Other GPUs also use System. PanVK is experimental for Mali v9–v13 with mali_kbase and Android 15+. Game compatibility and performance are not verified. Older Mali GPUs and other kernel drivers may fail. Fully close and reopen after a driver change.");
         AlertDialog d=new AlertDialog.Builder(activity).setTitle("Vulkan drivers").setView(scroll(v)).setPositiveButton("Select",(a,b)->{try{String driver=selections.get(selection.getSelectedItemPosition());if(driver.equals("panvk")&&android.os.Build.VERSION.SDK_INT<35)throw new IOException("Bundled PanVK requires Android 15 or later. Use System or an Android-compatible imported driver.");write("driver.txt",driver);message("Driver selected. Fully close and reopen the game to load it.");}catch(IOException ex){message(ex.getMessage());}}).setNegativeButton("Close",null).create();
         text(v,"Imported Android/Bionic Vulkan packages can target Mali (PanVK) or supported Xclipse GPUs (RADV). Match the package to your exact GPU and Android version. Linux/glibc and OpenGL drivers do not work here.");
-        button(v,"Mali & Xclipse driver projects",()->openDriverProject("https://github.com/JimVulkan/mesa-unified-drivers"));
-        button(v,"PanVK Kbase project",()->openDriverProject("https://github.com/zenithblue-oss/panvk-kbase-android"));
         button(v,"Import driver ZIP",()->{d.dismiss();pickDriver();});d.show();MenuStyle.styleDialog(d);
     }
-    private void openDriverProject(String url){try{activity.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url)));}catch(ActivityNotFoundException error){message("Open this address in a browser: "+url);}}
     private void pickDriver(){try{Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");intent.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream","application/x-zip-compressed"});activity.startActivityForResult(intent,PICK_DRIVER);}catch(Exception ex){message("Could not open file picker: "+ex.getMessage());}}
     boolean activityResult(int request,int result,Intent data){
         if(request!=PICK_DRIVER)return false;
