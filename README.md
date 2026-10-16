@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.16">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -25,18 +25,18 @@
 
 Play **P.T. on Android** with touch controls, graphics settings and controller support. This is an unofficial port maintained by **XHYN-PH**.
 
-**Latest test release: [Test 15](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15)** · Android 10+
+**Latest test release: [Test 16](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.16)** · Android 10+
 
 Game files are not included. You need your own P.T. game dump. This is still a test release, so some phones may have problems.
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.15-arm64.apk** from the [Test 15 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15) and install it.
+1. Download **pt4droid-v0.2.1-test.16-arm64.apk** from the [Test 16 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.16) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package. See the game-file help below if it will not import.
 3. Wait for the files to finish importing, then tap **Enter menu**.
 4. Adjust your settings and tap **Start**.
 
-**Updating from Test 14?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
+**Updating from Test 15?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
 
 <details>
 <summary>Game files and importing help</summary>
@@ -53,9 +53,9 @@ The US game dump, **CUSA01127**, is the reference version.
 
 </details>
 
-## Test 16 candidate
+## What's new in Test 16
 
-The `test16-refinements` branch contains **0.2.1-test.16** for device testing. The latest published release above remains Test 15.
+**0.2.1-test.16** is the latest test release. [Test 15 remains available](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15).
 
 - Hold the smaller text-only intro control for three seconds to skip.
 - Launcher FSR settings are inside **Settings → Game graphics**. An Android temporal FSR backend is still pending; SGSR1 remains available.
@@ -64,11 +64,11 @@ The `test16-refinements` branch contains **0.2.1-test.16** for device testing. T
 - Refresh voting now considers app-visible rate overrides and SDL surface changes; OEM policy and GPU cost can still limit FPS.
 - Bundled **Mr. Purple Turnip T30** supports 4 KiB and 16 KiB pages, with author and Mesa notices. Android 10 and Adreno 710/720 use System. Driver import remains available; external driver-project buttons are removed.
 
-See [Test 16 changes and required phone checks](docs/pt4droid-test.16.md). This candidate has not completed a full phone playthrough or Mali/Xclipse validation.
+See [Test 16 changes](docs/pt4droid-test.16.md). Optional driver ZIPs in the release are experimental: Mali Bifrost (Android 12+, matching kbase) and Xclipse 920/530 (Android 14+).
 
 ## What's new in Test 15
 
-**0.2.1-test.15** is a prerelease for device testing. Mali visual checks, phone vibration timing and a full playthrough are still needed before stable. [Test 14 remains available](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14).
+**0.2.1-test.15** is an earlier test release. [Test 14 remains available](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14).
 
 - Optional phone vibration follows the game's existing rumble, including the ending puzzle cue. Enable game rumble and **Controls → Phone vibration**.
 - A skippable teaser plays before the launcher, with **Replay teaser** in the footer. **GitHub (XHYN)** is at the bottom right.
@@ -80,7 +80,7 @@ See [Test 16 changes and required phone checks](docs/pt4droid-test.16.md). This 
 
 The launcher **FSR settings** page uses the game's existing fields. Its FSR 3 backend depends on a Windows DLL and is **unavailable in this Android build**; the page explains that limit. SGSR1 remains available in Performance & advanced. No separate FSR 1 implementation was added.
 
-[Candidate changes and remaining validation](docs/pt4droid-test.15.md).
+[Read the Test 15 changes](docs/pt4droid-test.15.md).
 
 ## What's new in Test 14
 
