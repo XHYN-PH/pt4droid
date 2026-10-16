@@ -1334,6 +1334,7 @@ void ApplyMobileGameGraphicsChanges(App& app) {
         pt::android::GameGraphicsSettingsFailed("Could not read saved graphics settings. Please retry.");
         return;
     }
+    app.scene.upscale=UpscaleFromApp(app.settings);
     ApplyGraphicsSettings(app);
     app.renderer.SetVsync(app.settings.display.vsync);
     if (app.renderer.Context().device) app.textures.SetAnisotropy(app.settings.graphics.anisotropy);
@@ -1934,6 +1935,7 @@ public:
             auto archive = Row(kArchive, "pc_archive", {"pc_graphics_value"}, 0, locked ? "pc_note_archive_locked" : "pc_note_archive");
             archive.link = true;
             extras.rows.push_back(std::move(archive));
+#ifndef __ANDROID__
             auto freecam = Row(kFreecam, "pc_freecam", {app_.freecam_active ? "pc_extras_stop" : "pc_extras_start"}, 0, "pc_note_freecam");
             freecam.link = true;
             freecam.enabled = app_.window != nullptr && !app_.xr;
@@ -1944,6 +1946,7 @@ public:
             extras.rows.push_back(std::move(photo));
             // not in the original (pt.ini [camera] third_person, Game::SetThirdPerson)
             extras.rows.push_back(Row(kThirdPerson, "pc_third_person", OffOn(), game_.ThirdPerson() ? 1 : 0, "pc_note_third_person"));
+#endif
             extras.rows.push_back(Row(kSpeedrun, "pc_speedrun", {"pc_off", "pc_speedrun_real_time", "pc_speedrun_game_time"},
                                       std::clamp(app_.settings.extras.speedrun, 0, 2), "pc_note_speedrun"));
             extras.rows.push_back(Row(kLiveSplit, "pc_livesplit", OffOn(), app_.settings.extras.livesplit ? 1 : 0,
@@ -4225,7 +4228,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
         const bool menu_open = ui_ready && ui.MenuOpen();
 #ifdef __ANDROID__
         // Touch and gyro look must work even when Android cannot grab a physical mouse pointer.
-        const bool gameplay_look=mouse_capture_requested;
+        const bool gameplay_look=mouse_capture_requested || (freecam && keyboard_free && !show_settings && !menu_open);
 #else
         const bool gameplay_look=mouse_captured;
 #endif
@@ -4336,6 +4339,18 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 stop_photo();
             }
         }
+#ifdef __ANDROID__
+        const uint32_t camera_actions=pt::android::ConsumeCameraActions();
+        const bool camera_usable=keyboard_free && !show_settings && !(ui_ready && ui.MenuOpen()) && app.extras_request==0 && !vr && !ending_outro;
+        if(camera_usable){
+            if(camera_actions&1u){if(freecam)stop_freecam();else start_freecam();}
+            if(camera_actions&2u){if(photo_mode)stop_photo();else start_photo();}
+            if(camera_actions&4u){app.settings.camera.third_person=!game.ThirdPerson();game.SetThirdPerson(app.settings.camera.third_person);applied_third_person=app.settings.camera.third_person;if(!app.settings_path.empty()&&!pt::SaveAppSettings(app.settings_path,app.settings))pt::android::GameGraphicsSettingsFailed("Could not save camera preference");}
+            if(photo_mode&&(camera_actions&8u))photo_overlay=!photo_overlay;
+            if(photo_mode&&(camera_actions&16u))photo_shot=true;
+        }
+        pt::android::PublishCameraState((freecam?1u:0u)|(photo_mode?2u:0u)|(game.ThirdPerson()?4u:0u)|(camera_usable?8u:0u));
+#endif
         if (app.window) {
             const bool* keys = SDL_GetKeyboardState(nullptr);
             static bool f6_was_down = false;
@@ -4571,6 +4586,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
             const auto key = [&](SDL_Scancode code) { return keys && keyboard_free && keys[code]; };
             const bool fast = key(SDL_SCANCODE_LSHIFT) || key(SDL_SCANCODE_RSHIFT) || (polled.raw_held & pt::kRawL3);
             float rise = 0.0f;
+#ifdef __ANDROID__
+            if(camera_usable)rise=pt::android::CameraRise();
+#endif
             if (key(SDL_SCANCODE_SPACE) || (polled.raw_held & pt::kRawR2)) rise += 1.0f;
             if (key(SDL_SCANCODE_LCTRL) || key(SDL_SCANCODE_RCTRL) || (polled.raw_held & pt::kRawL2)) rise -= 1.0f;
             const glm::vec3 move = freecam_camera.Forward() * polled.left_stick.y + freecam_camera.Right() * polled.left_stick.x +

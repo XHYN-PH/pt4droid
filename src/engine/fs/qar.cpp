@@ -15,11 +15,13 @@ QarArchive::~QarArchive() {
 }
 
 bool QarArchive::Open(const std::filesystem::path& path) {
+    if(file_)std::fclose(file_);file_=nullptr;entries_.clear();
     file_ = os::OpenFile(path, "rb");
     if (!file_) {
         LogError("qar: cannot open {}", pt::os::PathToUtf8(path));
         return false;
     }
+    std::error_code size_error;const auto length=std::filesystem::file_size(path,size_error);if(size_error||length<0x24)return false;
     os::SeekFile(file_, -0x24, SEEK_END);
     uint8_t footer[0x24];
     if (std::fread(footer, 1, sizeof(footer), file_) != sizeof(footer)) {
@@ -35,6 +37,8 @@ bool QarArchive::Open(const std::filesystem::path& path) {
         LogError("qar: {} has no QAR footer", pt::os::PathToUtf8(path));
         return false;
     }
+    const uint64_t table_offset=uint64_t(table_offset16)<<4;
+    if(table_offset>uint64_t(length)-0x24 || uint64_t(count)*16>uint64_t(length)-0x24-table_offset)return false;
     std::vector<uint8_t> table(size_t(count) * 16);
     os::SeekFile(file_, static_cast<long long>(table_offset16) << 4, SEEK_SET);
     if (std::fread(table.data(), 1, table.size(), file_) != table.size()) {
@@ -47,7 +51,9 @@ bool QarArchive::Open(const std::filesystem::path& path) {
         std::memcpy(&code, table.data() + i * 16, 8);
         std::memcpy(&offset16, table.data() + i * 16 + 8, 4);
         std::memcpy(&size, table.data() + i * 16 + 12, 4);
-        entries_[code] = {static_cast<uint64_t>(offset16) << 4, size};
+        const uint64_t offset=uint64_t(offset16)<<4;
+        if(offset>uint64_t(length)||size>uint64_t(length)-offset){entries_.clear();return false;}
+        entries_[code] = {offset, size};
     }
     LogInfo("qar: {} entries in {}", entries_.size(), pt::os::PathToUtf8(path.filename()));
     return true;

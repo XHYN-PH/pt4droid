@@ -21,10 +21,22 @@ final class GameGraphicsSettings {
         s.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> v){}public void onItemSelected(AdapterView<?> v,View row,int position,long id){data.put(key,numbers[position]);}});
     }
     private void amount(String title,String key){float current=data.number(key,0);TextView label=new TextView(activity);label.setTextColor(MenuStyle.TEXT);label.setText(title+": "+Math.round(current*100)+"%");column.addView(label);MobileSettings.slider(column,title,Math.round(current*100),100,value->{data.put(key,value/100f);label.setText(title+": "+value+"%");});}
+    private void wordChoice(String title,String key,String[] labels,String[] keys,boolean available){
+        note(title);Spinner spinner=new Spinner(activity);spinner.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,labels));int selected=0;for(int i=0;i<keys.length;i++)if(keys[i].equals(data.values.get(key)))selected=i;spinner.setSelection(selected);spinner.setEnabled(available);column.addView(spinner);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int i,long id){data.values.put(key,keys[i]);}});
+    }
+    private void showUpscaling(){
+        note("Uses the same FSR settings as the in-game menu. This does not add another upscaler.");
+        if(!data.fsrAvailable)note(data.fsrReason);
+        wordChoice("Upscaler","upscaling.upscaler",new String[]{"Off","FSR 3"},new String[]{"off","fsr3"},data.fsrAvailable);
+        wordChoice("Quality","upscaling.quality",new String[]{"Native AA","Quality","Balanced","Performance","Ultra performance","Custom"},new String[]{"native","quality","balanced","performance","ultra_performance","custom"},data.fsrAvailable);
+        TextView label=new TextView(activity);label.setTextColor(MenuStyle.TEXT);column.addView(label);int scale=Math.round(Math.max(.25f,data.number("upscaling.scale",.667f))*100);label.setText("Custom render scale: "+scale+"%");
+        LinearLayout scaleControls=new LinearLayout(activity);scaleControls.setOrientation(LinearLayout.VERTICAL);column.addView(scaleControls);MobileSettings.slider(scaleControls,"Custom render scale",scale-25,75,p->{data.put("upscaling.scale",(p+25)/100f);label.setText("Custom render scale: "+(p+25)+"%");});
+        for(int i=0;i<scaleControls.getChildCount();i++)scaleControls.getChildAt(i).setEnabled(data.fsrAvailable);
+        if(data.fsrAvailable)amount("Sharpness","upscaling.sharpness");else note("FSR sharpness: "+Math.round(data.number("upscaling.sharpness",0)*100)+"% (unavailable)");
+        if(data.fsrAvailable)saveDialog("FSR settings");else {AlertDialog d=new AlertDialog.Builder(activity).setTitle("FSR settings").setView(MobileSettings.scroll(column)).setPositiveButton("Close",null).show();MenuStyle.styleDialog(d);}
+    }
     private void show(){
-        MenuStyle.section(column,"Camera");
-        toggle("Third-person view • experimental","camera.third_person",true);
-        note("Switches the camera behind the player during free movement. Scripted scenes may use first person.");
         MenuStyle.section(column,"Display");
         List<Integer> fps=new ArrayList<>();fps.add(0);float maximum=DisplayRefresh.maximum(activity);
         for(int rate:new int[]{30,40,45,60,90,120,144,165,240})if(rate<=maximum+.5f)fps.add(rate);
@@ -51,12 +63,16 @@ final class GameGraphicsSettings {
         choice("Ray quality","graphics.ray_quality",new String[]{"Balanced","High","Ultra"},new int[]{0,1,2},data.rayTracing);
         }
         note("Scene resolution and extra performance options are in Performance & advanced.");
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Game graphics").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
+        saveDialog("Game graphics");
+    }
+    private void saveDialog(String title){
+        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try{data.save(activity);activity.getSharedPreferences("touch_layout_v1",0).edit().putInt("frame_target",data.integer("display.fps_limit",0)).apply();if(PTActivity.gameRunning())PTActivity.nativeApplyGameGraphicsSettings();else {DisplayRefresh.setTarget(data.integer("display.fps_limit",0));DisplayRefresh.apply(activity,null);}dialog.dismiss();Toast.makeText(activity,PTActivity.gameRunning()?"Graphics saved. Applying to the game.":"Graphics saved for the next game start.",Toast.LENGTH_LONG).show();}
             catch(Exception error){new AlertDialog.Builder(activity).setTitle("Could not save graphics").setMessage(error.getMessage()).setPositiveButton("OK",null).show();}
         }));dialog.show();MenuStyle.styleDialog(dialog);
     }
+    static void openUpscaling(Activity activity){try{String snapshot=PTActivity.gameRunning()?PTActivity.nativeGetGameGraphicsSettings():"";new GameGraphicsSettings(activity,GameGraphicsData.load(activity,snapshot)).showUpscaling();}catch(Exception error){Toast.makeText(activity,"Could not read FSR settings: "+error.getMessage(),Toast.LENGTH_LONG).show();}}
     static void open(Activity activity){
         try{String snapshot=PTActivity.gameRunning()?PTActivity.nativeGetGameGraphicsSettings():"";new GameGraphicsSettings(activity,GameGraphicsData.load(activity,snapshot)).show();}
         catch(Exception error){new AlertDialog.Builder(activity).setTitle("Could not read graphics").setMessage(error.getMessage()).setPositiveButton("OK",null).show();}

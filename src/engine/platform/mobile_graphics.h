@@ -6,6 +6,7 @@ namespace pt::android {
 inline bool ApplyGameGraphicsOverrides(const std::filesystem::path& path, AppSettings& settings, bool ray_queries) {
     AppSettings requested = settings;
     if (!LoadAppSettings(path, requested)) return false;
+    settings.upscaling = requested.upscaling;
     settings.graphics = requested.graphics;
     settings.graphics.enhanced_textures = false;
     settings.ray_tracing = ray_queries ? requested.ray_tracing : AppSettings::RayTracing{};

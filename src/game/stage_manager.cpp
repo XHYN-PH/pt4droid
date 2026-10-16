@@ -1,4 +1,5 @@
 #include "game/stage_manager.h"
+#include "engine/physics/collision_retirement.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -120,13 +121,13 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
             parsed.preparation=std::make_shared<TexturePreparationStream>(std::make_shared<TextureReadBudget>(96ull*1024*1024),
                 [&vfs](const std::string& path,FtexTexture& ftex,TextureReadBudget* lease){return LoadFtex(vfs.Textures(),path,ftex,lease);});
         }
-        size_t placement_index=0;
+        size_t new_models=0;
         for (const auto& file : stage->files) {
             for (const auto& placement : file->static_models) {
-                const bool early=placement_index++<32;
                 if (placement.model_file.empty() || known->models.contains(placement.model_file) || parsed.models.contains(placement.model_file)) {
                     continue;
                 }
+                const bool early=new_models++<32;
                 auto model = std::make_shared<FmdlModel>();
                 auto bytes = vfs.ReadFile(placement.model_file);
                 if (!bytes || !LoadFmdl(*bytes, placement.model_file, *model)) {
@@ -221,6 +222,10 @@ void StageManager::DropPrefetch() {
         prefetch_ = {};
     }
     prefetch_path_.clear();
+}
+
+void StageManager::PrefetchEnding(){
+    if(prefetch_allowed_)StartPrefetch("/Assets/sh/level/promotion/pt_2014/ending/ending.fpk");
 }
 
 void StageManager::PrefetchMazeFor(std::string_view floor) {
@@ -966,6 +971,7 @@ void StageManager::BuildWorlds(const std::vector<CollisionEntry>& entries, Colli
         const Stage::CollisionPiece& piece = *entry.piece;
         const Stage::CollisionPiece::Cache& cache = piece.cache;
         CollisionOwners owner{entry.stage, &piece, world.AddOwner(cache.owner), 0, 0};
+        owner.stage_id=entry.stage->id;owner.line=UINT32_MAX;owner.reflection=UINT32_MAX;
         owner.transform=cache.transform;owner.walk_detail=entry.stage->walk_detail_surfaces;owner.label=entry.label;
         world_blocks.push_back({&cache.world, owner.world});
         if (lines && piece.lines) {
@@ -997,8 +1003,11 @@ void StageManager::BuildCollision(CollisionWorld& world, std::vector<SurfaceTria
     collision_deferrable_ = false;
     built_generation_ = collision_generation_;
     const auto entries=CollisionEntries();
-    const bool same=last_collision_world_==&world && last_line_world_==lines && last_reflection_world_==reflections && entries.size()==collision_owners_.size() &&
-        std::equal(entries.begin(),entries.end(),collision_owners_.begin(),[](const auto& e,const auto& owner){return e.stage==owner.stage && e.piece==owner.piece && e.piece->cache.valid && owner.label==e.label && owner.walk_detail==e.stage->walk_detail_surfaces && owner.transform==e.stage->file_to_world*e.piece->file_transform;});
+    const bool same_world=last_collision_world_==&world && last_line_world_==lines && last_reflection_world_==reflections;
+    const bool valid_owners=std::all_of(collision_owners_.begin(),collision_owners_.end(),[&](const auto& owner){return owner.world<world.OwnerCount() && (!lines||owner.line==UINT32_MAX||owner.line<lines->OwnerCount()) && (!reflections||owner.reflection==UINT32_MAX||owner.reflection<reflections->OwnerCount());});
+    const bool same=same_world && valid_owners && RetireCollisionOwners(collision_owners_,entries,
+        [](const auto& owner,const auto& e){return e.stage==owner.stage && e.stage->id==owner.stage_id && e.piece==owner.piece && e.piece->cache.valid && owner.label==e.label && owner.walk_detail==e.stage->walk_detail_surfaces && owner.transform==e.stage->file_to_world*e.piece->file_transform;},
+        [&](const auto& owner){world.SetOwnerActive(owner.world,false);if(lines&&owner.line!=UINT32_MAX)lines->SetOwnerActive(owner.line,false);if(reflections&&owner.reflection!=UINT32_MAX)reflections->SetOwnerActive(owner.reflection,false);});
     if(!same)BuildWorlds(entries, world, lines, reflections, collision_owners_);
     last_collision_world_=&world;last_line_world_=lines;last_reflection_world_=reflections;
     UpdateCollisionActive(world, surfaces, lines, reflections);

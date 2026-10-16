@@ -1,13 +1,24 @@
-# Writes OUT with PT_BUILD_ID, the short commit hash of SOURCE ("-dirty" with local changes to tracked files, "dev" without git).
+# Writes OUT with PT_BUILD_ID, the short commit hash plus a source fingerprint for local changes ("dev" without git).
 # Run at every build; the header is rewritten only when the id changes, so an unchanged tree does not rebuild main.cpp.
 execute_process(COMMAND git -C "${SOURCE}" rev-parse --short=7 HEAD OUTPUT_VARIABLE id OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
                 RESULT_VARIABLE failed)
 if(failed OR id STREQUAL "")
   set(id "dev")
 else()
-  execute_process(COMMAND git -C "${SOURCE}" diff --quiet HEAD -- RESULT_VARIABLE dirty ERROR_QUIET)
+  execute_process(COMMAND git -C "${SOURCE}" status --porcelain OUTPUT_VARIABLE dirty ERROR_QUIET)
   if(dirty)
-    set(id "${id}-dirty")
+    execute_process(COMMAND git -C "${SOURCE}" ls-files --cached --others --exclude-standard OUTPUT_VARIABLE sources OUTPUT_STRIP_TRAILING_WHITESPACE)
+    string(REPLACE "\n" ";" sources "${sources}")
+    set(fingerprint "")
+    foreach(source IN LISTS sources)
+      if(EXISTS "${SOURCE}/${source}" AND NOT IS_DIRECTORY "${SOURCE}/${source}")
+        file(SHA256 "${SOURCE}/${source}" hash)
+        string(APPEND fingerprint "${source}:${hash}\n")
+      endif()
+    endforeach()
+    string(SHA256 hash "${fingerprint}")
+    string(SUBSTRING "${hash}" 0 12 hash)
+    set(id "${id}-src${hash}")
   endif()
 endif()
 set(text "#pragma once\n#define PT_BUILD_ID \"${id}\"\n")

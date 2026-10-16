@@ -425,6 +425,8 @@ namespace {
 
 // what the overlay sent last (UI thread), applied on the game thread
 std::atomic<uint32_t> g_touch_buttons{0};
+std::atomic<uint32_t> g_camera_actions{0};
+std::atomic<float> g_camera_rise{0};
 std::atomic<uint64_t> g_touch_axes{0}; // left x, left y, right x, right y as four Sint16
 std::atomic<bool> g_touch_used{false};
 std::atomic<bool> g_touch_visible{false}; // the overlay is up (TouchControls.nativeVisible)
@@ -452,6 +454,13 @@ void NoteControllerEvent(const SDL_Event& event) {
     CallActivityStatic("controllerUsed", "()V", [](JNIEnv* env, jclass cls, jmethodID m) { env->CallStaticVoidMethod(cls, m); });
 }
 
+uint32_t ConsumeCameraActions(){return g_camera_actions.exchange(0,std::memory_order_relaxed);}
+float CameraRise(){return g_camera_rise.load(std::memory_order_relaxed);}
+void PublishCameraState(uint32_t state){
+    static uint32_t previous=~uint32_t{0};if(state==previous)return;previous=state;
+    CallActivityStatic("cameraState","(I)V",[&](JNIEnv* env,jclass cls,jmethodID method){env->CallStaticVoidMethod(cls,method,static_cast<jint>(state));});
+}
+
 void PumpTouchControls() {
     if (!g_touch_used.load(std::memory_order_relaxed)) return;
     if (!g_touch_pad) {
@@ -461,6 +470,9 @@ void PumpTouchControls() {
         desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
         desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
         desc.name = "Touch controls";
+        desc.Rumble = [](void*, Uint16 low, Uint16 high) -> bool {
+            return CallActivityStatic("phoneRumble", "(II)V", [&](JNIEnv* env,jclass cls,jmethodID method){env->CallStaticVoidMethod(cls,method,static_cast<jint>(low),static_cast<jint>(high));});
+        };
         const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
         if (!id || !(g_touch_pad = SDL_OpenJoystick(id))) {
             LogError("android: touch controls: no virtual gamepad ({})", SDL_GetError());
@@ -489,6 +501,14 @@ void PumpTouchControls() {
 }
 
 }  // namespace pt::android
+
+extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_PTActivity_nativeCameraAction(JNIEnv*,jclass,jint action){
+    if(action==0)pt::android::g_camera_actions.store(0,std::memory_order_relaxed);
+    else pt::android::g_camera_actions.fetch_or(static_cast<uint32_t>(action)&31u,std::memory_order_relaxed);
+}
+extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_PTActivity_nativeCameraRise(JNIEnv*,jclass,jfloat value){
+    pt::android::g_camera_rise.store(std::isfinite(value)?std::clamp(value,-1.0f,1.0f):0.0f,std::memory_order_relaxed);
+}
 
 extern "C" JNIEXPORT void JNICALL Java_com_ptport_app_TouchControls_nativeState(JNIEnv*, jclass, jfloat lx, jfloat ly, jfloat rx,
                                                                                  jfloat ry, jint buttons) {

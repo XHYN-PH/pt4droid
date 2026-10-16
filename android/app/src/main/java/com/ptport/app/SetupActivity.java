@@ -58,6 +58,7 @@ public class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if(playIntro())return;
         if(GameSession.isActive(this) && !getIntent().getBooleanExtra("returned_from_game",false)){
             launchGame();
             return;
@@ -77,6 +78,12 @@ public class SetupActivity extends Activity {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.min(dp(640), getResources().getDisplayMetrics().widthPixels),
                 ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL);
         root.addView(scroll, lp);
+        lp.bottomMargin=dp(38);
+        LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL);footer.setPadding(dp(16),0,dp(16),0);
+        TextView version=new TextView(this);version.setText("pt4droid • "+versionName());version.setTextSize(11);version.setTextColor(MenuStyle.MUTED);footer.addView(version,new LinearLayout.LayoutParams(0,-2,1));
+        TextView replay=new TextView(this);replay.setText("Replay teaser");replay.setTextColor(MenuStyle.MUTED);replay.setTextSize(11);replay.setPadding(dp(12),dp(10),dp(12),dp(10));replay.setFocusable(true);replay.setOnClickListener(v->startActivity(new Intent(this,IntroActivity.class).putExtra("replay",true)));footer.addView(replay);
+        TextView github=new TextView(this);github.setText("GitHub (XHYN)");github.setTextColor(MenuStyle.MUTED);github.setTextSize(11);github.setPadding(dp(12),dp(10),0,dp(10));github.setFocusable(true);github.setOnClickListener(v->openGithub());footer.addView(github);
+        root.addView(footer,new FrameLayout.LayoutParams(-1,dp(38),Gravity.BOTTOM));
         setContentView(root);
         root.post(this::promptFirstRunStorage);
         if (gameInstalled()) {
@@ -85,6 +92,12 @@ public class SetupActivity extends Activity {
         }
         System.loadLibrary("ptsetup");
         showWelcome();
+    }
+
+    // Keep the existing launcher component so saved home-screen shortcuts remain valid.
+    private boolean playIntro(){
+        if(getIntent().getBooleanExtra("intro_played",false)||getIntent().getBooleanExtra("returned_from_game",false))return false;
+        startActivity(new Intent(this,IntroActivity.class));finish();return true;
     }
 
     @Override
@@ -110,10 +123,10 @@ public class SetupActivity extends Activity {
         }
         button("Start",v->startGame()).requestFocus();
         button("Settings",v->mobileSettings.show());
+        button("FSR settings",v->GameGraphicsSettings.openUpscaling(this));
         button("Delete saves",v->mobileSettings.deleteSaves());
-        button("GitHub • project & updates",v->openGithub());
         button("Quit",v->finish());
-        TextView version=text("pt4droid • "+versionName());version.setTextSize(11);version.setPadding(0,dp(18),0,0);
+
     }
     private String versionName(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception ignored){return "test";}}
     private void showWelcome() {
@@ -124,7 +137,6 @@ public class SetupActivity extends Activity {
                 + "once, which takes a minute or two and needs about 1.4 GB of free space. After that you can start the game from the launcher.");
         Button pick = button("Choose your P.T. .pkg", v -> pickPackage());
         button("I already have the extracted files", v -> showExtractedFiles());
-        button("GitHub • project & updates", v -> openGithub());
         button("Quit", v -> finish());
         pick.requestFocus();
     }

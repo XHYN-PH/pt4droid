@@ -1,54 +1,52 @@
 #!/usr/bin/env python3
-"""Execute production Apply/driver-retry actions against actual files and a native boundary."""
+"""Execute the production page Apply body and immediate-failure rollback."""
 from pathlib import Path
-import os, subprocess, tempfile
-repo=Path(__file__).resolve().parents[3]
+from check_graphics_menu_update import stubs, execute, repo
 source=repo/'android/app/src/main/java/com/ptport/app'
-settings=(source/'MobileSettings.java').read_text()
-start=settings.index('                int selected=profile.getSelectedItemPosition();')
-end=settings.index('                int compatibilitySize=',start)
-apply=settings[start:end]+'\nif(presetChanged)PTActivity.nativeSetPerformanceProfile(selected);'
-assert 'if(presetChanged)PTActivity.nativeSetPerformanceProfile(selected);' in settings
-setup=(source/'SetupActivity.java').read_text()
-start=setup.index('                try{DriverImportJob.atomicWrite(new File(getFilesDir(),"driver.txt")')
-end=setup.index('\n            });',start)
-retry=setup[start:end]
-job=(source/'DriverImportJob.java').read_text();start=job.index('    static void atomicWrite(');end=job.index('{',start)+1;depth=1
-while depth:
-    depth+=(job[end]=='{')-(job[end]=='}');end+=1
-atomic=job[start:end]
-java=r'''import java.io.*;import java.nio.file.*;import java.nio.charset.StandardCharsets;
-class PTActivity {static int cap=120,calls;static void nativeSetPerformanceProfile(int p){calls++;if(p==1)cap=0;if(p==2)cap=60;}}
-class DriverImportJob {ATOMIC}
+settings=(source/'SettingsPages.java').read_text()
+start=settings.index('    private void apply(')
+method=settings[start:settings.rindex('\n}')]
+test=r'''package com.ptport.app;
+import android.app.Activity;import android.content.SharedPreferences;import android.view.Display;
+import java.io.*;import java.nio.file.*;import java.nio.charset.StandardCharsets;import java.util.*;
 public class SettingsActionsTest {
- final File root;int starts;SettingsActionsTest(Path p){root=p.toFile();}File getFilesDir(){return root;}
- class Activity{File getFilesDir(){return root;}}final Activity activity=new Activity();
- class Profile{int value;int getSelectedItemPosition(){return value;}}final Profile profile=new Profile();
- class Check{boolean isChecked(){return true;}}final Check bloom=new Check();
- void write(String name,String value)throws IOException{DriverImportJob.atomicWrite(new File(root,name),(value+"\n").getBytes(StandardCharsets.UTF_8));}
- void runApply(int originalProfile,int chosen,boolean advanced)throws Exception{profile.value=chosen;float[] scale={.8f};APPLY}
- void startGame(){starts++;}void showError(String s){throw new AssertionError(s);}
- void retry(){File driverFailure=new File(root,"driver_startup_failed.txt");RETRY}
- static void ok(boolean value,String reason){if(!value)throw new AssertionError(reason);}
- public static void main(String[]args)throws Exception{
-  Path p=Files.createTempDirectory("pt-settings-actions");SettingsActionsTest test=new SettingsActionsTest(p);
-  for(int preset=0;preset<=3;preset++)for(boolean advanced:new boolean[]{false,true})for(int cap:new int[]{0,30,40,45,60,90,120,144,165,240}){
-   Files.writeString(p.resolve("game_graphics_pending.ini"),"pending-custom");Files.writeString(p.resolve("game_graphics_applying.ini"),"applying-custom");Files.deleteIfExists(p.resolve("performance_profile_pending.txt"));
-   PTActivity.cap=cap;PTActivity.calls=0;test.runApply(preset,preset,advanced);
-   ok(PTActivity.cap==cap&&PTActivity.calls==0,"unchanged preset must preserve every selected cap");
-   ok(Files.readString(p.resolve("game_graphics_pending.ini")).equals("pending-custom")&&Files.readString(p.resolve("game_graphics_applying.ini")).equals("applying-custom"),"unrelated Apply retains manual changes");
-   ok(!Files.exists(p.resolve("performance_profile_pending.txt")),"unrelated Apply must not queue a preset for restart");
+ final Activity activity;final SharedPreferences prefs;TouchControls touch;final Map<String,Object> values=new LinkedHashMap<>();
+ SettingsActionsTest(Path root)throws Exception{activity=new Activity(root.toFile(),root.resolve("external").toFile());prefs=activity.prefs;Display.Mode mode=new Display.Mode(1,1080,2400,120);activity.manager.display.current=mode;activity.manager.display.modes=new Display.Mode[]{mode};}
+ METHOD
+ static void ok(boolean v,String message){if(!v)throw new AssertionError(message);}
+ void controls(){values.clear();values.put("invert_y",true);values.put("mouse_sensitivity",1.25f);values.put("controller_sensitivity",1.5f);values.put("overlay_mode",0);values.put("buttons_timeout_ms",8000);}
+ void advanced(int profile){values.clear();values.put("performance_profile",profile);values.put("optimized_bloom",true);values.put("mali_optimizations",true);values.put("mali_safe_lighting",true);values.put("compat_texture_index",2);values.put("frame_pacing",false);values.put("sgsr",false);values.put("sharpness",1f);values.put("ao_quality",0);values.put("reflection_quality",0);values.put("sustained",false);values.put("logs_enabled",false);}
+ public static void main(String[] args)throws Exception{
+  Path root=Files.createTempDirectory("pt-pages");SettingsActionsTest t=new SettingsActionsTest(root);
+  for(int preset=0;preset<4;preset++)for(boolean advanced:new boolean[]{false,true})for(int cap:new int[]{0,30,40,45,60,90,120,144,165,240}){
+   Files.writeString(root.resolve("game_graphics_pending.ini"),"keep-fsr-and-cap="+cap);Files.writeString(root.resolve("game_graphics_applying.ini"),"applying");Files.deleteIfExists(root.resolve("performance_profile_pending.txt"));
+   Files.writeString(root.resolve("mobile_performance.ini"),"unknown_future_option=17\ninvert_y=0\nmali_optimizations=0\n");Files.writeString(root.resolve("render_scale.txt"),"0.8");
+   PTActivity.cap=cap;PTActivity.presetCalls=0;if(advanced)t.advanced(preset);else t.controls();t.apply(advanced,preset,.8f);
+   ok(PTActivity.cap==cap&&PTActivity.presetCalls==0,"unchanged preset preserves every cap");
+   ok(Files.readString(root.resolve("game_graphics_pending.ini")).equals("keep-fsr-and-cap="+cap),"unrelated apply preserves pending FSR and cap");
+   ok(Files.readString(root.resolve("game_graphics_applying.ini")).equals("applying"),"unrelated apply preserves applying overlay");
+   ok(!Files.exists(root.resolve("performance_profile_pending.txt")),"unrelated apply does not queue preset");
+   String ini=Files.readString(root.resolve("mobile_performance.ini"));ok(ini.contains("unknown_future_option=17"),"preserve future INI keys");
+   ok(ini.contains(advanced?"invert_y=0":"mali_optimizations=0"),"preserve other page's INI keys");
+   if(!advanced)ok(Files.readString(root.resolve("render_scale.txt")).equals("0.8"),"Controls never writes render scale");
   }
-  test.runApply(2,1,true);ok(PTActivity.cap==0&&PTActivity.calls==1,"explicit Maximum preset applies");
-  ok(Files.readString(p.resolve("performance_profile_pending.txt")).trim().equals("1")&&!Files.exists(p.resolve("game_graphics_pending.ini")),"explicit preset replaces old graphics overlay");
-  Files.createDirectories(p.resolve("data"));Files.writeString(p.resolve("data/save.dat"),"keep-progress");Files.writeString(p.resolve("driver_startup_failed.txt"),"startup failed");
-  test.retry();ok(test.starts==1&&Files.readString(p.resolve("driver.txt")).trim().equals("system"),"retry selects System before starting");
-  ok(!Files.exists(p.resolve("driver_startup_failed.txt"))&&Files.readString(p.resolve("data/save.dat")).equals("keep-progress"),"retry clears its marker and preserves saves");
-  System.out.println("Settings actions passed: 80 unchanged-preset/FPS combinations; explicit preset; real System retry and save preservation");
+  t.advanced(1);t.apply(true,2,.8f);ok(PTActivity.cap==0&&PTActivity.presetCalls==1,"explicit preset applies once");
+  ok(!Files.exists(root.resolve("game_graphics_pending.ini"))&&Files.readString(root.resolve("performance_profile_pending.txt")).trim().equals("1"),"explicit preset replaces old overlay");
+  // Failure on the second write restores the already written first file and preferences.
+  Path first=root.resolve("first"),second=root.resolve("second");Files.writeString(first,"before-a");Files.writeString(second,"before-b");
+  t.prefs.edit().putInt("existing",7).commit();Map<File,byte[]> changes=new LinkedHashMap<>();changes.put(first.toFile(),SettingsFiles.text("after-a"));changes.put(second.toFile(),SettingsFiles.text("after-b"));Map<String,Object> prefs=new LinkedHashMap<>();prefs.put("existing",8);prefs.put("new-key",true);
+  DriverImportJob.failName="second";try{SettingsFiles.commit(changes,t.prefs,prefs);throw new AssertionError("expected failed write");}catch(IOException expected){}
+  ok(Files.readString(first).equals("before-a")&&Files.readString(second).equals("before-b")&&t.prefs.getInt("existing",0)==7&&!t.prefs.getAll().containsKey("new-key"),"write failure rollback");
+  t.prefs.failCommit=true;try{SettingsFiles.commit(changes,t.prefs,prefs);throw new AssertionError("expected failed preferences");}catch(IOException expected){}
+  ok(Files.readString(first).equals("before-a")&&Files.readString(second).equals("before-b")&&t.prefs.getInt("existing",0)==7,"preference failure restores files");
+  changes.clear();changes.put(first.toFile(),null);changes.put(second.toFile(),SettingsFiles.text("after"));DriverImportJob.failName="second";try{SettingsFiles.commit(changes,t.prefs,prefs);throw new AssertionError("expected failed delete group");}catch(IOException expected){}
+  ok(Files.readString(first).equals("before-a"),"deleted file restored after later failure");
+  System.out.println("Settings actions passed: 80 page/preset/FPS combinations, explicit preset, file/preferences/deletion rollback");
  }
-}'''.replace('ATOMIC',atomic).replace('APPLY',apply).replace('RETRY',retry)
-with tempfile.TemporaryDirectory() as directory:
-    root=Path(directory);file=root/'SettingsActionsTest.java';file.write_text(java)
-    home=Path(os.environ['JAVA_HOME'])/'bin'
-    subprocess.run([str(home/'javac'),'-d',str(root),str(file)],check=True,timeout=30)
-    subprocess.run([str(home/'java'),'-cp',str(root),'SettingsActionsTest'],check=True,timeout=15)
+}'''.replace('METHOD',method)
+stubs=dict(stubs)
+stubs['com/ptport/app/SettingsActionsTest.java']=test
+stubs['com/ptport/app/TouchControls.java']='''package com.ptport.app;class TouchControls{void reloadPreferences(){}void setMode(int mode){}}'''
+stubs['com/ptport/app/PTActivity.java']='''package com.ptport.app;class PTActivity{static int cap,presetCalls;static boolean gameRunning(){return true;}static void nativeSetRenderScale(float v){}static void nativeSetBloomPassLimit(int v){}static void nativeSetPerformanceProfile(int v){presetCalls++;if(v==1)cap=0;if(v==2)cap=60;}static void reloadPerformance(){}static void refreshDisplay(){}}'''
+stubs['com/ptport/app/AppLog.java']='''package com.ptport.app;class AppLog{static int errors;static void w(String t,String s,Throwable e){errors++;}static void setEnabled(boolean on){}}'''
+execute(stubs,'com.ptport.app.SettingsActionsTest')

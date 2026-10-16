@@ -1,3 +1,4 @@
+#include "engine/core/pathcode.h"
 #include "engine/render/texture_manager.h"
 
 #include <stb_image.h>
@@ -600,7 +601,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         read_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
     const FtexTexture& ftex = prepared ? *prepared : owned;
-    if(!read){failed_textures_[key]="missing or unreadable source";LogWarn("textures: {} source is missing or unreadable",key);}
+    if(!read){const bool header_exists=qar.Contains(PathCode64(stem+".ftex"));failed_textures_[key]=header_exists?"invalid header or missing texture streams":"missing FTEX header";LogWarn("textures: {} {}",key,failed_textures_[key]);}
     if (!read || ftex.Format() == VK_FORMAT_UNDEFINED || ftex.depth > 1) {
         if (ok) {
             *ok = false;

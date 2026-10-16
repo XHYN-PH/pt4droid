@@ -60,6 +60,7 @@ public:
         owner_triangles_.push_back(0);
         return static_cast<uint32_t>(owners_.size() - 1);
     }
+    size_t OwnerCount()const{return owners_.size();}
     const std::string& OwnerName(uint32_t owner) const { return owners_[owner]; }
     // An inactive owner's triangles stay in the world and its grid but no query, ray or sweep sees them: a geom toggle
     // (BodyState::geom_active) is a flag here instead of a rebuild. The active triangles keep their relative order, so the

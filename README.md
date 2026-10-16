@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -25,18 +25,18 @@
 
 Play **P.T. on Android** with touch controls, graphics settings and controller support. This is an unofficial port maintained by **XHYN-PH**.
 
-**Latest test release: [Test 14](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14)** · Android 10+
+**Latest test release: [Test 15](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15)** · Android 10+
 
 Game files are not included. You need your own P.T. game dump. This is still a test release, so some phones may have problems.
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.14-arm64.apk** from the [Test 14 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14) and install it.
+1. Download **pt4droid-v0.2.1-test.15-arm64.apk** from the [Test 15 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package. See the game-file help below if it will not import.
 3. Wait for the files to finish importing, then tap **Enter menu**.
 4. Adjust your settings and tap **Start**.
 
-**Updating from Test 13?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
+**Updating from Test 14?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
 
 <details>
 <summary>Game files and importing help</summary>
@@ -52,6 +52,22 @@ Already have extracted files? Choose **I already have the extracted files**. Pla
 The US game dump, **CUSA01127**, is the reference version.
 
 </details>
+
+## What's new in Test 15
+
+**0.2.1-test.15** is a prerelease for device testing. Mali visual checks, phone vibration timing and a full playthrough are still needed before stable. [Test 14 remains available](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14).
+
+- Optional phone vibration follows the game's existing rumble, including the ending puzzle cue. Enable game rumble and **Controls → Phone vibration**.
+- A skippable teaser plays before the launcher, with **Replay teaser** in the footer. **GitHub (XHYN)** is at the bottom right.
+- Free camera, photo mode and third-person view are beside touch **Settings**. **Hide / Camera** folds the toolbar; **Panel** hides the photo panel. Use movement/look to fly, Up/Down to change height and Shutter to take a photo.
+- Controls contains layout editing and a configurable button timeout (0 = Never). Driver management is available only in the launcher.
+- Loading retries temporary texture preparation budget failures, retains unaffected collision geometry after removal, and starts ending preparation earlier.
+- **Mali safe lighting** adds explicit probe filtering and a supported half-float atlas. This candidate mitigation for dark lighting/black squares still needs Mali visual testing.
+- Bounded diagnostic export and clearer source/build/display information help testing.
+
+The launcher **FSR settings** page uses the game's existing fields. Its FSR 3 backend depends on a Windows DLL and is **unavailable in this Android build**; the page explains that limit. SGSR1 remains available in Performance & advanced. No separate FSR 1 implementation was added.
+
+[Candidate changes and remaining validation](docs/pt4droid-test.15.md).
 
 ## What's new in Test 14
 
@@ -69,14 +85,14 @@ The US game dump, **CUSA01127**, is the reference version.
 
 ## Controls and settings
 
-- **Touch controls:** move, resize or hide buttons with **Customize touch layout** in the in-game Android settings.
+- **Touch controls:** move, resize or hide buttons with **Customize touch layout** in **Settings → Controls** while in-game.
 - **Movement and looking:** use the invisible movement area and swipe-look controls. Adjust sensitivity in Settings.
 - **Controllers, keyboard and mouse:** supported, with separate sensitivity settings.
 - **Return to menu:** available in the in-game settings.
 - **Delete saves:** available only on the main menu.
 - **Ending voice input:** uses on-device recognition. The touch **Name** button or holding both controller triggers is also available.
 
-Open **Settings → Graphics & camera** for your FPS limit, effects, shadows and third-person view. Third-person view is experimental; scripted scenes can still use first person.
+Open **Settings → Game graphics** for your FPS limit, effects and shadows. Use the on-screen camera toolbar for third-person view. It is experimental; scripted scenes can still use first person.
 
 Open **Controls** for touch, mouse and controller options, and **Performance & advanced** for scene resolution and frame pacing. Options marked **Restart required** take effect after restarting the game.
 
@@ -96,7 +112,7 @@ On Mali, if the game runs out of texture memory, try **Compatibility texture siz
 
 [Report a problem](https://github.com/XHYN-PH/pt4droid/issues) with your phone model, Android version, game version, selected driver and what happened.
 
-If you can, turn logs on in Settings, tap **Apply**, and reproduce the problem. Attach the new log from **Download/PT-logs-test**; if shared storage is unavailable, check the app's data folder. Turn logs off afterwards.
+If you can, turn logs on in **Settings → Performance & advanced**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** there to open Android's share chooser, or attach the new log from **Download/PT-logs-test**; if shared storage is unavailable, check the app's data folder. Turn logs off afterwards.
 
 <details>
 <summary>Build the app from source</summary>

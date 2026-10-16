@@ -29,7 +29,8 @@ import java.util.function.IntConsumer;
 public class TouchControls extends View {
     private static final int[] ACTION_BITS = {1, 8, 2, 4, 16};
     private static final String[] ACTION_NAMES = {"Use", "Zoom", "Back", "Pause", "Name"};
-    private static final long HIDE_AFTER_MS = 5000;
+    private long hideAfterMs(){return Math.max(0,Math.min(60000,prefs.getInt("buttons_timeout_ms",5000)));}
+    boolean toolbarVisible(){return shown&&!editing&&mode!=1;}
     private final Control[] controls;
     private float deadZone;
     private float dragDx;
@@ -150,7 +151,7 @@ public class TouchControls extends View {
         this.label.setTypeface(font);
         load();
         setShown(!controllerConnected());
-        postDelayed(this.hideIdle, 10000L);
+        focusReturned();
     }
 
     private float dp(float f) {
@@ -287,6 +288,7 @@ public class TouchControls extends View {
             i++;
         }
         this.settingsHit.set(this.safe.left, this.safe.top, this.safe.left + dp(90.0f), this.safe.top + dp(36.0f));
+        PTActivity.cameraToolbarBounds(Math.round(settingsHit.right+dp(6)),Math.round(safe.top));
         float fMin = Math.min(dp(104.0f), this.safe.width() / 5.0f);
         for (int i2 = 0; i2 < 4; i2++) {
             float f4 = i2;
@@ -305,6 +307,7 @@ public class TouchControls extends View {
         } else if (i2 == 2) {
             setShown(true);
         }
+        focusReturned();
     }
 
     void setAllowed(boolean z) {
@@ -317,6 +320,7 @@ public class TouchControls extends View {
     */
     private void setShown(boolean value) {
         shown=value;
+        PTActivity.touchOverlayShown(toolbarVisible());
         try { nativeVisible(value && !editing && mode!=1); } catch (UnsatisfiedLinkError ignored) {}
         postInvalidate();
     }
@@ -345,8 +349,8 @@ public class TouchControls extends View {
 
     void focusReturned() {
         removeCallbacks(this.hideIdle);
-        if (this.mode == 0 && this.shown && !this.editing) {
-            postDelayed(this.hideIdle, HIDE_AFTER_MS);
+        if (this.mode == 0 && this.shown && !this.editing && hideAfterMs()>0) {
+            postDelayed(this.hideIdle, hideAfterMs());
         }
     }
 
@@ -392,12 +396,13 @@ public class TouchControls extends View {
         if(action==MotionEvent.ACTION_CANCEL){if(editing)return editEvent(event);if(anyFingerDown()){releaseAll();return true;}return false;}
         if(!isFingerEvent(event) || (mode==1 && !editing))return false;
         if(editing)return editEvent(event);
+        boolean buttonsWereShown=shown;
         removeCallbacks(hideIdle);if(!shown)setShown(true);
-        if((action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) && settingsHit.contains(event.getX(index),event.getY(index))) {
+        if((action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) && buttonsWereShown && settingsHit.contains(event.getX(index),event.getY(index))) {
             releaseAll();PTActivity.openMobileSettings();return true;
         }
         if(action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
-            press(event.getPointerId(index),event.getX(index),event.getY(index));
+            press(event.getPointerId(index),event.getX(index),event.getY(index),buttonsWereShown);
         } else if(action==MotionEvent.ACTION_MOVE) {
             for(int i=0;i<event.getPointerCount();i++) {
                 int id=event.getPointerId(i);
@@ -410,7 +415,7 @@ public class TouchControls extends View {
             release(id);
         } else if(action==MotionEvent.ACTION_CANCEL)releaseAll();
         send();invalidate();
-        if(mode==0 && !anyFingerDown())postDelayed(hideIdle,HIDE_AFTER_MS);
+        if(mode==0 && hideAfterMs()>0 && !anyFingerDown())postDelayed(hideIdle,hideAfterMs());
         return true;
     }
     private void updateLook(float x,float y) {
@@ -421,8 +426,8 @@ public class TouchControls extends View {
         }
         look.x=x;look.y=y;
     }
-    private void press(int id,float x,float y) {
-        for(int i=0;i<5;i++) {
+    private void press(int id,float x,float y,boolean buttonsShown) {
+        for(int i=0;buttonsShown && i<5;i++) {
             Control c=controls[i];
             if(c.visible && x>=c.area.left-dp(6) && x<=c.area.right+dp(6) && y>=c.area.top-dp(6) && y<=c.area.bottom+dp(6)) {
                 c.fingers.add(id);return;
@@ -547,7 +552,7 @@ public class TouchControls extends View {
         setMode(this.mode);
         setShown(this.mode != 1);
         if (this.mode == 0) {
-            postDelayed(this.hideIdle, HIDE_AFTER_MS);
+            postDelayed(this.hideIdle, hideAfterMs());
         }
     }
 

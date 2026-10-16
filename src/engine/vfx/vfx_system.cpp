@@ -169,6 +169,8 @@ std::shared_ptr<const EffectDef> System::Load(const std::string& path) {
         LogWarn("vfx: {}: {}", path, error);
     }
     if (def) {
+        build_items_.reserve(kMaxParticles);build_quads_.reserve(kMaxParticles);build_order_.reserve(kMaxParticles);build_lit_refs_.reserve(kMaxParticles);
+        build_mesh_vertices_.reserve(kMaxParticles*4);build_mesh_ready_.reserve(kMaxParticles);
         for (const ShapeDef& shape : def->shapes) {
             if (shape.kind != ShapeKind::Model || models_.contains(shape.model)) {
                 continue;

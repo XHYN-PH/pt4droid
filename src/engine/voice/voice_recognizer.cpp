@@ -617,7 +617,7 @@ bool VoiceRecognizer::LoadModels(const std::filesystem::path& model_dir) {
             whisper2_ = g_api.whisper_init_with_params(&second_loader, params);
         }
         if (!whisper2_) {
-            LogWarn("voice: second opinion model {} not loaded, short utterances get a second look from {} told to expect the word",
+            LogInfo("voice: second opinion model {} not loaded, short utterances get a second look from {} told to expect the word",
                     name, WhisperModelName());
         } else {
             for (const char* spelling : {" Jack", " jack", " JACK"}) {

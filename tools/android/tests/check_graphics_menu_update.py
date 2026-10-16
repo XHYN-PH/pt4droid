@@ -5,7 +5,19 @@ import os, subprocess, shutil, tempfile
 repo=Path(__file__).resolve().parents[3]
 java=Path(os.environ.get('JAVA_HOME',str(repo.parent/'toolchain/host/usr/lib/jvm/java-17-openjdk-amd64')))
 stubs={
-'android/content/SharedPreferences.java':'''package android.content;import java.util.*;public class SharedPreferences{public Map<String,Object> data=new HashMap<>();public float getFloat(String k,float v){return data.containsKey(k)?(Float)data.get(k):v;}public int getInt(String k,int v){return data.containsKey(k)?(Integer)data.get(k):v;}public Editor edit(){return new Editor();}public class Editor{public Editor putFloat(String k,float v){data.put(k,v);return this;}public Editor putInt(String k,int v){data.put(k,v);return this;}public void apply(){}}}''',
+'android/content/SharedPreferences.java':'''package android.content;import java.util.*;public class SharedPreferences{
+ public Map<String,Object> data=new HashMap<>();public boolean failCommit;
+ public Map<String,?> getAll(){return new HashMap<>(data);}
+ public float getFloat(String k,float v){return data.containsKey(k)?(Float)data.get(k):v;}
+ public int getInt(String k,int v){return data.containsKey(k)?(Integer)data.get(k):v;}
+ public boolean getBoolean(String k,boolean v){return data.containsKey(k)?(Boolean)data.get(k):v;}
+ public Editor edit(){return new Editor();}public class Editor{
+  Map<String,Object> pending=new HashMap<>();
+  public Editor putFloat(String k,float v){pending.put(k,v);return this;}public Editor putInt(String k,int v){pending.put(k,v);return this;}
+  public Editor putBoolean(String k,boolean v){pending.put(k,v);return this;}public Editor putLong(String k,long v){pending.put(k,v);return this;}public Editor putString(String k,String v){pending.put(k,v);return this;}public Editor remove(String k){pending.put(k,null);return this;}
+  public boolean commit(){if(failCommit){failCommit=false;return false;}for(Map.Entry<String,Object> e:pending.entrySet())if(e.getValue()==null)data.remove(e.getKey());else data.put(e.getKey(),e.getValue());return true;}
+  public void apply(){commit();}
+ }}''',
 'android/content/Context.java':'''package android.content;import java.io.File;public class Context{public File internal,external;public SharedPreferences prefs=new SharedPreferences();public Context(File i,File e){internal=i;external=e;}public File getFilesDir(){return internal;}public File getExternalFilesDir(String ignored){return external;}public SharedPreferences getSharedPreferences(String k,int mode){return prefs;}}''',
 'android/app/Activity.java':'''package android.app;import android.content.Context;import android.view.*;import java.io.File;public class Activity extends Context{public Window window=new Window();public WindowManager manager=new WindowManager();public Activity(File i,File e){super(i,e);}public Window getWindow(){return window;}public WindowManager getWindowManager(){return manager;}}''',
 'android/os/SystemClock.java':'''package android.os;public class SystemClock { public static long now=5000;public static long uptimeMillis(){return now;} }''',
@@ -15,7 +27,7 @@ stubs={
 'android/view/WindowManager.java':'''package android.view;public class WindowManager{public Display display=new Display();public Display getDefaultDisplay(){return display;}public static class LayoutParams{public int preferredDisplayModeId;public float preferredRefreshRate;}}''',
 'android/view/Surface.java':'''package android.view;public class Surface{public static final int FRAME_RATE_COMPATIBILITY_DEFAULT=0,CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS=0;public boolean valid=true;public int generation=1,calls;public float rate;public boolean isValid(){return valid;}public int getGenerationId(){return generation;}public void setFrameRate(float rate,int compatibility,int strategy){setFrameRate(rate,compatibility);}public void setFrameRate(float rate,int compatibility){if(compatibility!=0)throw new AssertionError("game compatibility");calls++;this.rate=rate;}}''',
 'com/ptport/app/AppLog.java':'''package com.ptport.app;public class AppLog{public static int errors;public static void w(String t,String text,Throwable e){errors++;}}''',
-'com/ptport/app/DriverImportJob.java':'''package com.ptport.app;import java.io.*;import java.nio.file.*;class DriverImportJob{static void atomicWrite(File file,byte[] bytes)throws IOException{Path temp=Paths.get(file+".tmp");Files.write(temp,bytes);Files.move(temp,file.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}}''',
+'com/ptport/app/DriverImportJob.java':'''package com.ptport.app;import java.io.*;import java.nio.file.*;class DriverImportJob{static String failName;static void atomicWrite(File file,byte[] bytes)throws IOException{if(file.getName().equals(failName)){failName=null;throw new IOException("injected write failure");}Path temp=Paths.get(file+".tmp");Files.write(temp,bytes);Files.move(temp,file.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}}''',
 'com/ptport/app/GraphicsMenuTest.java':r'''package com.ptport.app;
 import android.app.*;import android.view.*;import android.os.*;import java.nio.file.*;import java.io.*;
 public class GraphicsMenuTest {
@@ -28,7 +40,7 @@ public class GraphicsMenuTest {
   Files.writeString(inside.resolve("performance_profile_pending.txt"),"1\n");data=GameGraphicsData.load(a,"");ok(data.integer("graphics.shadow_quality",0)==1 && !data.enabled("graphics.motion_blur") && data.number("graphics.clarity",0)==.65f,"pending Maximum shows actual intended settings without resetting clarity");
   data.put("camera.third_person",1);data.put("graphics.shadow_quality",0);data.put("graphics.film_grain",.37f);data.put("display.fps_limit",120);data.save(a);
   ok(Files.readString(inside.resolve("performance_profile_pending.txt")).trim().equals("0") && a.prefs.getInt("performance_profile",-1)==0,"individual changes replace pending preset and label Custom");
-  ok(Files.readString(inside.resolve("game_graphics_pending.ini")).contains("third_person = 1"),"Android camera choice persists in overlay");
+  ok(!Files.readString(inside.resolve("game_graphics_pending.ini")).contains("third_person"),"graphics page cannot overwrite camera-toolbar state");
   data=GameGraphicsData.load(a,"[graphics]\nshadow_quality = 2\n[android_capabilities]\nray_tracing = 1\n");ok(data.integer("graphics.shadow_quality",-1)==0 && data.number("graphics.film_grain",0)==.37f && data.rayTracing,"pending graphics overlays live snapshot and preserves capability");
   Files.delete(inside.resolve("game_graphics_pending.ini"));data=GameGraphicsData.load(a,"[graphics]\nshadow_quality = 1\n[android_capabilities]\nray_tracing = 0\nray_reason = missing Vulkan ray queries\n");ok(data.integer("graphics.shadow_quality",-1)==1 && !data.rayTracing && data.rayReason.contains("missing"),"live game snapshot wins over old file");
   data.preset(3);ok(data.enabled("graphics.motion_blur") && data.integer("graphics.shadow_quality",0)==3 && data.number("graphics.film_grain",0)==1,"Original restored in model");
@@ -68,10 +80,13 @@ public class GraphicsMenuTest {
  }
 }'''
 }
-with tempfile.TemporaryDirectory() as tmp:
-    t=Path(tmp)
-    for name,text in stubs.items():
-        p=t/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
-    for name in ['GameGraphicsData.java','DisplayRefresh.java']:shutil.copy2(repo/'android/app/src/main/java/com/ptport/app'/name,t/'com/ptport/app'/name)
-    subprocess.run([str(java/'bin/javac'),'-d',str(t/'classes')]+[str(p)for p in t.rglob('*.java')],check=True,timeout=30)
-    subprocess.run([str(java/'bin/java'),'-cp',str(t/'classes'),'com.ptport.app.GraphicsMenuTest'],check=True,timeout=15)
+def execute(stubs,main_class):
+ with tempfile.TemporaryDirectory() as tmp:
+     t=Path(tmp)
+     for name,text in stubs.items():
+         p=t/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+     for name in ['GameGraphicsData.java','DisplayRefresh.java','SettingsFiles.java']:shutil.copy2(repo/'android/app/src/main/java/com/ptport/app'/name,t/'com/ptport/app'/name)
+     subprocess.run([str(java/'bin/javac'),'-d',str(t/'classes')]+[str(p)for p in t.rglob('*.java')],check=True,timeout=30)
+     subprocess.run([str(java/'bin/java'),'-cp',str(t/'classes'),main_class],check=True,timeout=15)
+
+if __name__=="__main__":execute(stubs,"com.ptport.app.GraphicsMenuTest")

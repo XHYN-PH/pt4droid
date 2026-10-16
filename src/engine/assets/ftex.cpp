@@ -104,8 +104,8 @@ bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out, Te
     out.flags = Read<uint32_t>(*header, 0x1C);
     out.faces = out.Cube() ? 6 : 1;
     const uint32_t entries = out.mip_count * out.faces;
+    if (!out.width || !out.height || !entries || out.mip_count>16 || 0x40 + uint64_t(entries) * 16 > header->size())return false;
     if (budget) {
-        if (!entries || 0x40 + uint64_t(entries) * 16 > header->size()) return false;
         uint64_t bytes = 0;
         for (uint32_t i = 0; i < entries; ++i) bytes += Read<uint32_t>(*header, 0x40 + size_t(i) * 16 + 4);
         if (!budget->Reserve(bytes)) return false;
@@ -145,6 +145,7 @@ bool LoadFtex(const QarArchive& qar, std::string_view path, FtexTexture& out, Te
             out.mips[i].assign(source->begin() + block, source->begin() + block + unpacked);
         }
     }
+    if(std::none_of(out.mips.begin(),out.mips.end(),[](const auto& mip){return !mip.empty();}))return false;
     PrepareBcTexture(out, budget);
     return true;
 }

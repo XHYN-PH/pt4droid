@@ -22,6 +22,7 @@ public final class DisplayRefresh {
     private static float lastObserved=-1;
     public static void invalidate(){surfaceRates.clear();lastRecovery=0;recoveryAttempts=0;}
     public static float actualRate(){return actualRate;}
+    static String describe(Activity activity){Display d=display(activity);int target=runtimeTarget>=0?runtimeTarget:activity.getSharedPreferences("touch_layout_v1",0).getInt("frame_target",0);return String.format(Locale.ROOT,"Target %s, selected %.2f Hz, physical %.2f Hz, app-visible %.2f Hz",target==0?"Unlimited":target+" FPS",choose(d.getSupportedModes(),d.getMode(),target).getRefreshRate(),d.getMode().getRefreshRate(),d.getRefreshRate());}
     public static void setTarget(int fps){runtimeTarget=Math.max(0,fps);}
     static String label(Activity activity,int fps){Display d=display(activity);float hz=choose(d.getSupportedModes(),d.getMode(),fps).getRefreshRate();return String.format(Locale.ROOT,"%s / %.0f Hz",fps==0?"Unlimited":fps+" FPS",hz);}
     public static void surfaceCreated(Activity activity,Surface surface){surfaceRates.remove(surface);apply(activity,surface);}
@@ -56,7 +57,7 @@ public final class DisplayRefresh {
             Display display=display(activity);float requested=runtimeTarget>=0?runtimeTarget:activity.getSharedPreferences("touch_layout_v1",0).getInt("frame_target",0);
             if(!Float.isFinite(requested) || requested<0)requested=0;
             if(requested!=lastRequested){lastRequested=requested;recoveryAttempts=0;lastRecovery=0;surfaceRates.clear();}
-            actualRate=display.getRefreshRate();
+            actualRate=display.getMode().getRefreshRate();
             boolean observedChange=Math.abs(actualRate-lastObserved)>.5f;lastObserved=actualRate;
             Display.Mode selected=choose(display.getSupportedModes(),display.getMode(),requested);float rate=selected.getRefreshRate();
             WindowManager.LayoutParams attributes=activity.getWindow().getAttributes();int modeId=selected.getModeId();

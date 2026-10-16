@@ -24,6 +24,7 @@ void Reload() {
         float value=std::strtof(text.c_str(),&end);
         if(end==text.c_str()||end!=text.c_str()+text.size()||!std::isfinite(value))continue;
         if(key=="frame_pacing")next.frame_pacing=value>0;
+        else if(key=="mali_safe_lighting")next.mali_safe_lighting=value>0;
         else if(key=="mali_optimizations")next.mali_optimizations=value>0;
         else if(key=="sgsr")next.sgsr=value>0;
         else if(key=="sustained")next.sustained=value>0;

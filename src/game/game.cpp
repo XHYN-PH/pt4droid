@@ -157,8 +157,11 @@ void Game::OnStageLoaded(Stage& stage) {
     scripts_.LoadStageScripts(stage);
     const auto scripts_at = clock::now();
     demos_.IndexStage(stage);
+    const auto demos_at=clock::now();
     nazo_.RegisterStage(stage);
+    const auto puzzles_at=clock::now();
     messages_.RegisterStage(stage);
+    const auto messages_at=clock::now();
     nazo_.RestoreCompletedPeephole(stage);
     const auto registered_at = clock::now();
     if (audio_) {
@@ -172,6 +175,7 @@ void Game::OnStageLoaded(Stage& stage) {
         traps_.DumpTraps(stage);
     }
     if (const double total = ms(started, clock::now()); total > 5.0) {
+        LogDebug("stage: registration details: demos {:.1f}, puzzles {:.1f}, messages {:.1f} ms",ms(scripts_at,demos_at),ms(demos_at,puzzles_at),ms(puzzles_at,messages_at));
         LogInfo("stage: {} registered in {:.1f} ms (scripts {:.1f}, demos and traps {:.1f}, sound {:.1f})", stage.label, total, ms(started, scripts_at),
                 ms(scripts_at, registered_at), ms(registered_at, audio_at));
     }

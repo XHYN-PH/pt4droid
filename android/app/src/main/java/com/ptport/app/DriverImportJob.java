@@ -74,6 +74,8 @@ final class DriverImportJob {
             if(metadata.optInt("minApi",29)>Build.VERSION.SDK_INT)throw new IOException("This driver needs a newer Android version");
             String abi=metadata.optString("abi","");
             if(abi.toLowerCase(Locale.ROOT).contains("glibc"))throw new IOException("This is a Linux/glibc driver. Choose the Android/Bionic package.");
+            String api=metadata.optString("api","").toLowerCase(Locale.ROOT);if(api.contains("opengl")&&!api.contains("vulkan"))throw new IOException("Choose a Vulkan driver; OpenGL-only packages cannot render this game");
+            boolean radv=(metadata.optString("backend","")+" "+metadata.optString("name","")+" "+metadata.optString("libraryName","")).toLowerCase(Locale.ROOT).matches(".*(radv|xclipse|radeon).*" );
             boolean panvk=metadata.optString("backend","").toLowerCase(Locale.ROOT).contains("panvk")||metadata.optString("name","").toLowerCase(Locale.ROOT).contains("panvk");
             String libraryName=metadata.getString("libraryName");if(!libraryName.endsWith(".so"))throw new IOException("Invalid driver libraryName");
             File library=DriverArchive.contained(meta.getParentFile(),libraryName);
@@ -82,7 +84,7 @@ final class DriverImportJob {
             // Both paths must be canonical: Android can expose /data/data and /data/user/0 aliases.
             String relative=stage.toPath().relativize(library.getCanonicalFile().toPath()).toString().replace(File.separatorChar,'/');
             DriverArchive.contained(stage,relative);
-            JSONObject info=new JSONObject();info.put("name",metadata.optString("name","Imported driver"));info.put("library",relative);info.put("sha256",sha);info.put("experimental",panvk);info.put("minApi",metadata.optInt("minApi",29));
+            JSONObject info=new JSONObject();info.put("name",metadata.optString("name","Imported driver"));info.put("library",relative);info.put("sha256",sha);info.put("experimental",panvk||radv);info.put("family",radv?"Xclipse":panvk?"Mali":"");info.put("minApi",metadata.optInt("minApi",29));
             File target=new File(root,id);phase="Installing driver";
             synchronized(commit){
                 check();
@@ -95,7 +97,7 @@ final class DriverImportJob {
                     check();if(!stage.renameTo(target))throw new IOException("Could not install driver package");stage=null;
                 }
                 check();atomicWrite(new File(app.getFilesDir(),"driver.txt"),("imported/"+id+"/"+relative+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                success=true;result=panvk?"Experimental Mali driver imported. Game support depends on your GPU, kernel and driver features. Fully close and reopen the game to try it.":"Driver imported. Fully close and reopen the game to load it.";done=true;
+                success=true;result=(panvk||radv)?"Experimental "+(radv?"Xclipse":"Mali")+" driver imported. Game support depends on your GPU, kernel and driver features. Fully close and reopen the game to try it.":"Driver imported. Fully close and reopen the game to load it.";done=true;
             }
             log("Imported "+id+"/"+relative);
         }catch(Throwable error){synchronized(commit){if(!done){result="Import failed: "+error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage());done=true;}}log(result);}
