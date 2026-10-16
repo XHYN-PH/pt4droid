@@ -1,6 +1,6 @@
-# pt4droid 0.2.1-test.16 candidate
+# pt4droid 0.2.1-test.16
 
-This is a test candidate, package com.ptport.app.test, version code 58. It follows Test 15 and needs phone testing before stable. Save/update continuity and broad lifecycle/recovery remain outside the requested scope.
+Test release for Android 10+ ARM64. Install over Test 15 to keep your existing game files and settings.
 
 ## Launcher and controls
 
@@ -33,10 +33,4 @@ Optional Mali/Xclipse driver builds require GPU-specific kernel support. They ar
 
 ## FSR feasibility
 
-A native Android temporal FSR backend is feasible in principle. The engine already provides motion, depth, exposure, jitter and reset inputs. Its current FSR backend loads a Windows DLL through Windows APIs and cannot be enabled by an Android settings toggle. A source-built Vulkan backend, Android portability fixes, shader compilation, feature checks and device image/performance validation are required. AMD's open-source FSR 2 Vulkan implementation is one possible starting point. No FSR 1 substitute is added, and no Android FSR implementation is claimed in this candidate. SGSR1 remains available.
-
-## Verification and remaining phone checks
-
-Focused host checks cover hold timing/cancellation, vibration scaling, MediaStore copy/publish/rollback, refresh votes and overrides, settings-page isolation, touch input and layout editing. The accompanying verification report records the final build, package identity, hash and checks.
-
-On phones, test tap versus three-second hold, replay, camera opacity during edit/cancel, all toolbar modes, 0/50/100 percent rumble and the ending cue, gallery PNG visibility and failure feedback, selected caps with VSync/pacing, and background/focus/surface transitions affecting these new controls. Compare bundled Mr. Purple T30 against System and the previous imported driver with matched settings. Complete a full playthrough and sustained memory/thermal checks before stable.
+A native Android temporal FSR backend is feasible in principle. The engine already provides motion, depth, exposure, jitter and reset inputs. Its current FSR backend loads a Windows DLL through Windows APIs and cannot be enabled by an Android settings toggle. A source-built Vulkan backend, Android portability fixes, shader compilation, feature integration and image/performance tuning are required. AMD's open-source FSR 2 Vulkan implementation is one possible starting point. No FSR 1 substitute is added, and no Android FSR implementation is claimed in this release. SGSR1 remains available.
