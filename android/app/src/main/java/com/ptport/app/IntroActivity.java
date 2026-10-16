@@ -53,7 +53,14 @@ public final class IntroActivity extends Activity {
     }
     private void beginHold(){if(holdStarted>=0||!resumed||finished)return;holdStarted=SystemClock.uptimeMillis();holdTick.run();}
     private void cancelHold(){handler.removeCallbacks(holdTick);holdStarted=-1;holdKey=-1;holdPointer=-1;if(skip!=null)skip.setText("Hold to skip");}
-    private boolean skipKey(int key){return key==KeyEvent.KEYCODE_BUTTON_START||key==KeyEvent.KEYCODE_BUTTON_B||key==KeyEvent.KEYCODE_DPAD_CENTER||key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_SPACE||key==KeyEvent.KEYCODE_BACK;}
+    private boolean skipKey(int key){return key==KeyEvent.KEYCODE_BUTTON_A||key==KeyEvent.KEYCODE_BUTTON_START||key==KeyEvent.KEYCODE_BUTTON_B||key==KeyEvent.KEYCODE_DPAD_CENTER||key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_SPACE||key==KeyEvent.KEYCODE_BACK;}
+    // Handle activation before the focused TextView can consume Enter/DPAD/A.
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        int key=event.getKeyCode();if(!skipKey(key))return super.dispatchKeyEvent(event);
+        if(event.getAction()==KeyEvent.ACTION_DOWN)return onKeyDown(key,event);
+        if(event.getAction()==KeyEvent.ACTION_UP)return onKeyUp(key,event);
+        return true;
+    }
     @Override public boolean onKeyDown(int key,KeyEvent event){if(skipKey(key)){if(event.getRepeatCount()==0&&holdStarted<0){holdKey=key;beginHold();}return true;}return super.onKeyDown(key,event);}
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(!focus)cancelHold();}
     private void complete(){if(resumed)leave();else advanceOnResume=true;}
