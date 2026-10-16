@@ -53,6 +53,19 @@ The US game dump, **CUSA01127**, is the reference version.
 
 </details>
 
+## Test 16 candidate
+
+The `test16-refinements` branch contains **0.2.1-test.16** for device testing. The latest published release above remains Test 15.
+
+- Hold the smaller text-only intro control for three seconds to skip.
+- Launcher FSR settings are inside **Settings → Game graphics**. An Android temporal FSR backend is still pending; SGSR1 remains available.
+- Adjust phone vibration strength in **Controls**. Camera buttons follow touch opacity and styling.
+- Photo captures use an app-owned path and publish to **Pictures/PT Photos**. Area-loading progress is hidden during gameplay.
+- Refresh voting now considers app-visible rate overrides and SDL surface changes; OEM policy and GPU cost can still limit FPS.
+- Bundled **Mr. Purple Turnip T30** supports 4 KiB and 16 KiB pages, with author and Mesa notices. Android 10 and Adreno 710/720 use System. Driver import remains available; external driver-project buttons are removed.
+
+See [Test 16 changes and required phone checks](docs/pt4droid-test.16.md). This candidate has not completed a full phone playthrough or Mali/Xclipse validation.
+
 ## What's new in Test 15
 
 **0.2.1-test.15** is a prerelease for device testing. Mali visual checks, phone vibration timing and a full playthrough are still needed before stable. [Test 14 remains available](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14).
@@ -129,7 +142,7 @@ If you can, turn logs on in **Settings → Performance & advanced**, tap **Apply
 <details>
 <summary>Additional credits</summary>
 
-- **[Mesa Turnip](https://docs.mesa3d.org/drivers/freedreno.html)** and **[KIMCHI's AdrenoTools drivers](https://github.com/K11MCH1/AdrenoToolsDrivers)** — bundled Adreno Vulkan driver.
+- **[Mesa Turnip](https://docs.mesa3d.org/drivers/freedreno.html)** and **[Mr. Purple](https://github.com/MrPurple666/purple-turnip)** — bundled Turnip T30; **[KIMCHI](https://github.com/K11MCH1/AdrenoToolsDrivers)** — earlier bundles.
 - **[libadrenotools](https://github.com/bylaws/libadrenotools)** — custom driver loading.
 - **[SDL3](https://github.com/libsdl-org/SDL)** — Android integration, input and audio.
 - **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)**, OpenAI Whisper and Silero VAD — on-device voice recognition.
