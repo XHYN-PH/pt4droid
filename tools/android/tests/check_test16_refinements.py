@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory() as temp:
 # The exact bundled binary requires a page-size guard; GPU names alone are insufficient.
 with tempfile.TemporaryDirectory() as tmp:
  root=Path(tmp);cpp=root/'driver.cpp';exe=root/'driver'
- cpp.write_text('#include "engine/platform/mobile_driver_policy.h"\n#include <cassert>\nint main(){using namespace pt::android;assert(BundledTurnipSupportsPageSize(4096));assert(!BundledTurnipSupportsPageSize(16384));assert(!BundledTurnipSupportsPageSize(0));assert(PreferBundledTurnip("Adreno (TM) 750"));assert(!PreferBundledTurnip("Mali G57"));assert(!PreferBundledTurnip("Immortalis G715"));assert(!PreferBundledTurnip("Xclipse 920"));}')
+ cpp.write_text('#include "engine/platform/mobile_driver_policy.h"\n#include <cassert>\nint main(){using namespace pt::android;assert(BundledTurnipSupportsPageSize(4096));assert(BundledTurnipSupportsPageSize(16384));assert(!BundledTurnipSupportsPageSize(65536));assert(!BundledTurnipSupportsRuntime(29,4096));assert(BundledTurnipSupportsRuntime(30,16384));assert(!BundledTurnipSupportsPageSize(0));assert(PreferBundledTurnip("Adreno (TM) 750"));assert(PreferBundledTurnip("Adreno (TM) 650"));for(auto n:{"Adreno 710","Adreno (TM) 720"}){assert(!PreferBundledTurnip(n));assert(!BundledTurnipCompatible(n));}assert(!PreferBundledTurnip("Mali G57"));assert(!PreferBundledTurnip("Immortalis G715"));assert(!PreferBundledTurnip("Xclipse 920"));}')
  subprocess.run(['g++','-std=c++20','-I'+str(repo/'src'),str(cpp),'-o',str(exe)],check=True,timeout=30)
  subprocess.run([str(exe)],check=True,timeout=10)
  print('Bundled Turnip GPU/page-size guard checks passed')
