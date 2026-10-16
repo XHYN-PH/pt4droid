@@ -11,7 +11,7 @@ def method(signature):
   elif source[i]=='}':depth-=1
   i+=1
  return source[a:i]
-methods='\n'.join(method(s) for s in ['public boolean onTouchEvent(', 'private void updateLook(', 'private void press(', 'private void release(int i)', 'private float[] axes(', 'private void send()', 'private boolean anyFingerDown()', 'static boolean isFingerEvent(', 'private void setShown(', 'void releaseAll()'])
+methods='\n'.join(method(s) for s in ['public boolean onTouchEvent(', 'private void updateLook(', 'private void press(', 'private void release(int i)', 'private float[] axes(', 'private void send()', 'private boolean anyFingerDown()', 'static boolean isFingerEvent(', 'private void setShown(', 'void releaseAll()', 'boolean toolbarVisible()'])
 code=r'''import java.util.*;
 public class TouchTest {
  static int checks,stateCalls,settingsOpened;static float dx,dy,rx,ry,lx,ly;static int buttons;static boolean visible;
@@ -26,13 +26,13 @@ public class TouchTest {
   MotionEvent(int a,int i,int[] ids,float[] x,float[] y){action=a;index=i;this.ids=ids;this.x=x;this.y=y;}
   int getActionMasked(){return action;}int getActionIndex(){return index;}int getPointerCount(){return ids.length;}int getPointerId(int i){return ids[i];}float getX(){return x[0];}float getY(){return y[0];}float getX(int i){return x[i];}float getY(int i){return y[i];}int getToolType(int i){return tool;}boolean isFromSource(int s){return(source&s)==s;}
  }
- static class PTActivity{static void openMobileSettings(){settingsOpened++;}static void setTouchLayoutEditing(boolean v){}}
+ static class PTActivity{static void openMobileSettings(){settingsOpened++;}static void setTouchLayoutEditing(boolean v){}static void touchOverlayShown(boolean shown){}}
  Control[] controls=new Control[7];Stick move=new Stick(),look=new Stick();RectF safe=new RectF(0,0,1200,600),settingsHit=new RectF(-100,-100,-50,-50);
  int mode=0,moveStyle=0,lookStyle=1,lastButtons=-1;float sensitivity=1,deadZone=.05f,lastLx,lastLy,lastRx,lastRy,lookLastX,lookLastY;
- boolean floating=true,shown=true,editing,editorSaw;Runnable hideIdle=()->{};static final long HIDE_AFTER_MS=5000;static final int[] ACTION_BITS={1,8,2,4,16};
+ boolean floating=true,shown=true,editing,editorSaw;Runnable hideIdle=()->{};long timeout=5000;long scheduled=-1;long hideAfterMs(){return timeout;}static final int[] ACTION_BITS={1,8,2,4,16};
  TouchTest(){for(int i=0;i<7;i++){controls[i]=new Control();controls[i].action=i<5?i:0;}}
  float dp(float value){return value;}float radius(int i){return 56*controls[i].size;}static float clamp(float v,float a,float b){return Math.max(a,Math.min(b,v));}
- void removeCallbacks(Runnable r){}void postDelayed(Runnable r,long time){}void invalidate(){}void postInvalidate(){}boolean editEvent(MotionEvent e){editorSaw=true;return true;}
+ void removeCallbacks(Runnable r){}void postDelayed(Runnable r,long time){scheduled=time;}void invalidate(){}void postInvalidate(){}boolean editEvent(MotionEvent e){editorSaw=true;return true;}
  static void nativeLookDelta(float x,float y){dx+=x;dy+=y;}static void nativeClearLook(){dx=dy=0;}static void nativeVisible(boolean value){visible=value;}
  static void nativeState(float a,float b,float c,float d,int bits){stateCalls++;lx=a;ly=b;rx=c;ry=d;buttons=bits;}
 ''' + methods + r'''
@@ -91,6 +91,10 @@ public class TouchTest {
   t.onTouchEvent(multi(6,2,new int[]{31,32,33},new float[]{130,1030,875},new float[]{300,300,150}));ok(buttons==0 && t.move.pointer==31 && t.look.pointer==32,"action lift retains both zone owners");t.releaseAll();
   for(int i=0;i<2000;i++){t.onTouchEvent(e(0,34,120,300));t.onTouchEvent(e(2,34,150,330));t.onTouchEvent(e(1,34,150,330));}
   ok(lx==0 && ly==0 && !t.anyFingerDown(),"2000 hidden movement gestures finish without stuck input");
+  reset();t=new TouchTest();t.moveStyle=1;t.controls[0].area=new RectF(100,200,200,400);t.setShown(false);
+  t.onTouchEvent(e(0,27,150,300));ok(buttons==0&&t.move.pointer==27,"first wake touch cannot activate invisible action button");t.releaseAll();
+  t.timeout=0;t.scheduled=-1;t.onTouchEvent(e(0,28,900,300));t.onTouchEvent(e(1,28,900,300));ok(t.scheduled==-1,"Never timeout schedules no hide");
+  t.timeout=12000;t.onTouchEvent(e(0,29,900,300));t.onTouchEvent(e(1,29,900,300));ok(t.scheduled==12000,"custom timeout applied");
   System.out.println("Touch checks passed: "+checks);
  }
 }'''

@@ -143,7 +143,7 @@ assert activities[".SecondScreenActivity"].get(namespace + "process") == ":game"
 assert activities[".SetupActivity"].get(namespace + "process") is None
 setup = (production / "SetupActivity.java").read_text()
 settings = (production / "MobileSettings.java").read_text()
-assert 'button("Graphics & camera"' not in setup and 'button(v,"Graphics & camera"' in settings
+assert 'button("Game graphics"' not in setup and 'button(v,"Game graphics"' in settings
 assert 'button(v,"Delete saves"' not in settings
 assert 'button("Delete saves"' in setup
 assert settings.count("GameSession.isActive(activity)") == 2
