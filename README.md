@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#getting-started">Getting started</a>
   &nbsp;·&nbsp;
@@ -25,18 +25,18 @@
 
 Play **P.T. on Android** with touch controls, graphics settings and controller support. This is an unofficial port maintained by **XHYN-PH**.
 
-**Latest test release: [Test 14](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14)** · Android 10+
+**Latest test release: [Test 15](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15)** · Android 10+
 
 Game files are not included. You need your own P.T. game dump. This is still a test release, so some phones may have problems.
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.14-arm64.apk** from the [Test 14 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14) and install it.
+1. Download **pt4droid-v0.2.1-test.15-arm64.apk** from the [Test 15 release](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.15) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package. See the game-file help below if it will not import.
 3. Wait for the files to finish importing, then tap **Enter menu**.
 4. Adjust your settings and tap **Start**.
 
-**Updating from Test 13?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
+**Updating from Test 14?** Install the new APK over the existing app to keep your game files, saves and settings. Avoid uninstalling first.
 
 <details>
 <summary>Game files and importing help</summary>
@@ -53,9 +53,9 @@ The US game dump, **CUSA01127**, is the reference version.
 
 </details>
 
-## Test 15 candidate
+## What's new in Test 15
 
-This branch prepares **0.2.1-test.15** for device testing. The download above remains the published Test 14 build until a new release is approved.
+**0.2.1-test.15** is a prerelease for device testing. Mali visual checks, phone vibration timing and a full playthrough are still needed before stable. [Test 14 remains available](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.14).
 
 - Optional phone vibration follows the game's existing rumble, including the ending puzzle cue. Enable game rumble and **Controls → Phone vibration**.
 - A skippable teaser plays before the launcher, with **Replay teaser** in the footer. **GitHub (XHYN)** is at the bottom right.
