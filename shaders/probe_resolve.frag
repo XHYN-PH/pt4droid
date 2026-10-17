@@ -48,6 +48,9 @@ void main() {
         ivec2 o = ivec2(k & 1, k >> 1);
         ivec2 t = min(i + o, half_size - 1);
         float table = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        // Even coordinates have zero-weight neighbours. Keep the original
+        // arithmetic for contributing taps and avoid their unused texture reads.
+        if (table == 0.0) continue;
         float d = ImgFetch(IMG_DEPTH, min(t * 2, full_size - 1)).x;
         float w = table / (abs(d - centre) + 1e-6);
         sum += w * Encode(ImgFetch(IMG_PROBE_ACC, t));
