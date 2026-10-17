@@ -64,7 +64,7 @@ struct SceneRenderer {
     bool CreateTarget(RenderTarget& t,VkFormat,VkExtent2D,VkImageUsageFlags,VkImageAspectFlags){t.image.image=reinterpret_cast<VkImage>(2);return true;}
     std::array<bool,16> RecordStaticShadows(VkCommandBuffer,const std::array<bool,16>&);
     std::vector<ShadowCasterState> shadow_draw_states_;
-    std::vector<uint8_t> shadow_draw_state_ready_;std::array<ShadowMapState,16> shadow_states_;std::array<std::vector<const Draw*>,16> shadow_casters_;std::array<bool,16> shadow_shared_{};std::array<uint64_t,16> shadow_indices_{};
+    std::vector<uint8_t> shadow_draw_state_ready_, shadow_draw_stable_;std::array<ShadowMapState,16> shadow_states_;std::array<std::vector<const Draw*>,16> shadow_casters_;std::array<bool,16> shadow_shared_{};std::array<uint64_t,16> shadow_indices_{};
     void InvalidateShadowCache();void PrepareShadowCasters();void RecordShadows(VkCommandBuffer);
     void TestShadows(VkCommandBuffer c){PrepareShadowCasters();RecordShadows(c);}
     void RecordRayTracing(VkCommandBuffer){} void Stamp(VkCommandBuffer,uint32_t index){assert(index==12);}
@@ -141,6 +141,18 @@ int main(int argc,char**) {
     templ.data.views[0].eye.x=1;templ.skin_matrices_[0][3].x=3;draw_calls=0;templ.TestShadows(nullptr);assert(draw_calls==33&&templ.stats_.shadow_static_copies==0&&pixels[0]==33);
     templ.skin_matrices_[0][3].x=4;draw_calls=0;templ.TestShadows(nullptr);assert(draw_calls==33&&templ.stats_.shadow_static_updates==1&&pixels[0]==33);
     templ.draws_.erase(templ.draws_.begin());templ.skin_matrices_[0][3].x=5;draw_calls=0;templ.TestShadows(nullptr);assert(draw_calls==32&&pixels[0]==32&&templ.stats_.shadow_static_copies==0);
+    // A frozen skeletal pose may be part of the template. It must not be
+    // overlaid a second time alongside the genuinely moving skeleton.
+    SceneRenderer frozen;a.view=0;a.rect.offset={0,0};frozen.shadow_views_={a};
+    for(int i=0;i<32;++i)frozen.draws_.push_back(d);
+    auto stationary=moving;stationary.skin_base=0;auto active=moving;active.skin_base=1;
+    frozen.draws_.push_back(stationary);frozen.draws_.push_back(active);frozen.skin_matrices_={glm::mat4(1),glm::mat4(1)};
+    for(int frame=0;frame<4;++frame){
+        frozen.skin_matrices_[1][3].x=float(frame);draw_calls=0;frozen.TestShadows(nullptr);
+        assert(pixels[0]==34);
+        if(frame==2)assert(draw_calls==34&&frozen.stats_.shadow_static_updates==1);
+        if(frame==3)assert(draw_calls==1&&frozen.stats_.shadow_static_saved_draws==33);
+    }
     // Equivalent main and mirror captures share a spot map before frame upload.
     SceneRenderer shared; shared.light_sources_ = {&shared.light, &shared.light}; shared.draws_.push_back(d);
     a.light=0;a.view=0;a.casters=1;a.rect.offset={0,0};

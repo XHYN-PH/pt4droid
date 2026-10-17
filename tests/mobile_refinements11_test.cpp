@@ -38,6 +38,20 @@ int main(){using namespace pt;using namespace pt::vfx;
  assert(system.frame_epoch_==2&&lights[0].color==glm::vec3(2));
  epoch_inst.def=std::make_shared<EffectDef>(*epoch_def);epoch_inst.frame=30;lights.clear();
  system.BuildShape(epoch_inst,glm::mat4(1),shape,state,view,{},{},{},output,lights);assert(lights[0].color==glm::vec3(.5f));
+ // Reused particle expressions invalidate at particle boundaries and epoch
+ // wrap, independently of the frame-uniform cache.
+ auto shared=std::make_shared<EffectDef>();shared->exprs.resize(2);
+ shared->exprs[0].op=ExprOp::DragTime;shared->exprs[0].mode=0;shared->exprs[0].v0=glm::vec4(1);
+ shared->exprs[1].op=ExprOp::Composition;shared->exprs[1].in[0]=0;shared->exprs[1].in[1]=0;
+ FoldEffectConstants(*shared);assert(shared->has_particle_shared&&shared->particle_shared[0]);
+ epoch_inst.def=shared;shape.attr[kColor]=1;state.particles.resize(2);
+ state.particles[0].age=.5f;state.particles[1].age=.25f;
+ system.particle_epoch_=UINT32_MAX;system.particle_ready_={1,1};system.particle_values_={glm::vec4(99),glm::vec4(99)};
+ lights.clear();system.BuildShape(epoch_inst,glm::mat4(1),shape,state,view,{},{},{},output,lights);
+ assert(system.particle_epoch_==2&&lights.size()==2&&lights[0].color==glm::vec3(1)&&lights[1].color==glm::vec3(.5f));
+ state.particles[0].age=.125f;state.particles[1].age=.75f;lights.clear();
+ system.BuildShape(epoch_inst,glm::mat4(1),shape,state,view,{},{},{},output,lights);
+ assert(lights.size()==2&&lights[0].color==glm::vec3(.25f)&&lights[1].color==glm::vec3(1.5f));
  // A slow texture cannot hold a completed unrelated texture hostage. Use
  // explicit barriers instead of relying on scheduling or sleep thresholds.
  auto budget=std::make_shared<TextureReadBudget>(16);
@@ -53,7 +67,7 @@ int main(){using namespace pt;using namespace pt::vfx;
  auto drain=stream.Enqueue("bad");drain.wait();drain={};assert(budget->Used()==0);
  auto other=stream.Enqueue("other");auto kept=other.get().texture;other={};assert(budget->Used()==8);
  auto fill=stream.Enqueue("fill");auto second=fill.get().texture;fill={};assert(budget->Used()==16);
- auto refused=stream.Enqueue("full");assert(refused.get().failure==TexturePreparationFailure::Budget);refused={};
+ auto refused=stream.Enqueue("full");stream.Prioritize("full");assert(refused.get().failure==TexturePreparationFailure::Budget);refused={};
  auto bad=stream.Enqueue("bad");assert(bad.get().failure==TexturePreparationFailure::Read);bad={};
  second.reset();kept.reset();assert(budget->Used()==0);
  {std::lock_guard lock(mutex);release=true;}condition.notify_all();assert(slow.get().texture);slow={};stream.Stop();assert(budget->Used()==0);
@@ -71,6 +85,6 @@ int main(){using namespace pt;using namespace pt::vfx;
  auto stopping=std::async(std::launch::async,[&]{priority.Stop();});
  assert(a.get().failure==TexturePreparationFailure::Cancelled&&b.get().failure==TexturePreparationFailure::Cancelled);
  {std::lock_guard lock(mutex);unblock_all=true;}condition.notify_all();stopping.get();
- assert(one.get().texture&&two.get().texture&&needed.get().texture);
+ assert(one.get().texture&&two.get().failure==TexturePreparationFailure::Cancelled&&needed.get().failure==TexturePreparationFailure::Cancelled);
  puts("Test 11: 240000 bit-exact cached/live VFX evaluations; generation wrap/effect switches; individual readiness, budget reclaim/fallbacks; split diagnostics and sustained FPS preservation passed");
 }

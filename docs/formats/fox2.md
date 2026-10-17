@@ -131,6 +131,8 @@ CityHash is v1.0.3. For inputs over 64 bytes (strings of 64 or more bytes plus t
 
 Dynamic properties are the parameters of Lua scripts. A GeoModuleCondition whose callback element is a GeoTrapScriptCallbackDataElement names a script in `scriptFile`; the script declares its parameters in `AddParam` with `condition:AddConditionParam('<type>', "<name>")` and reads them in `Exec` as `info.conditionHandle.<name>`. ShDemoScript and ShGameControllerMessageScript scripts read theirs as `data.<name>` in `OnMessage`. `fox2.py convert` checks this: 141 conditions, 451 declared parameters, all present with the declared type. Some parameters are present without a declaration (for example `targetData`, `lightData`); the scripts read them anyway. Two conditions in the hallway (`f080_demo|condition_enable_light_ID51`, `condition_disable_light_ID50`) carry `modleData` while `trapLightEnable.lua` reads `modelData`; this typo is in the original data.
 
+The Lua entity binding exposes that legacy dynamic `modleData` list as `modelData` only for GeoModuleCondition entities whose execution callbacks use `trapLightEnable.lua`. An existing `modelData` property takes precedence, including an empty list. This leaves the game files untouched and preserves the referenced models and the normal handling of missing properties in other scripts.
+
 ## Reflection cross-check
 
 `dump/reflection.json` (from `tools/reflection.py`) lists the property registrations in eboot. Matching the 45,892 static property uses in the fox2 data that have a registration gives the registrar to container mapping:

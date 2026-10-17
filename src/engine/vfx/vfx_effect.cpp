@@ -765,6 +765,22 @@ void FoldEffectConstants(EffectDef& def) {
         return result;
     };
     for (size_t i = 0; i < def.exprs.size(); ++i) uniform(uniform, int32_t(i), 0);
+    // Only repeated, nontrivial expressions benefit from per-particle caching.
+    std::vector<uint8_t> uses(def.exprs.size());
+    auto reference = [&](int32_t index) {
+        if (index >= 0 && size_t(index) < uses.size() && uses[index] < 2) ++uses[index];
+    };
+    for (const Expr& e : def.exprs) for (int32_t input : e.in) reference(input);
+    for (const ShapeDef& shape : def.shapes) for (int32_t input : shape.attr) reference(input);
+    def.particle_shared.resize(def.exprs.size());
+    def.has_particle_shared = false;
+    for (size_t i = 0; i < def.exprs.size(); ++i) {
+        const ExprOp op = def.exprs[i].op;
+        const bool trivial = op == ExprOp::Zero || op == ExprOp::Const || op == ExprOp::UvMap ||
+            op == ExprOp::Random || op == ExprOp::UvRandom || op == ExprOp::Spread;
+        def.particle_shared[i] = uses[i] > 1 && !trivial && !def.constants[i] && !def.frame_uniform[i];
+        def.has_particle_shared |= def.particle_shared[i] != 0;
+    }
 }
 
 std::shared_ptr<EffectDef> CompileEffect(const File& file, std::string name) {

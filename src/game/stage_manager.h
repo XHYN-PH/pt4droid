@@ -1,4 +1,5 @@
 #pragma once
+#include "engine/core/bounded_retirement.h"
 
 #include <glm/glm.hpp>
 
@@ -294,6 +295,7 @@ private:
     const CollisionWorld* last_reflection_world_=nullptr;
     std::vector<CollisionOwners> collision_owners_;
     std::unique_ptr<PendingCollision> pending_collision_;
+    BoundedRetirement<PendingCollision> retired_collision_;
     bool collision_deferrable_ = false;
     bool prefetch_allowed_ = true;
     std::string prefetch_path_;

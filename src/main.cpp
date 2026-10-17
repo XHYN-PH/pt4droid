@@ -5254,6 +5254,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
                         pt::LogInfo("mobile passes: GPU timings unavailable; renderer CPU avg {:.2f} ms", timings.CpuMean(timings.cpu_ms));
                     }
                     pt::LogInfo("mobile probe map: used {}, covered {} pixels, build {:.2f} ms",app.scene.Stats().probe_map_used,app.scene.Stats().probe_covered_pixels,app.scene.Stats().probe_map_ms);
+                    if (timings.gpu_samples) pt::LogInfo("mobile composition avg: composite {:.2f}, forward geometry {:.2f}, scene effects/copies {:.2f}, particle/depth {:.2f}, effect copy/composite {:.2f} ms; scene copies {:.2f}",
+                        timings.GpuMean(timings.composition[0]), timings.GpuMean(timings.composition[1]), timings.GpuMean(timings.composition[2]),
+                        timings.GpuMean(timings.composition[3]), timings.GpuMean(timings.composition[4]), timings.CpuMean(timings.scene_copies));
                     if (timings.gpu_samples) pt::LogInfo("mobile lighting avg: AO {:.2f}, probes/resolve {:.2f}, direct lights {:.2f} ms",
                         timings.GpuMean(timings.lighting[0]), timings.GpuMean(timings.lighting[1]), timings.GpuMean(timings.lighting[2]));
                     pt::LogInfo("mobile shadow misses avg: cold {:.2f}, dynamic/disabled {:.2f}, projection/view {:.2f}, casters/material {:.2f}",

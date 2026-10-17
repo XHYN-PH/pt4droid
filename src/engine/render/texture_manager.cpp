@@ -208,15 +208,7 @@ bool TextureManager::Init(vk::Context& ctx) {
 TextureManager::~TextureManager() { StopDecodeWorkers(); }
 
 void TextureManager::StopDecodeWorkers() {
-    if (decode_queue_) {
-        { std::lock_guard lock(decode_queue_->mutex); decode_queue_->stop = true; decode_queue_->jobs.clear(); }
-        decode_queue_->ready.notify_all();
-    }
-    for (std::future<void>& worker : decode_workers_) {
-        worker.wait();
-    }
-    decode_workers_.clear();
-    decode_queue_.reset();
+    decode_stream_.reset();
 }
 
 void TextureManager::Shutdown() {
@@ -584,7 +576,10 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         else if(result.failure==TexturePreparationFailure::Budget)++read_stats_.budget_fallback;
         else ++read_stats_.read_fallback;
     } else if (auto it = decoding_.find(stem); it != decoding_.end()) {
-        prepared = it->second.get();
+        if (decode_stream_) decode_stream_->Prioritize(stem);
+        const auto result = it->second.get();
+        prepared = result.texture;
+        if (result.failure == TexturePreparationFailure::Budget) ++read_stats_.budget_fallback;
         decoding_.erase(it);
         read = prepared != nullptr;
         if (read) {
@@ -635,6 +630,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         if ((resident & it->second) == it->second) {
             prepared_.erase(stem);
             prepared_variants_.erase(it);
+            worker_prepared_.erase(stem);
         }
     }
     // A worker result can serve either upload order without rereading or changing
@@ -658,50 +654,26 @@ void TextureManager::DecodeAhead(const QarArchive& qar, const std::vector<std::s
     if (mods::Active() || paths.empty()) return;
     const bool new_reads = std::any_of(paths.begin(), paths.end(), [&](const std::string& path) {
         const std::string stem = FtexStem(path);
-        return !stem.empty() && !by_name_.contains(stem) && !prepared_.contains(stem) && !decoding_.contains(stem);
+        return !stem.empty() && !by_name_.contains(stem) && !prepared_.contains(stem) && !decoding_.contains(stem) && !pending_preparations_.contains(stem);
     });
     if (!new_reads) return;
     // Uploaded payloads may serve raw/sRGB within a preparation set. A new
     // set releases that cache so old CPU copies cannot starve the bounded pool.
     for (const auto& stem : worker_prepared_) prepared_.erase(stem);
     worker_prepared_.clear();
-    if (!decode_queue_) {
-        decode_queue_ = std::make_shared<DecodeQueue>();
-        for (int i = 0; i < 2; ++i) {
-            decode_workers_.push_back(std::async(std::launch::async, [queue = decode_queue_] {
-                for (;;) {
-                    DecodeJob job;
-                    {
-                        std::unique_lock lock(queue->mutex);
-                        queue->ready.wait(lock, [&] { return queue->stop || !queue->jobs.empty(); });
-                        if (queue->stop) return;
-                        job = std::move(queue->jobs.front());
-                        queue->jobs.pop_front();
-                    }
-                    // The lease lasts exactly as long as the immutable payload.
-                    auto lease = std::make_shared<TextureReadBudget>(96ull * 1024 * 1024, queue->budget);
-                    auto ftex = std::shared_ptr<FtexTexture>(new FtexTexture,
-                        [budget = queue->budget, lease](FtexTexture* value) { delete value; });
-                    if (!LoadFtex(*job.qar, job.stem, *ftex, lease.get())) ftex.reset();
-                    job.promise.set_value(std::move(ftex));
-                }
-            }));
-        }
+    if (!decode_stream_) {
+        decode_stream_ = std::make_unique<TexturePreparationStream>(
+            std::make_shared<TextureReadBudget>(96ull * 1024 * 1024),
+            [&qar](const std::string& stem, FtexTexture& texture, TextureReadBudget* budget) {
+                return LoadFtex(qar, stem, texture, budget);
+            });
     }
-    {
-        std::lock_guard lock(decode_queue_->mutex);
-        for (const std::string& path : paths) {
-            std::string stem = FtexStem(path);
-            if (stem.empty() || by_name_.contains(stem) || prepared_.contains(stem) || decoding_.contains(stem)) continue;
-            DecodeJob job;
-            job.qar = &qar;
-            job.stem = stem;
-            decoding_.emplace(stem, job.promise.get_future().share());
-            decode_order_.push_back(stem);
-            decode_queue_->jobs.push_back(std::move(job));
-        }
+    for (const std::string& path : paths) {
+        std::string stem = FtexStem(path);
+        if (stem.empty() || by_name_.contains(stem) || prepared_.contains(stem) || decoding_.contains(stem) || pending_preparations_.contains(stem)) continue;
+        decoding_.emplace(stem, decode_stream_->Enqueue(stem));
+        decode_order_.push_back(std::move(stem));
     }
-    decode_queue_->ready.notify_all();
 }
 
 bool TextureManager::AdoptPending(const std::string& path, std::shared_future<PreparedTextureResult> future,
@@ -738,18 +710,23 @@ std::unordered_set<std::string> TextureManager::Names() const {
 
 uint32_t TextureManager::PumpDecoded(const QarArchive& qar, uint32_t count) {
     uint32_t uploaded = 0;
-    while (uploaded < count && !decode_order_.empty()) {
+    // A slow first job must not prevent the other worker's completed textures
+    // from being uploaded (and releasing their bounded CPU payloads).
+    size_t remaining = decode_order_.size();
+    while (uploaded < count && remaining-- && !decode_order_.empty()) {
         auto it = decoding_.find(decode_order_.front());
         if (it == decoding_.end()) {
             decode_order_.pop_front();
             continue;
         }
         if (it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-            break;
+            decode_order_.push_back(std::move(decode_order_.front()));
+            decode_order_.pop_front();
+            continue;
         }
         const std::string stem = decode_order_.front();
         decode_order_.pop_front();
-        if (!it->second.get()) { decoding_.erase(it); continue; }
+        if (!it->second.get().texture) { decoding_.erase(it); continue; }
         LoadFox(qar, stem);
         ++uploaded;
     }

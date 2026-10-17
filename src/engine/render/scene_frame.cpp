@@ -17,6 +17,7 @@
 #include "engine/render/scene_renderer.h"
 #include "engine/render/light_scissor.h"
 #include "engine/render/mobile_probe_policy.h"
+#include "engine/render/opaque_order.h"
 
 namespace pt {
 namespace {
@@ -340,7 +341,10 @@ static float HalfToFloat(uint16_t bits) {    const uint32_t sign = static_cast<u
 }
 
 bool SceneRenderer::Visible(const Draw& draw, const glm::vec4* planes) const {
-    return !planes || SphereInPlanes(draw.center, draw.radius, planes);
+    if (!planes || !SphereInPlanes(draw.center, draw.radius, planes)) return !planes;
+    // Rigid submesh bounds enclose its indexed geometry more tightly than the
+    // whole-model sphere. Skinned/unknown bounds keep the original test.
+    return BoundsInPlanes(draw.shadow_bounds, planes);
 }
 
 bool SceneRenderer::Visible(const Draw& draw, const ViewSetup& view) const {
@@ -513,7 +517,8 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
             d.center = center;
             d.radius = local_radius * scale;
             d.hidden_views = item.hidden_views;
-            if (!sub.skinned && skin_base == gpu::kInvalid) d.shadow_bounds = TransformBounds(sub.bounds, item.transform);
+            if (!sub.skinned && skin_base == gpu::kInvalid && !(textures_->MaterialFlags(d.material) & gpu::kMatNormalWave))
+                d.shadow_bounds = TransformBounds(sub.bounds, item.transform);
             if (d.shadow_bounds.valid) {
                 d.shadow_center = (d.shadow_bounds.lo + d.shadow_bounds.hi) * 0.5f;
                 d.shadow_radius = glm::length(d.shadow_bounds.hi - d.shadow_bounds.lo) * 0.5f;
@@ -1631,7 +1636,12 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         return false;
 #endif
     }();
-    if (adaptive && PreferFullShadowClear(active_count, dirty_count, total_draws, dirty_draws, total_indices, dirty_indices)) {
+    const auto static_tiles = RecordStaticShadows(cmd, dirty);
+    const bool copy_static = std::any_of(static_tiles.begin(), static_tiles.end(), [](bool v) { return v; });
+    // Static-template copies already split rendering and restore dirty tiles.
+    // Counting their cached casters as draw savings incorrectly chose a full
+    // clear, invalidating otherwise reusable tiles on nearly every frame.
+    if (adaptive && !copy_static && PreferFullShadowClear(active_count, dirty_count, total_draws, dirty_draws, total_indices, dirty_indices)) {
         for (const ShadowView& sv : shadow_views_) {
             const uint32_t tile = uint32_t(sv.rect.offset.x) / tile_size + kShadowTiles * (uint32_t(sv.rect.offset.y) / tile_size);
             dirty[tile] = !shadow_shared_[tile];
@@ -1644,8 +1654,6 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
     // only the changed rectangles; untouched tiles keep their depth contents.
     const bool clear_all = dirty_count == active_count;
     if (clear_all) for(auto& tile:shadow_cache_)tile.Invalidate();
-    const auto static_tiles=RecordStaticShadows(cmd,dirty);
-    const bool copy_static=std::any_of(static_tiles.begin(),static_tiles.end(),[](bool v){return v;});
     if(copy_static) {
         if(clear_all) {
             UseTargets(cmd,{{&shadow_,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
@@ -1681,7 +1689,10 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
         uint32_t shadow_draws = 0, shadow_indices = 0;
         for (const Draw* pointer : shadow_casters_[tile]) {
             const Draw& d = *pointer;
-            if(static_tiles[tile] && !d.sub->skinned && d.skin_base==gpu::kInvalid)continue;
+            // The template can also contain unchanged immutable poses. Skip
+            // precisely its members, so those meshes are not drawn twice.
+            const auto& template_casters = shadow_static_casters_[tile];
+            if (static_tiles[tile] && std::binary_search(template_casters.begin(), template_casters.end(), pointer)) continue;
             ++shadow_draws; shadow_indices += d.sub->index_count;
             ++stats_.shadow_draws;
             if (static const bool dump = std::getenv("PT_SHADOW_PASS_DUMP") != nullptr; dump && light_sources_[sv.light]->id == kMirrorLightId) {
@@ -1733,6 +1744,18 @@ void SceneRenderer::RecordGBuffer(VkCommandBuffer cmd, const ViewSetup& view) {
         }();
         if (pass == 1 && by_layer) {
             std::stable_sort(decal_order_.begin(), decal_order_.end(), [](const Draw* a, const Draw* b) { return a->sub->layer < b->sub->layer; });
+        }
+        if (pass == 0) {
+            const glm::vec3 direction = -glm::vec3(view.view[0][2], view.view[1][2], view.view[2][2]);
+            OrderOpaque(std::span(decal_order_), [&](const Draw* d) {
+                if (!d->shadow_bounds.valid) return std::pair{NAN, NAN};
+                const glm::vec3 centre = (d->shadow_bounds.lo + d->shadow_bounds.hi) * 0.5f;
+                const glm::vec3 half = (d->shadow_bounds.hi - d->shadow_bounds.lo) * 0.5f;
+                const float z = glm::dot(direction, centre) - view.view[3][2];
+                const float reach = glm::dot(glm::abs(direction), half);
+                // ViewSetup stores GL views; convert their -Z to positive depth.
+                return std::pair{z - reach, z + reach};
+            });
         }
         for (const Draw* d : decal_order_) {
             DrawMesh(cmd, *d, view.index, debug_flags, view.mirrored, false, aux);
@@ -2331,6 +2354,7 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
     copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.dstSubresource = copy.srcSubresource;
     copy.extent = {extent_.width, extent_.height, 1};
+    ++stats_.scene_copies;
     vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                    &copy);
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
@@ -2356,7 +2380,7 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
 void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, SceneVfxContext context) {
     // Keep the caller's rendering scope open. Empty or scene-only effects need
     // neither depth downsampling nor clearing/storing the two effect buffers.
-    if (vfx_offscreen_available && !vfx_offscreen_available()) return;
+    if (vfx_offscreen_available && !vfx_offscreen_available()) { Stamp(cmd, 21); return; }
     vkCmdEndRendering(cmd);
     const VkExtent2D effect_extent = particles_near_.Extent();
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
@@ -2398,6 +2422,7 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
             copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             copy.dstSubresource = copy.srcSubresource;
             copy.extent = {extent_.width, extent_.height, 1};
+            ++stats_.scene_copies;
             vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
             UseTargets(cmd, {{&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -2413,12 +2438,14 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
     vfx_forward(context);
     BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     vkCmdEndRendering(cmd);
+    Stamp(cmd, 21);
     if (recorded > 0) {
         UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
         VkImageCopy copy{};
         copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         copy.dstSubresource = copy.srcSubresource;
         copy.extent = {extent_.width, extent_.height, 1};
+        ++stats_.scene_copies;
         vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        1, &copy);
         UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
@@ -2446,6 +2473,7 @@ void SceneRenderer::RecordSceneCopy(VkCommandBuffer cmd, RenderTarget& output) {
     copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.dstSubresource = copy.srcSubresource;
     copy.extent = {extent_.width, extent_.height, 1};
+    ++stats_.scene_copies;
     vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                    &copy);
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
@@ -2780,6 +2808,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
     Fullscreen(cmd, composite, push);
     // f010_dumps 1490: fox3dfw_glass and fox3dfw_constant draws write depth (DB_DEPTH_CONTROL 0x7e6), so the effects behind them are hidden
     vkCmdEndRendering(cmd);
+    if (main_view) Stamp(cmd, 19);
     if (main_view && dump_requested_ && &output == &hdr_) {
         RecordDumpCopy(cmd, output, dump_compose_);
     }
@@ -2827,9 +2856,13 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         }
         vfx_forward(context);
         BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+        if (main_view) Stamp(cmd, 20);
         if (&output == &hdr_) {
             RecordEffects(cmd, output, context);
-        }
+        } else if (main_view) Stamp(cmd, 21);
+    } else if (main_view) {
+        Stamp(cmd, 20);
+        Stamp(cmd, 21);
     }
     vkCmdEndRendering(cmd);
     if (main_view && dump_requested_ && &output == &hdr_) {
@@ -2889,6 +2922,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
 
 void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& items, const SceneLighting& lighting, float dt) {
     const auto cpu_start = std::chrono::steady_clock::now();
+    stats_.scene_copies = 0;
     // VR: the screen effects stay out of the eyes for this frame (SetVrEye), the toggles come back as they were
     struct ToggleGuard {
         RenderToggles& toggles;
