@@ -54,6 +54,6 @@ int main() {
     glm::mat4 clip(1);clip[2][2]=.2f;clip[3][2]=.5f;
     auto bounds=LightScissor(clip,extent);assert(bounds.extent.width==1200&&bounds.extent.height==540);
     clip[0][0]=.25f;clip[1][1]=.25f;bounds=LightScissor(clip,extent);assert(bounds.extent.width<1200&&bounds.extent.height<540);
-    clip[3][2]=2;bounds=LightScissor(clip,extent);assert(bounds.extent.width==1200); // uncertain clipping retains the view
+    clip[3][2]=2;bounds=LightScissor(clip,extent);assert(bounds.extent.width==0&&bounds.extent.height==0); // the whole volume is beyond the clip plane
     puts("Test 10: frame distributions, bounded/reclaimed wave leases, exact shadow miss classes, 80000 bit-exact expression evaluations and probe bounds passed");
 }
