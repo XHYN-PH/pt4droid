@@ -1309,6 +1309,11 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
     stats_.part_ms[3] = span(8, 9);
     stats_.part_ms[4] = span(9, 10);
     stats_.part_ms[5] = span(10, 11);
+    stats_.composition_ms[0] = span(4, 19);
+    stats_.composition_ms[1] = span(19, 7);
+    stats_.composition_ms[2] = span(7, 20);
+    stats_.composition_ms[3] = span(20, 21);
+    stats_.composition_ms[4] = span(21, 5);
     stats_.gpu_ms = span(0, 6);
     stats_.gpu_timing_valid = true;
     ++stats_.gpu_sample;

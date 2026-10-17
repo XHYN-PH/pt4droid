@@ -187,6 +187,10 @@ struct RenderStats {
     // finer splits of the passes above: forward draws (of compose), effects (of compose), upscale inputs, reflections, upscaler,
     // bloom (of post)
     float part_ms[6] = {};
+    // Composition, forward geometry, scene effects/copies, offscreen particles
+    // and their depth preparation, final effect copy/composite.
+    float composition_ms[5] = {};
+    uint32_t scene_copies = 0;
     float probe_map_ms = 0;
     bool probe_map_used = false;
     uint64_t probe_covered_pixels = 0;
@@ -417,7 +421,7 @@ private:
     // 0 start, 1 shadows, 2 mirror, 3 G-buffer, 4 lighting, 5 compose, forward and effects, 6 end; within them 7 the forward draws,
     // 8 the upscale inputs, 9 the reflections, 10 the upscaler, 11 the bloom (written on every frame, in place when a pass is off)
     // 12 ends ray structure preparation, separating it from shadow-map rendering.
-    static constexpr uint32_t kTimestamps = 19;
+    static constexpr uint32_t kTimestamps = 22;
     static constexpr uint32_t kReflectMapSize = 512;
     static constexpr float kCameraCutDistance = 3.0f;
 

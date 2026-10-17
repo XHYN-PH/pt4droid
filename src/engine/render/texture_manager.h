@@ -86,7 +86,7 @@ public:
     // clock's maze package brings eleven effect pictures (fx_viweye01..11) whose unpacking took 311 ms of one frame. Paths loaded or
     // already queued are skipped; nothing is queued while a mod is active (LoadFox reads the overrides).
     void DecodeAhead(const QarArchive& qar, const std::vector<std::string>& paths);
-    // Uploads up to `count` finished ahead decodes in the order they were queued (one or two a frame instead of all of them in
+    // Uploads up to `count` finished ahead decodes, skipping jobs still running (one or two a frame instead of all of them in
     // the frame that first draws them); returns how many were uploaded
     uint32_t PumpDecoded(const QarArchive& qar, uint32_t count);
     // A decode made elsewhere (a stage prefetch) for LoadFox to take; false when the texture is loaded or queued already, or a
@@ -94,7 +94,7 @@ public:
     bool AdoptDecoded(const std::string& path, std::shared_ptr<FtexTexture> decoded);
     bool AdoptPending(const std::string& path, std::shared_future<PreparedTextureResult> future, std::function<void(const std::string&)> prioritize);
     void DropDecoded(const std::vector<std::string>& paths);
-    void SetPreparedVariants(const std::string& path, uint8_t variants) { prepared_variants_[FtexStem(path)] = variants; }
+    void SetPreparedVariants(const std::string& path, uint8_t variants) { prepared_variants_[FtexStem(path)] |= variants; }
     std::unordered_set<std::string> Names() const;
     // milliseconds the calling (main) thread spent reading .ftex files and uploading textures, for the slow load logs
     double ReadMs() const { return read_ms_; }
@@ -176,26 +176,13 @@ private:
     std::future<void> enhanced_worker_;
     void StopEnhancedWorker();
     // DecodeAhead: the decodes by texture stem (nullptr when the file could not be read), their queue order, the workers
-    std::unordered_map<std::string, std::shared_future<std::shared_ptr<FtexTexture>>> decoding_;
+    std::unordered_map<std::string, std::shared_future<PreparedTextureResult>> decoding_;
     // Stage-owned preparation stays immutable until every raw/sRGB use has loaded.
     std::unordered_map<std::string, std::shared_ptr<const FtexTexture>> prepared_;
     std::unordered_map<std::string, uint8_t> prepared_variants_;
     std::deque<std::string> decode_order_;
-    struct DecodeJob {
-        const QarArchive* qar = nullptr;
-        std::string stem;
-        std::promise<std::shared_ptr<FtexTexture>> promise;
-    };
-    struct DecodeQueue {
-        std::mutex mutex;
-        std::condition_variable ready;
-        std::deque<DecodeJob> jobs;
-        bool stop = false;
-        std::shared_ptr<TextureReadBudget> budget = std::make_shared<TextureReadBudget>(96ull * 1024 * 1024);
-    };
     void StopDecodeWorkers();
-    std::shared_ptr<DecodeQueue> decode_queue_;
-    std::vector<std::future<void>> decode_workers_;
+    std::unique_ptr<TexturePreparationStream> decode_stream_;
     std::unordered_set<std::string> worker_prepared_;
     ReadStats read_stats_;
     struct PendingPreparation {std::shared_future<PreparedTextureResult> future; std::function<void(const std::string&)> prioritize;};

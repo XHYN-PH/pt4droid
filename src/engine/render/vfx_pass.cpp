@@ -227,6 +227,9 @@ void VfxPass::DecodeAhead(const std::vector<std::string>& paths) {
     for (const std::string& path : paths) {
         if (!path.empty() && !texture_cache_.contains(path)) {
             pending.push_back(path);
+            // Effects use the colour upload only. Keeping its decoded payload
+            // for an unused raw variant can exhaust the preparation budget.
+            textures_->SetPreparedVariants(path, 1);
         }
     }
     textures_->DecodeAhead(vfs_->Textures(), pending);
