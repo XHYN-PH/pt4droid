@@ -279,6 +279,24 @@ int EntityIndex(lua_State* L) {
         }
     }
     const fox2::Property* p = file.FindProperty(entity, key);
+    // The original hallway's two f080 light conditions store "modleData", while
+    // trapLightEnable reads "modelData". Keep the original list and references;
+    // only bridge that typo for this script when the canonical property is absent.
+    if (!p && key == "modelData" && entity.class_name == "GeoModuleCondition") {
+        const fox2::Property* legacy = entity.FindDynamic("modleData");
+        const fox2::Property* callbacks = entity.Find("execCallbackDataElements");
+        for (size_t i = 0; legacy && callbacks && i < callbacks->Count(); ++i) {
+            const fox2::Entity* callback = file.ElementEntity(*callbacks, i);
+            if (!callback || callback->class_name != "GeoTrapScriptCallbackDataElement") {
+                continue;
+            }
+            const std::string path = file.GetString(*callback, "scriptFile");
+            if (path == "trapLightEnable.lua" || path.ends_with("/trapLightEnable.lua")) {
+                p = legacy;
+                break;
+            }
+        }
+    }
     if (!p || !PushProperty(L, *r.stage, file, *p)) {
         lua_pushnil(L);
     }

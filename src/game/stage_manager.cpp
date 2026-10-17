@@ -1008,7 +1008,17 @@ void StageManager::BuildCollision(CollisionWorld& world, std::vector<SurfaceTria
     const bool same=same_world && valid_owners && RetireCollisionOwners(collision_owners_,entries,
         [](const auto& owner,const auto& e){return e.stage==owner.stage && e.stage->id==owner.stage_id && e.piece==owner.piece && e.piece->cache.valid && owner.label==e.label && owner.walk_detail==e.stage->walk_detail_surfaces && owner.transform==e.stage->file_to_world*e.piece->file_transform;},
         [&](const auto& owner){world.SetOwnerActive(owner.world,false);if(lines&&owner.line!=UINT32_MAX)lines->SetOwnerActive(owner.line,false);if(reflections&&owner.reflection!=UINT32_MAX)reflections->SetOwnerActive(owner.reflection,false);});
-    if(!same)BuildWorlds(entries, world, lines, reflections, collision_owners_);
+    if (!same) {
+        // Build into empty worlds; release the previous BVHs away from the tick
+        // that switches the player's collision. Their owners are no longer read.
+        auto retired = std::make_unique<PendingCollision>();
+        std::swap(world, retired->world);
+        if (lines) std::swap(*lines, retired->lines);
+        if (reflections) std::swap(*reflections, retired->reflections);
+        retired->owners.swap(collision_owners_);
+        BuildWorlds(entries, world, lines, reflections, collision_owners_);
+        retired_collision_.Retire(std::move(retired));
+    }
     last_collision_world_=&world;last_line_world_=lines;last_reflection_world_=reflections;
     UpdateCollisionActive(world, surfaces, lines, reflections);
     LogDebug("stage: collision {} triangles, {} material surfaces, {} line check triangles ({:.1f} ms)", world.ActiveTriangles(),
@@ -1036,17 +1046,23 @@ void StageManager::FinishCollisionBuild(CollisionWorld& world, std::vector<Surfa
     }
     const auto start = std::chrono::steady_clock::now();
     pending_collision_->worker.join();
+    const auto ready = std::chrono::steady_clock::now();
     std::swap(world, pending_collision_->world);
     std::swap(lines, pending_collision_->lines);
     std::swap(reflections, pending_collision_->reflections);
     std::swap(collision_owners_, pending_collision_->owners);
     const double built = pending_collision_->milliseconds;
-    pending_collision_.reset();
     last_collision_world_=&world;last_line_world_=&lines;last_reflection_world_=&reflections;
     UpdateCollisionActive(world, surfaces, &lines, &reflections);
-    LogDebug("stage: collision {} triangles, {} material surfaces, {} line check triangles (worker {:.1f} ms, taken in {:.2f} ms)",
+    const auto adopted = std::chrono::steady_clock::now();
+    const bool retired_async = retired_collision_.Retire(std::move(pending_collision_));
+    const auto done = std::chrono::steady_clock::now();
+    LogDebug("stage: collision {} triangles, {} material surfaces, {} line check triangles (worker {:.1f} ms, taken in {:.2f} ms); wait {:.2f}, adopt {:.2f}, retire {:.2f} ms, async {}",
              world.ActiveTriangles(), surfaces ? surfaces->size() : 0, lines.ActiveTriangles(), built,
-             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+             std::chrono::duration<double, std::milli>(done - start).count(),
+             std::chrono::duration<double, std::milli>(ready - start).count(),
+             std::chrono::duration<double, std::milli>(adopted - ready).count(),
+             std::chrono::duration<double, std::milli>(done - adopted).count(), retired_async);
 }
 
 void StageManager::UpdateCollisionActive(CollisionWorld& world, std::vector<SurfaceTriangle>* surfaces, CollisionWorld* lines,
