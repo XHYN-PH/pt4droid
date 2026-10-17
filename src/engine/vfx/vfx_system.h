@@ -316,6 +316,9 @@ private:
         glm::vec4* frame_values = nullptr;
         uint32_t* frame_ready = nullptr;
         uint32_t frame_epoch = 1;
+        glm::vec4* particle_values = nullptr;
+        uint32_t* particle_ready = nullptr;
+        uint32_t particle_epoch = 1;
     };
 
     int Emit(Instance& inst, ShapeState& state, const EffectDef& def, int32_t emit, float dframes, const ViewInfo& view);
@@ -327,6 +330,10 @@ private:
     mutable std::vector<glm::vec4> frame_values_;
     mutable std::vector<uint32_t> frame_ready_;
     mutable uint32_t frame_epoch_ = 0;
+    void BeginParticleEvaluation(EvalContext& context) const;
+    mutable std::vector<glm::vec4> particle_values_;
+    mutable std::vector<uint32_t> particle_ready_;
+    mutable uint32_t particle_epoch_ = 0;
     glm::vec4 Receive(const Instance& inst, uint32_t name, const glm::vec4& fallback) const;
     uint32_t SeedFor(const Instance& inst, uint32_t seed, uint8_t type, uint32_t node_id) const;
     void BuildShape(const Instance& inst, const glm::mat4& world, const ShapeDef& shape, const ShapeState& state, const ViewInfo& view,

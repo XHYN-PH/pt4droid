@@ -783,9 +783,21 @@ glm::vec4 System::Eval(const EvalContext& c, int32_t index) const {
     if (size_t(index) < c.def->constants.size() && c.def->constants[index]) return *c.def->constants[index];
     const bool memo = c.frame_ready && size_t(index) < c.def->frame_uniform.size() && c.def->frame_uniform[index];
     if (memo && c.frame_ready[index] == c.frame_epoch) return c.frame_values[index];
+    const bool particle_memo = !memo && c.particle_ready && size_t(index) < c.def->particle_shared.size() && c.def->particle_shared[index];
+    if (particle_memo && c.particle_ready[index] == c.particle_epoch) return c.particle_values[index];
     const glm::vec4 value = EvalUncached(c, index);
     if (memo) { c.frame_values[index] = value; c.frame_ready[index] = c.frame_epoch; }
+    else if (particle_memo) { c.particle_values[index] = value; c.particle_ready[index] = c.particle_epoch; }
     return value;
+}
+
+void System::BeginParticleEvaluation(EvalContext& c) const {
+    if (!c.particle_ready) return;
+    if (++particle_epoch_ == 0) {
+        std::fill(particle_ready_.begin(), particle_ready_.end(), 0);
+        particle_epoch_ = 1;
+    }
+    c.particle_epoch = particle_epoch_;
 }
 
 glm::vec4 System::EvalUncached(const EvalContext& c, int32_t index) const {
@@ -1028,6 +1040,12 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
     }
     c.frame_values = frame_values_.data(); c.frame_ready = frame_ready_.data();
     c.frame_epoch = frame_epoch_;
+    if (def.has_particle_shared) {
+        particle_values_.resize(def.exprs.size());
+        particle_ready_.resize(def.exprs.size(), 0);
+        c.particle_values = particle_values_.data();
+        c.particle_ready = particle_ready_.data();
+    }
     const MaterialDef& m = shape.material;
     const size_t slots = def.random_slots;
     if (shape.kind == ShapeKind::SpotLight || shape.kind == ShapeKind::PointLight) {
@@ -1039,6 +1057,7 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             c.age = p.infinite ? std::fmod(p.age, p.life) : p.age;
             c.ratio = Saturate(c.age / p.life);
             c.world = shape.local_space ? world : p.spawn_world;
+            BeginParticleEvaluation(c);
             LightOut l;
             l.spot = shape.kind == ShapeKind::SpotLight;
             const glm::vec3 pos = glm::vec3(Eval(c, shape.attr[kPosition]));
@@ -1181,9 +1200,13 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
         c.age = p.infinite ? std::fmod(p.age, p.life) : p.age;
         c.ratio = Saturate(c.age / p.life);
         c.world = shape.local_space ? world : p.spawn_world;
+        BeginParticleEvaluation(c);
         const glm::vec3 local = glm::vec3(Eval(c, shape.attr[kPosition]));
         glm::vec3 world_pos = shape.world_position ? local : TransformPoint(c.world, local);
         c.position = world_pos;
+        // Position-dependent expressions now see the resolved world position.
+        // Invalidate this particle's first evaluation phase before other attrs.
+        BeginParticleEvaluation(c);
         const glm::vec4 scale = shape.attr[kScale] >= 0 ? Eval(c, shape.attr[kScale]) : glm::vec4(1.0f);
         const glm::vec4 rot = shape.attr[kRotation] >= 0 ? Eval(c, shape.attr[kRotation]) : glm::vec4(0.0f);
         const glm::vec4 uv = shape.attr[kUv] >= 0 ? Eval(c, shape.attr[kUv]) : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);

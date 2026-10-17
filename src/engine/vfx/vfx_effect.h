@@ -222,6 +222,8 @@ struct EffectDef {
     // Only pure constant expression subgraphs are folded; random/time/view inputs stay live.
     std::vector<std::optional<glm::vec4>> constants;
     std::vector<uint8_t> frame_uniform; // independent of particle age, random slots, position and spawn world
+    std::vector<uint8_t> particle_shared;
+    bool has_particle_shared = false;
     std::string name;
     uint32_t all_frame = 1;
     uint32_t play_mode = 0;
