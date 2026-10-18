@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.16">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.18">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#screenshots">Screenshots</a>
   &nbsp;·&nbsp;
@@ -27,7 +27,7 @@
 
 Play **P.T. on Android** with customizable touch controls, controller support and graphics settings. Maintained by **XHYN-PH**.
 
-**[Download Test 16](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.16)** · Android 10+ · 64-bit phones
+**[Download Test 18](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.18)** · Android 10+ · 64-bit phones
 
 **Game files are not included.** You need your own P.T. game dump.
 
@@ -48,7 +48,7 @@ Play **P.T. on Android** with customizable touch controls, controller support an
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.16-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.16) and install it.
+1. Download **pt4droid-v0.2.1-test.18-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.18) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package.
 3. Wait for the import to finish, then tap **Enter menu**.
 4. Choose your settings and tap **Start**.
