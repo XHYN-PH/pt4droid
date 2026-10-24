@@ -23,6 +23,7 @@ void main() {
     float r = pass.f1.z * pass.f1.x * Saturate(amount - pass.f1.y);
     vec2 o = pass.f0.xy * r;
     vec2 c = pass.f0.xy * (p + 0.5);
+    if (r == 0.0) { out_color = Tap(c); return; }
     vec4 sum = Tap(c) * 0.25;
     sum += Tap(c + vec2(-0.8660254 * o.x, 0.5 * o.y)) * 0.125;
     sum += Tap(c + vec2(0.0, o.y)) * 0.125;

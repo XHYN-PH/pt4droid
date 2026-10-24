@@ -30,6 +30,7 @@
 
 #include "engine/core/log.h"
 #include "engine/platform/mobile_driver_policy.h"
+#include "engine/platform/turnip_profile.h"
 
 namespace pt::android {
 namespace {
@@ -358,6 +359,12 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
         LogInfo("android: incompatible bundled Turnip selection ignored; using the system driver");
         return nullptr;
     }
+    if(lower=="esmeringhoy_r1") {
+        const auto gpu=SystemGpuName();
+        if((!gpu.empty()&&gpu.find("Adreno")==std::string::npos)||!BundledTurnipSupportsPageSize(sysconf(_SC_PAGESIZE))) {
+            name="system driver (ESMERINGHOY 27.0.0-devel requires compatible Adreno/page size)";return nullptr;
+        }
+    }
     if (lower == "system" || (lower=="auto" && !AutoUsesTurnip())) {
         name = "system driver (driver.txt)";
         return nullptr;
@@ -377,7 +384,9 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
     std::string driver_dir = hook_dir;
     std::string driver_file = "libvulkan_turnip.so";
     std::string label = "Mr. Purple Turnip T30 (bundled)";
-    if(lower=="panvk"){
+    if(lower=="esmeringhoy_r1") {
+        driver_file="libvulkan_esmeringhoy.so";label="ESMERINGHOY 27.0.0-devel";
+    }else if(lower=="panvk"){
         if(SDL_GetAndroidSDKVersion()<35||!IsMaliGpu(SystemGpuName())){name="system driver (experimental PanVK needs Mali and Android 15+)";return nullptr;}
         driver_file="libvulkan_panfrost.so";label="PanVK Kbase RC3 (experimental Mali)";
     }else if (lower.starts_with("imported/")) {
@@ -398,6 +407,15 @@ PFN_vkGetInstanceProcAddr OpenVulkanDriver(std::string& name) {
         } else {name="system driver (custom driver unavailable)";return nullptr;}
     }
     const char* cache = SDL_GetAndroidCachePath();
+    std::string family=driver_file;
+    std::transform(family.begin(),family.end(),family.begin(),[](unsigned char c){return char(std::tolower(c));});
+    const bool turnip=lower=="esmeringhoy_r1"||lower=="turnip"||lower=="auto"||family.find("freedreno")!=std::string::npos||family.find("turnip")!=std::string::npos;
+    const int profile_index=PerformanceOptions().turnip_profile;
+    if(turnip) {
+        const auto& profile=SelectTurnipProfile(profile_index);
+        if(profile.algorithm){setenv("TU_AUTOTUNE_ALGO",profile.algorithm,1);if(profile.flags)setenv("TU_AUTOTUNE_FLAGS",profile.flags,1);else unsetenv("TU_AUTOTUNE_FLAGS");}
+        LogInfo("android: Turnip rendering profile {}: {} (applied before driver initialization)",profile_index,profile.label);
+    }else if(profile_index)LogInfo("android: selected driver retains its default rendering policy (Turnip profile not applicable)");
     void* handle = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, cache, hook_dir.c_str(), driver_dir.c_str(),
                                               driver_file.c_str(), nullptr, nullptr);
     if (!handle) {

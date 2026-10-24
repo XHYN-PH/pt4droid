@@ -17,6 +17,7 @@ struct Context{void DestroyImage(Image& image){image={};}bool Submit(const std::
 struct Renderer{pt::Context context;pt::Context& Context(){return context;}};
 struct SceneRenderer{
  VkDevice device_{};Renderer renderer;Renderer* renderer_=&renderer;struct{bool occlusion=false,depth_of_field=false,motion_blur=false;}toggles;
+ VkPipeline up_resolve_static_=reinterpret_cast<VkPipeline>(1);RenderTarget post_object_velocity_;
  RenderTarget ao_[2],dof_half_,dof_quarter_[2],dof_eighth_[2],velocity_,object_velocity_,mb_blur_[2],mb_tile_[5],mb_neighbour_,mb_bake_;
  bool CreateTarget(RenderTarget& t,VkFormat,VkExtent2D size,VkImageUsageFlags,VkImageAspectFlags){assert(size.width&&size.height);++created;if(fail_at&&created==fail_at)return false;t.image.image=reinterpret_cast<VkImage>(uintptr_t(created));t.image.extent=size;t.layout=VK_IMAGE_LAYOUT_UNDEFINED;return true;}
  void WriteImageDescriptors(){++writes;}bool EnsureOptionalTargets(VkExtent2D,VkExtent2D,bool,bool=true);
@@ -25,7 +26,7 @@ struct SceneRenderer{
 }
 int main(){using namespace pt;const VkExtent2D scene{1200,540},output{2400,1080};SceneRenderer r;
  for(int i=0;i<4000;++i)assert(r.EnsureOptionalTargets(scene,output,false));assert(waits==0&&created==0&&writes==0);
- assert(r.EnsureOptionalTargets(scene,output,true));assert(created==1&&r.object_velocity_.Valid()&&waits==1);r.toggles={true,true,true};assert(r.EnsureOptionalTargets(scene,output,true));assert(created==18&&waits==2&&writes==2&&clears==18);
+ assert(r.EnsureOptionalTargets(scene,output,true));assert(created==1&&r.object_velocity_.Valid()&&waits==1&&!r.post_object_velocity_.Valid());r.toggles={true,true,true};assert(r.EnsureOptionalTargets(scene,output,true));assert(created==19&&waits==2&&writes==2&&clears==19&&r.post_object_velocity_.Valid());
  for(auto* t:r.All())assert(t->Valid()&&t->layout==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);const int count=created;r.toggles={false,false,false};for(int i=0;i<4000;++i)assert(r.EnsureOptionalTargets(scene,output,false));assert(created==count&&waits==2&&writes==2);r.toggles={true,true,true};assert(r.EnsureOptionalTargets(scene,output,false));assert(created==count);
  for(int f=1;f<=18;++f){SceneRenderer test;created=0;fail_at=f;test.toggles={true,true,true};assert(!test.EnsureOptionalTargets(scene,output,false));for(auto* t:test.All())assert(!t->Valid());fail_at=0;assert(test.EnsureOptionalTargets(scene,output,false));for(auto* t:test.All())assert(t->Valid());}
  SceneRenderer failed;created=0;failed.toggles={true,true,true};submit_ok=false;int previous=writes;assert(!failed.EnsureOptionalTargets(scene,output,false));assert(writes==previous);for(auto* t:failed.All())assert(!t->Valid());submit_ok=true;assert(failed.EnsureOptionalTargets({1,1},{1,1},false));

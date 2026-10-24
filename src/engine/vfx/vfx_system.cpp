@@ -1,4 +1,8 @@
 #include "engine/vfx/vfx_system.h"
+#include "engine/vfx/flare_halo.h"
+#ifdef __ANDROID__
+#include "engine/platform/android.h"
+#endif
 #include "engine/vfx/quad_visibility.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -1555,6 +1559,9 @@ void System::BuildFlare(const glm::mat4& world, const FlareDef& flare, const Fla
         root = glm::vec4(c.r, glm::length(c), def->exposure_blend, 0.0f);
     }
     const float inv_aspect = 1.0f / view.aspect;
+#ifdef __ANDROID__
+    const float halo_strength=android::PerformanceOptions().flare_halo;
+#endif
     Draw draw;
     draw.layer = Layer::Flare;
     draw.blend = BlendMode::Add;
@@ -1642,6 +1649,10 @@ void System::BuildFlare(const glm::mat4& world, const FlareDef& flare, const Fla
         const glm::vec2 center(pos.x * 0.5f + 0.5f, pos.y * -0.5f + 0.5f);
         const float ax = sx * el.width * 0.25f;
         const float ay = sy * el.height * 0.25f * view.aspect;
+#ifdef __ANDROID__
+        alpha *= FlareHaloAttenuation(2.f*std::max(std::abs(ax),std::abs(ay)),halo_strength);
+        if(alpha<=0.f)continue;
+#endif
         Quad q;
         for (int i = 0; i < 4; ++i) {
             const float a = angle + kFlareCorners[i];

@@ -13,6 +13,16 @@ struct GeometryBounds {
 inline bool FinitePosition(const glm::vec3& p) {
     return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
 }
+// Conservative light-range rejection using the actual affine enclosure rather
+// than its (often much larger) circumscribed sphere. Invalid inputs stay visible.
+inline bool BoundsTouchSphere(const GeometryBounds& bounds,const glm::vec3& center,float radius) {
+    if(!bounds.valid||!FinitePosition(center)||!FinitePosition(bounds.lo)||!FinitePosition(bounds.hi)||
+       !std::isfinite(radius)||radius<0||glm::any(glm::greaterThan(bounds.lo,bounds.hi)))return true;
+    const glm::dvec3 p(center),lo(bounds.lo),hi(bounds.hi);
+    const glm::dvec3 delta=p-glm::clamp(p,lo,hi);
+    const double padded=double(radius)+1e-3+std::abs(double(radius))*1e-6;
+    return glm::dot(delta,delta)<=padded*padded;
+}
 template <typename VertexType>
 GeometryBounds IndexedBounds(std::span<const VertexType> vertices, std::span<const uint32_t> indices,
                              uint32_t first, uint32_t count, int32_t offset) {

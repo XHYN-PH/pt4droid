@@ -17,6 +17,7 @@ layout(location = 0) out vec4 out_diffuse;
 
 #include "probe_sh.glsl"
 layout(constant_id = 0) const bool cached_probe_map = false;
+layout(constant_id = 1) const bool hardware_probe_filter = false;
 
 vec3 ProbeTexel(Probe p, View v, ivec2 texel) {
     if (!cached_probe_map) return SphereMapTexel(p, v, texel);
@@ -33,6 +34,10 @@ vec3 SphereMapLookup(Probe p, View v, vec3 n_view) {
     float len = length(n_view.xy);
     vec2 dir = len > 0.0 ? n_view.xy / len : vec2(1.0, 0.0);
     vec2 s = 0.5 - r * dir;
+    if (cached_probe_map && hardware_probe_filter) {
+        vec2 cell = vec2(pass.ids.y % 32u, pass.ids.y / 32u);
+        return ImgLod(IMG_PROBE_MAP, SMP_LINEAR_CLAMP, (cell + s) * vec2(1.0 / 32.0, 1.0 / 16.0), 0.0).rgb;
+    }
     vec2 texel = s * 16.0 - 0.5;
     ivec2 i0 = ivec2(floor(texel));
     vec2 f = texel - vec2(i0);

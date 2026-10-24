@@ -1,0 +1,84 @@
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
+#include <vector>
+#include <algorithm>
+#include <functional>
+#include <cassert>
+#include <cstdio>
+#include "engine/platform/mobile_performance.h"
+namespace pt {
+namespace android {MobilePerformanceOptions options;float scale=.6f;bool scale_changed=false;auto PerformanceOptions(){return options;}float RenderScale(){return scale;}bool ConsumeRenderScaleChange(){bool old=scale_changed;scale_changed=false;return old;}}
+template<class...T>void LogWarn(const char*,T...){}
+template<class T>T Handle(uintptr_t n){return reinterpret_cast<T>(n);}
+struct Image{VkImageView view{};VkExtent3D extent{};};
+struct RenderTarget{Image image;bool Valid()const{return image.view!=VK_NULL_HANDLE;}};
+/* FILTER_CONTEXT */
+struct Renderer{
+ static constexpr unsigned kFramesInFlight=3;unsigned FrameIndex()const{return 1;}VkFormat SceneColorFormat()const{return VK_FORMAT_R8G8B8A8_UNORM;}
+ bool mobile_sgsr_=false,mobile_temporal_=false,swapchain_dirty_=false,output_ready_=false,final_ready_=false;float mobile_output_scale_=1.f;void*window_=(void*)1;VkExtent2D render_extent_{};VkPipelineLayout composite_layout_{};VkPipeline sgsr_pipeline_{};VkFormat final_format_=VK_FORMAT_R8G8B8A8_UNORM;
+ struct{bool headless=false;}settings_;Image scene_color_,output_,final_;
+ struct{struct{VkFormat format=VK_FORMAT_R8G8B8A8_UNORM;}swapchain;bool CreateImage(Image& image,VkFormat,VkExtent3D extent,VkImageUsageFlags){image.view=Handle<VkImageView>(5);image.extent=extent;return true;}}ctx_;
+ bool CreateCompositeShader(VkFormat,const char*,VkPipeline&){return true;}void WriteCompositeSets(){}bool CreateTargets(uint32_t,uint32_t);
+ void CheckPolicy(){/* TARGET_POLICY */}
+};
+static unsigned clears=0,ends=0,barriers=0;static bool flare_bright=false;
+void UseTargets(VkCommandBuffer,std::initializer_list<std::pair<RenderTarget*,VkImageLayout>>){++barriers;}
+struct Attachment{RenderTarget*target;bool clear;VkClearColorValue color;};
+void BeginPass(VkCommandBuffer,VkExtent2D,std::initializer_list<Attachment> targets){for(auto t:targets)if(t.clear){++clears;flare_bright=false;}}
+void vkCmdEndRendering(VkCommandBuffer){++ends;}
+struct SceneRenderer{
+ static constexpr VkFormat kPostTargetFormat=VK_FORMAT_R16G16B16A16_SFLOAT;
+ RenderTarget flare_,depth_,post_depth_,ldr_[2];VkExtent2D output_extent_{2400,1080};float exposure_=.01f;bool targets_upscaled_=false;struct{bool enabled=false;}up_;
+ Renderer renderer;Renderer*renderer_=&renderer;int vr_eye_=-1;std::function<void(const SceneFilterContext&)>vfx_filter;struct{void Reset(){}}mesh_draw_state_;
+ void BindSets(VkCommandBuffer,VkPipelineBindPoint){}void Stamp(VkCommandBuffer,unsigned){}
+ SceneFilterContext FilterContext(VkCommandBuffer,uint32_t)const;
+ void RecordFlare(VkCommandBuffer cmd){/* FLARE_BLOCK */}
+ void RecordScreen(VkCommandBuffer cmd){/* SCREEN_BLOCK */}
+};
+namespace vfx{enum class Layer{World,Flare,Screen};struct Draw{Layer layer;unsigned count=1;};}
+constexpr VkDeviceSize kFogStride=256;
+struct FogBlock{glm::vec4 fog[8]{};glm::uvec4 mode{0u};};
+struct Write{VkImageView view;VkImageLayout layout;};static std::vector<Write>writes;
+void vkUpdateDescriptorSets(VkDevice,uint32_t n,const VkWriteDescriptorSet* w,uint32_t,const VkCopyDescriptorSet*){assert(n==4);writes.push_back({w[1].pImageInfo->imageView,w[1].pImageInfo->imageLayout});}
+struct VfxPass{
+ struct Buffer{VkBuffer buffer{};};struct FrameSlot{Buffer quads,fog;VkDescriptorSet filter{};VkImageView filter_view{},filter_scene{};VkImageLayout filter_layout=VK_IMAGE_LAYOUT_UNDEFINED;};
+ FrameSlot slots_[3];VkDevice device_=Handle<VkDevice>(1);VkSampler sampler_{},scene_sampler_{};bool fail_upload=false;
+ struct{std::vector<vfx::Draw>draws;float near_plane=.01f;}list_;unsigned flare_draws=0,screen_draws=0;
+ bool Upload(unsigned){return !fail_upload;}
+ void WriteSet(FrameSlot&,VkDescriptorSet,VkImageView,VkImageLayout,VkImageView,VkDeviceSize);
+ void RecordFilter(const SceneFilterContext&);
+ void DrawLayer(VkCommandBuffer,VkDescriptorSet,vfx::Layer layer,VkFormat,VkFormat,bool,unsigned,const glm::mat4&,const glm::vec3&,float,float,VkExtent2D,const std::function<void()>*){if(layer==vfx::Layer::Flare)++flare_draws;if(layer==vfx::Layer::Screen)++screen_draws;}
+};
+/* PRODUCTION_METHODS */
+}
+int main(){using namespace pt;
+ Renderer mode;android::options.sgsr=true;android::options.temporal_upscaling=true;assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==2400);
+ android::options.temporal_upscaling=false;mode.CheckPolicy();assert(mode.swapchain_dirty_);assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==1440&&mode.scene_color_.extent.height==648);
+ mode.swapchain_dirty_=false;mode.CheckPolicy();assert(!mode.swapchain_dirty_);
+ android::options.temporal_upscaling=true;mode.CheckPolicy();assert(mode.swapchain_dirty_);assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==2400);
+ mode.swapchain_dirty_=false;android::options.sgsr=false;mode.CheckPolicy();assert(!mode.swapchain_dirty_);
+ android::options.temporal_upscaling=false;mode.CheckPolicy();assert(mode.swapchain_dirty_);assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==2400);
+ mode.swapchain_dirty_=false;android::scale_changed=true;mode.CheckPolicy();assert(mode.swapchain_dirty_);
+ android::options.temporal_upscaling=true;android::options.output_scale=.9f;mode.swapchain_dirty_=false;mode.CheckPolicy();assert(mode.swapchain_dirty_);assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==2160&&mode.scene_color_.extent.height==972&&mode.final_.extent.width==2400&&mode.final_.extent.height==1080);
+ android::options.output_scale=.8f;assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==1920&&mode.scene_color_.extent.height==864&&mode.final_.extent.width==2400);
+ android::options.temporal_upscaling=false;android::options.sgsr=false;assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==1152&&mode.scene_color_.extent.height==518);
+ mode.render_extent_={1280,720};android::options.sgsr=true;assert(mode.CreateTargets(1280,720)&&mode.scene_color_.extent.width==1280);
+ mode.render_extent_={};mode.window_=nullptr;mode.settings_.headless=true;assert(mode.CreateTargets(2400,1080)&&mode.scene_color_.extent.width==2400);
+ puts("Live upscaler switching: SGSR1+SGSR2 transitions, correct target sizes, stable frames, scale changes, VR and headless sizing passed");
+ SceneRenderer s;s.depth_.image={Handle<VkImageView>(1),{1200,540,1}};s.post_depth_.image={Handle<VkImageView>(2),{2400,1080,1}};s.ldr_[0].image.view=Handle<VkImageView>(3);
+ auto raw=s.FilterContext({},1);assert(raw.depth_view==s.depth_.image.view&&raw.depth_layout==VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+ s.up_.enabled=s.targets_upscaled_=true;auto aligned=s.FilterContext({},1);assert(aligned.depth_view==s.post_depth_.image.view&&aligned.depth_layout==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL&&aligned.extent.width==2400&&aligned.layers==1);
+ s.post_depth_.image.view={};assert(s.FilterContext({},1).depth_view==s.depth_.image.view);s.post_depth_.image.view=Handle<VkImageView>(2);s.targets_upscaled_=false;assert(s.FilterContext({},1).depth_view==s.depth_.image.view);s.targets_upscaled_=true;
+ VfxPass v;v.list_.draws={{vfx::Layer::Flare},{vfx::Layer::Screen}};
+ v.RecordFilter(aligned);assert(writes.size()==1&&writes.back().view==aligned.depth_view&&writes.back().layout==aligned.depth_layout&&v.flare_draws==1&&v.screen_draws==0);
+ auto screen=aligned;screen.layers=2;v.RecordFilter(screen);assert(writes.size()==1&&v.screen_draws==1);
+ auto changed=screen;changed.depth_layout=VK_IMAGE_LAYOUT_GENERAL;v.RecordFilter(changed);assert(writes.size()==2&&writes.back().layout==VK_IMAGE_LAYOUT_GENERAL);
+ v.RecordFilter(raw);assert(writes.size()==3&&writes.back().layout==VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+ v.fail_upload=true;v.RecordFilter(aligned);assert(writes.size()==3);v.fail_upload=false;
+ unsigned flares=0,screens=0;s.vfx_filter=[&](const SceneFilterContext& c){if(c.layers==1){++flares;flare_bright=true;}if(c.layers==2)++screens;};
+ android::options.lens_flares=true;s.RecordFlare({});assert(flares==1&&flare_bright&&clears==1&&ends==1);
+ android::options.lens_flares=false;s.RecordFlare({});assert(flares==1&&!flare_bright&&clears==2&&ends==2);s.RecordScreen({});assert(screens==1);
+ android::options.lens_flares=true;s.vr_eye_=0;s.RecordFlare({});assert(flares==1&&!flare_bright&&clears==3);s.vr_eye_=-1;s.vfx_filter={};s.RecordFlare({});assert(!flare_bright&&clears==4);
+ puts("Lighting filter: aligned resolved depth, native/failure fallback, descriptor layouts/cache, live glare toggle clears stale output, screen effects and VR behavior passed");
+}

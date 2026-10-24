@@ -170,12 +170,43 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     UseTargets(cmd, {{&flare_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
     mesh_draw_state_.Reset();
     BeginPass(cmd, output_extent_, {{&flare_, true, {}}});
-    if (vfx_filter && vr_eye_ < 0) {
+    bool lamp_glare=true;
+#ifdef __ANDROID__
+    lamp_glare=android::PerformanceOptions().lens_flares;
+#endif
+    if (vfx_filter && lamp_glare && vr_eye_ < 0) {
         vfx_filter(FilterContext(cmd, 1u));
         BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&flare_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    Stamp(cmd,22);
+
+    const bool filter_samples_scene=vfx_filter_samples_scene&&vfx_filter_samples_scene();
+    const bool simple_post=tonemap_screen_&&!filter_samples_scene&&!hdr_output&&graphics.clarity==0 &&
+        !(toggles.distortion&&screen.screen_distortion&&lighting.valid) && !(toggles.fxaa&&!up_.enabled) &&
+        !(toggles.depth_of_field&&screen.depth_of_field&&lighting.valid) &&
+        !(toggles.motion_blur&&screen.motion_blur&&lighting.valid) &&
+        !(toggles.full_screen_blur&&screen.full_screen_blur&&lighting.valid) &&
+        !(screen.colour_banding_canceller&&lighting.valid) && !std::getenv("PT_TONEMAP_TEST");
+    static const bool fuse=[] {const auto* v=std::getenv("PT_POST_FUSION");return !v||std::string_view(v)!="0";}();
+    bool enabled=false;
+#ifdef __ANDROID__
+    enabled=android::PerformanceOptions().post_optimizations;
+#endif
+    if(simple_post&&fuse&&enabled) {
+        RenderTarget output;output.image=renderer_->SceneColor();output.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        UseTargets(cmd,{{&hdr_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{&output,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();BeginPass(cmd,output_extent_,{{&output,false,{},true}});
+        gpu::PassPush p;p.ids={0,0,0,post_view_};
+        p.f0={bloom?1.f:0.f,std::clamp(screen.lut_blend,0.f,1.f),lighting.valid?1.f:renderer_->exposure,toggles.color_lut?1.f:0.f};
+        Fullscreen(cmd,tonemap_screen_,p);
+        const bool grain=toggles.film_grain&&screen.film_grain&&lighting.valid;
+        renderer_->grain[0]=grain?1.f:0.f;renderer_->grain[1]=screen.grain_alt?1.f:0.f;renderer_->grain[2]=screen.grain_strength*graphics.film_grain;
+        renderer_->grain_offset[0]=screen.grain_offset.x;renderer_->grain_offset[1]=screen.grain_offset.y;
+        if(vfx_filter&&vr_eye_<0){auto context=FilterContext(cmd,2u);context.color_format=renderer_->SceneColorFormat();vfx_filter(context);BindSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS);}
+        vkCmdEndRendering(cmd);history_valid_=false;for(uint32_t i=23;i<30;++i)Stamp(cmd,i);return;
+    }
 
     int current = 0;
     UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&ldr_[0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
@@ -196,6 +227,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     Fullscreen(cmd, tonemap_base_ ? tonemap_base_ : tonemap_, push);
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&ldr_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    Stamp(cmd,23);
 
     auto ldr_index = [](int i) { return i == 0 ? gpu::kImgLdrA : gpu::kImgLdrB; };
     auto run = [&](VkPipeline pipeline, const gpu::PassPush& p) {
@@ -216,15 +248,22 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     if (toggles.depth_of_field && screen.depth_of_field && lighting.valid) {
         RecordDepthOfField(cmd, screen, current);
     }
+    Stamp(cmd,24);
     if (toggles.motion_blur && screen.motion_blur && lighting.valid) {
         RecordMotionBlur(cmd, screen, current);
     }
-    if (toggles.color_lut) {
+    Stamp(cmd,25);
+    const bool merge_grade=enabled&&fuse&&grade_screen_&&!filter_samples_scene&&!hdr_output&&graphics.clarity==0&&toggles.color_lut&&
+        !(toggles.distortion&&screen.screen_distortion&&lighting.valid)&&
+        !(toggles.full_screen_blur&&screen.full_screen_blur&&lighting.valid)&&
+        !(screen.colour_banding_canceller&&lighting.valid);
+    if (toggles.color_lut&&!merge_grade) {
         gpu::PassPush lut;
         lut.ids = glm::uvec4(ldr_index(current), 1, 0, post_view_);
         lut.f0 = glm::vec4(0.0f, lut_blend, 1.0f, 1.0f);
         run(tonemap_grade_ ? tonemap_grade_ : tonemap_, lut);
     }
+    Stamp(cmd,26);
 
     const bool blur = toggles.full_screen_blur && screen.full_screen_blur && lighting.valid;
     if (blur) {
@@ -252,11 +291,13 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     } else {
         history_valid_ = false;
     }
+    Stamp(cmd,27);
     if (screen.colour_banding_canceller && lighting.valid) {
         UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
         push.ids = glm::uvec4(ldr_index(current), 0, 0, main_view_.index);
         run(banding_, push);
     }
+    Stamp(cmd,28);
 
     RenderTarget output;
     output.image = renderer_->SceneColor();
@@ -267,9 +308,9 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     push.ids = glm::uvec4(ldr_index(current), 0, 0, post_view_);
     const bool grain = toggles.film_grain && screen.film_grain && lighting.valid;
     const bool distortion = toggles.distortion && screen.screen_distortion && lighting.valid;
-    push.f0 = glm::vec4(distortion ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    push.f0 = glm::vec4(distortion ? 1.0f : 0.0f, merge_grade?lut_blend:0.0f, 0.0f, 0.0f);
     push.f1 = glm::vec4(graphics.clarity, hdr_output ? 1.0f : 0.0f, 0.0f, 0.0f);
-    Fullscreen(cmd, screen_fx_, push);
+    Fullscreen(cmd,merge_grade?grade_screen_:screen_fx_,push);
     renderer_->grain[0] = grain ? 1.0f : 0.0f;
     renderer_->grain[1] = screen.grain_alt ? 1.0f : 0.0f;
     renderer_->grain[2] = screen.grain_strength * graphics.film_grain;
@@ -282,6 +323,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
     vkCmdEndRendering(cmd);
+    Stamp(cmd,29);
     (void)dt;
 }
 
@@ -293,6 +335,12 @@ SceneFilterContext SceneRenderer::FilterContext(VkCommandBuffer cmd, uint32_t la
     context.color_format = kPostTargetFormat;
     context.source = ldr_[0].image.view;
     context.depth_view = depth_.image.view;
+    // Screen-space flares use the unjittered output coordinates. Resolve has
+    // already produced matching depth; raw internal depth still carries jitter.
+    if(up_.enabled && targets_upscaled_ && post_depth_.Valid()) {
+        context.depth_view=post_depth_.image.view;
+        context.depth_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
     context.exposure = exposure_;
     context.frame_index = renderer_->FrameIndex();
     context.layers = layers;
@@ -336,9 +384,12 @@ bool SceneRenderer::RecordDepthOfField(VkCommandBuffer cmd, const ScreenSettings
     push.ids = glm::uvec4(gpu::kImgDofHalf, 0, 1, post_view_);
     push.f2 = rt(dof_quarter_[0]);
     PostPass(cmd, dof_quarter_[0], dof_down_, push);
-    push.ids = glm::uvec4(gpu::kImgDofQuarterA, 0, 1, post_view_);
-    push.f2 = rt(dof_eighth_[0]);
-    PostPass(cmd, dof_eighth_[0], dof_down_, push);
+
+    if ((screen.dof_flags & 1u) == 0) {
+        push.ids=glm::uvec4(gpu::kImgDofQuarterA,0,1,post_view_);
+        push.f2=rt(dof_eighth_[0]);
+        PostPass(cmd,dof_eighth_[0],dof_down_,push);
+    }
 
     const float far_size = std::max(4.0f, std::min(s, 10.0f));
     const float far_span = std::max(0.0001f, far_size - 4.0f);

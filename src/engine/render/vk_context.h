@@ -94,7 +94,11 @@ public:
     void RetireTextureUploads(bool wait = false);
     struct TextureUploadStats { uint64_t submitted=0, waits=0, peak_bytes=0; double wait_ms=0; };
     const TextureUploadStats& UploadStats() const { return texture_upload_stats_; }
+    std::function<bool()> wait_graphics;
+    bool WaitForTextureMutation();
     bool Upload(Buffer& dst, const void* data, VkDeviceSize size);
+    bool UploadMesh(Buffer& vertices, const void* vertex_data, VkDeviceSize vertex_bytes,
+                    Buffer& indices, const void* index_data, VkDeviceSize index_bytes);
 
     VkInstance instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;

@@ -24,6 +24,8 @@
 #include "engine/render/raytracing.h"
 #include "engine/render/render_util.h"
 #include "engine/render/shadow_cache.h"
+#include "engine/render/shadow_template_pool.h"
+#include "engine/render/dynamic_resolution.h"
 #include "engine/render/shadow_atlas.h"
 #include "engine/render/renderer.h"
 #include "engine/render/scene_lighting.h"
@@ -96,6 +98,7 @@ struct SceneFilterContext {
     VkFormat color_format = VK_FORMAT_UNDEFINED;
     VkImageView source = VK_NULL_HANDLE;
     VkImageView depth_view = VK_NULL_HANDLE;
+    VkImageLayout depth_layout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
     float exposure = 1.0f;
     uint32_t frame_index = 0;
     // the effect layers to draw: bit 0 the lens flares, bit 1 the screen sprites
@@ -195,6 +198,8 @@ struct RenderStats {
     bool probe_map_used = false;
     uint64_t probe_covered_pixels = 0;
     float lighting_ms[3] = {}; // AO, probes/resolve, direct lights
+    float post_ms[8] = {}; // flare, tonemap, AA/DOF, motion, grade, history blur, banding, screen
+    float dynamic_shared_mb=0;
     std::array<uint32_t, 4> shadow_misses{}; // cold, dynamic/disabled, projection, casters
     // the port's device memory (VMA blocks) when the frame was recorded, in MiB
     float device_mb = 0.0f;
@@ -249,9 +254,11 @@ public:
     std::function<void(const SceneVfxContext&)> vfx_forward;
     std::function<bool()> vfx_offscreen_available;
     std::function<void(const SceneFilterContext&)> vfx_filter;
+    std::function<bool()> vfx_filter_samples_scene;
     const RenderStats& Stats() const { return stats_; }
     UpscaleSettings upscale;
     const UpscaleStats& UpscaleStatistics() const { return upscale_stats_; }
+    void SetFrameTarget(int fps){target_fps_=fps;}
     bool UpscalerAvailable(UpscalerKind kind, std::string& reason);
     // PT_TARGET_DUMP (a tool for comparisons with the capture's render target dumps): the next rendered frame keeps raw
     // copies of the main view's HDR image after the composition, the forward draws and the effects; DumpTargets then
@@ -275,6 +282,8 @@ private:
         vk::Buffer luminance;
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkDescriptorSet post_set = VK_NULL_HANDLE;
+        VkDescriptorSet base_set=VK_NULL_HANDLE,base_post_set=VK_NULL_HANDLE;
+        VkDescriptorPool pass_pool=VK_NULL_HANDLE;uint64_t descriptor_serial=UINT64_MAX,base_mapping_epoch=UINT64_MAX;
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool upscale_queries = VK_NULL_HANDLE;
         bool upscale_timed = false;
@@ -343,7 +352,10 @@ private:
     bool EnsureTargets(VkExtent2D extent, VkExtent2D output, bool upscaling);
     void DestroyTargets();
     bool EnsureOptionalTargets(VkExtent2D extent,VkExtent2D output,bool upscaling,bool initialize=true);
-    void WriteImageDescriptors();
+    void ReleaseDisabledTargets();
+    void WriteImageDescriptors(bool current_only=false);
+    void ResetPassDescriptors();
+    bool AllocatePassDescriptors(std::array<VkDescriptorSet,2>& sets);
     bool CreateTarget(RenderTarget& target, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage, VkImageAspectFlags aspect);
     bool UploadImage(vk::Image& image, VkFormat format, VkExtent3D extent, const void* data, size_t size);
     bool UploadImageMips(vk::Image& image, VkFormat format, VkExtent3D extent, const std::vector<std::vector<uint8_t>>& mips);
@@ -421,7 +433,7 @@ private:
     // 0 start, 1 shadows, 2 mirror, 3 G-buffer, 4 lighting, 5 compose, forward and effects, 6 end; within them 7 the forward draws,
     // 8 the upscale inputs, 9 the reflections, 10 the upscaler, 11 the bloom (written on every frame, in place when a pass is off)
     // 12 ends ray structure preparation, separating it from shadow-map rendering.
-    static constexpr uint32_t kTimestamps = 22;
+    static constexpr uint32_t kTimestamps = 30;
     static constexpr uint32_t kReflectMapSize = 512;
     static constexpr float kCameraCutDistance = 3.0f;
 
@@ -484,6 +496,8 @@ private:
     std::array<ShadowMapState, 16> shadow_static_states_;
     std::array<std::vector<const Draw*>, 16> shadow_static_casters_;
     bool shadow_static_unavailable_=false;
+    std::array<int,16> shadow_static_owners_{};
+    std::array<VkOffset2D,16> shadow_static_offsets_{};
     std::vector<ShadowCasterState> shadow_draw_states_;
     std::vector<uint8_t> shadow_draw_state_ready_;
     std::vector<uint8_t> shadow_draw_stable_;
@@ -510,7 +524,22 @@ private:
     // this frame's upscaler colour is the handy light demodulated copy in opaque_ (upscale_demod.frag)
     bool handy_demod_ = false;
     RenderTarget exposure_image_;
+    struct TargetBank { VkExtent2D render{},output{};std::vector<RenderTarget> targets;SubsurfacePass::TargetState subsurface; };
+    std::vector<TargetBank> target_banks_;
+    uint64_t target_mapping_epoch_=0;
+    bool dynamic_warmed_=false,dynamic_unavailable_=false,dynamic_warming_=false;
+    DynamicResolution dynamic_resolution_;
+    int target_fps_=60;
+    float warmed_floor_=0;
+    std::vector<RenderTarget*> BankTargets();
+    std::vector<RenderTarget*> SharedTargets();
+    void DropTargetBanks();
+    bool SwitchTargetBank(VkExtent2D render,VkExtent2D output);
+    void WarmDynamicTargets(VkExtent2D output);
     RenderTarget upscaled_;
+    RenderTarget sgsr_motion_,sgsr_history_[2];
+    VkPipeline sgsr_convert_=VK_NULL_HANDLE,sgsr_upscale_=VK_NULL_HANDLE;
+    uint32_t sgsr_history_index_=0;float sgsr_exposure_=1.0f;
     RenderTarget post_hdr_;
     RenderTarget post_depth_;
     RenderTarget post_object_velocity_;
@@ -580,6 +609,8 @@ private:
     VkPipeline fsblur_ = VK_NULL_HANDLE;
     VkPipeline banding_ = VK_NULL_HANDLE;
     VkPipeline screen_fx_ = VK_NULL_HANDLE;
+    VkPipeline tonemap_screen_=VK_NULL_HANDLE;
+    VkPipeline grade_screen_=VK_NULL_HANDLE;
     VkPipeline debug_ = VK_NULL_HANDLE;
     VkPipeline reflect_make_ = VK_NULL_HANDLE;
     VkPipeline reflect_blend_ = VK_NULL_HANDLE;
@@ -595,6 +626,7 @@ private:
     VkPipeline up_object_motion_ = VK_NULL_HANDLE;
     VkPipeline up_reactive_ = VK_NULL_HANDLE;
     VkPipeline up_resolve_ = VK_NULL_HANDLE;
+    VkPipeline up_resolve_static_=VK_NULL_HANDLE;
     VkPipeline up_demod_ = VK_NULL_HANDLE;
 
     // ray traced shadows: created only on a device with ray queries (vk::Context::ray_query)

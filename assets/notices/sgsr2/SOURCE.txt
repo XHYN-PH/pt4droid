@@ -1,0 +1,4 @@
+Qualcomm Snapdragon Game Super Resolution 2
+https://github.com/SnapdragonStudios/snapdragon-gsr
+Revision d926f074bcb9d714e179f1ce0fcb9ee2eeb5074e
+Two-pass fragment implementation; engine descriptors, reverse-Z and UV motion adapters.

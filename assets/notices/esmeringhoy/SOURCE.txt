@@ -1,0 +1,12 @@
+ESMERINGHOY 27.0.0-devel — pt4droid driver package
+
+Based on StevenMXZ Turnip Gen8 V38 Patched, Mesa 27.0.0-devel (git-f28352d117).
+Upstream author: StevenMXZ and Mesa/Freedreno contributors; upstream patches are credited by the release.
+Release: https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/tag/v27.0.0-R1
+Source/recipe: https://github.com/StevenMXZ/Adreno-Tools-Drivers/tree/b3b32ad30e7d7b4bd897e678af064036eeb9df09
+Release references https://github.com/whitebelyash/mesa-unified/tree/turnip/gen8 and Mesa upstream, plus WinNative/Vauzi patches.
+Archive SHA-256: 2bbb279a3da7680503a54a51a3051c7a4302c8fb2a089f8b183b4b5d6ba9ac17
+Library SHA-256: 7b0b16fb0c8fb7854868e77eb8b284a1e95789e32c1fd8b545ed91165bf78189
+
+The Mesa library bytes are unchanged from the upstream release. ESMERINGHOY 27.0.0-devel is the requested package/in-app name, not a claim of independently authored or recompiled Mesa code. pt4droid supplies selectable Turnip rendering profiles before driver initialization; these profiles do not apply automatically in other apps. No profile is claimed faster without phone measurements. No GPU clocks, kernel, compression, LRZ or shader-precision changes are applied by the package.
+The upstream Gen8 package targets A8xx; A7xx/Adreno750 use requires device comparison. Stock/system driver choices remain available. Full corresponding upstream patches and build recipe must be reconciled before a reproducible custom-source rebuild can be claimed.

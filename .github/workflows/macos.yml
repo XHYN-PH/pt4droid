@@ -14,6 +14,8 @@ permissions:
 
 jobs:
   app:
+    # Android releases carry their own signed APK and do not need desktop assets.
+    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'pt4droid-')
     strategy:
       fail-fast: false
       matrix:

@@ -23,6 +23,7 @@ public:
     uint32_t Texture(const std::string& path);
     // queues the textures not loaded yet for TextureManager::DecodeAhead
     void DecodeAhead(const std::vector<std::string>& paths);
+    void Prewarm(const vfx::EffectDef& effect);
     // cube slot of a liquid's reflection cube, vfx::kNoTexture when the file is missing or not a cube map
     uint32_t Cube(const std::string& path);
     // takes the list and hands back the previous one, cleared with its capacity kept, for the next frame's build
@@ -33,6 +34,7 @@ public:
     void RecordFilter(const SceneFilterContext& context);
     const vfx::RenderList& List() const { return list_; }
     bool HasOffscreenDraws() const;
+    bool FilterSamplesScene() const {for(const auto& d:list_.draws)if(d.count&&d.layer==vfx::Layer::Screen&&d.refract)return true;return false;}
 
 private:
     struct PipelineKey {
@@ -55,6 +57,7 @@ private:
         VkDescriptorSet effects = VK_NULL_HANDLE;
         VkImageView forward_view = VK_NULL_HANDLE;
         VkImageView filter_view = VK_NULL_HANDLE;
+        VkImageLayout filter_layout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageView effects_depth_view = VK_NULL_HANDLE;
         VkImageView forward_scene = VK_NULL_HANDLE;
         VkImageView filter_scene = VK_NULL_HANDLE;
@@ -81,6 +84,9 @@ private:
     VkShaderModule vertex_ = VK_NULL_HANDLE;
     VkShaderModule fragment_ = VK_NULL_HANDLE;
     std::vector<std::pair<PipelineKey, VkPipeline>> pipelines_;
+    struct PipelineFailure { PipelineKey key; uint64_t retry=0; uint32_t attempts=0; };
+    std::vector<PipelineFailure> pipeline_failures_;
+    void Prewarm(const vfx::RenderList& list);
     FrameSlot slots_[Renderer::kFramesInFlight];
     std::unordered_map<std::string, uint32_t> texture_cache_;
     std::unordered_map<std::string, uint32_t> cube_cache_;

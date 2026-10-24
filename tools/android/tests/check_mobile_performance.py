@@ -53,7 +53,7 @@ int main(int argc,char** argv){
  });
  assert(extensions.size()==2&&std::string(extensions[0].data())=="VK_GOOGLE_display_timing");
  assert(argc==2);storage=argv[1];auto defaults=pt::android::PerformanceOptions();
- assert(!defaults.frame_pacing&&!defaults.sgsr&&!defaults.sustained&&!defaults.invert_y);
+ assert(!defaults.frame_pacing&&!defaults.sgsr&&!defaults.sustained&&!defaults.invert_y&&defaults.lens_flares);
  assert(defaults.mouse_sensitivity==1&&defaults.controller_sensitivity==1);
  defaults.controller_sensitivity=.5f;assert(pt::MobileControllerSensitivity(1,defaults,false)==.5f);
  assert(pt::MobileControllerSensitivity(2,defaults,true)==2);defaults.controller_sensitivity=1;
@@ -75,10 +75,15 @@ int main(int argc,char** argv){
  assert(o.sharpness==2&&o.mouse_sensitivity==.25f&&o.controller_sensitivity==3&&o.ao_quality==1&&o.reflection_quality==1);
  for(int requested:{0,20,30,60,90,120,144})for(int status=-2;status<=9;++status){
   Java_com_ptport_app_PTActivity_nativeThermalStatus(nullptr,nullptr,status);
-  int expected=status<2?requested:status>=4?20:status>=3?30:45;
-  if(status>=2&&requested>0)expected=std::min(requested,expected);
+  int expected=requested;
   assert(pt::android::EffectiveFrameLimit(requested)==expected);
  }
+ config("output_scale=0.9\nflare_halo=0.2\n");assert(pt::android::PerformanceOptions().output_scale==.9f&&pt::android::PerformanceOptions().flare_halo==.2f);
+ config("output_scale=-4\nflare_halo=9\n");assert(pt::android::PerformanceOptions().output_scale==.8f&&pt::android::PerformanceOptions().flare_halo==1.f);
+ config("output_scale=nan\nflare_halo=nan\n");assert(pt::android::PerformanceOptions().output_scale==1.f&&pt::android::PerformanceOptions().flare_halo==.2f);
+ config("lens_flares=0\n");assert(!pt::android::PerformanceOptions().lens_flares);
+ config("lens_flares=1\n");assert(pt::android::PerformanceOptions().lens_flares);
+ config("lens_flares=nan\n");assert(pt::android::PerformanceOptions().lens_flares);
  config("sharpness=nan\nmouse_sensitivity=inf\ncontroller_sensitivity=1xyz\nsharpness=\nmouse_sensitivity=\n");
  o=pt::android::PerformanceOptions();assert(o.sharpness==1&&o.mouse_sensitivity==1&&o.controller_sensitivity==1&&!o.sustained);
  assert(pt::android::IsMaliGpu("Mali-G615 MC6")&&pt::android::IsMaliGpu("Immortalis-G720")&&!pt::android::IsMaliGpu("Adreno 750"));

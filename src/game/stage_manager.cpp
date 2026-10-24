@@ -1,3 +1,4 @@
+#include "engine/core/hitch_trace.h"
 #include "game/stage_manager.h"
 #include "engine/physics/collision_retirement.h"
 
@@ -663,8 +664,8 @@ bool StageManager::ChangeStageId(const std::string& from, const std::string& to)
     stage->label = to;
     stages_[to] = std::move(stage);
     MarkVisualsDirty();
-    // the collision worlds list the stages in label order: the next update rebuilds them in the new order, as the next rebuild
-    // after a rename always did
+    // Reconcile labels on the next update. Unchanged geometry can retain its
+    // grid if the surviving owners still have the same relative order.
     MarkCollisionDirty();
     LogInfo("stage: {} renamed to {}", from, to);
     return true;
@@ -916,6 +917,11 @@ void StageManager::BuildWorlds(const std::vector<CollisionEntry>& entries, Colli
             const Stage::CollisionPiece& piece = *entries[e].piece;
             Stage::CollisionPiece::Cache& cache = piece.cache;
             const glm::mat4 transform = entries[e].stage->file_to_world * piece.file_transform;
+            if (cache.owner.empty() || cache.owner_label != entries[e].label) {
+                const StageData* file = piece.entity ? entries[e].stage->FileOf(piece.entity) : nullptr;
+                cache.owner_label = entries[e].label;
+                cache.owner = file ? entries[e].label + ":" + file->file->EntityName(*piece.entity) : entries[e].label;
+            }
             if (cache.valid && cache.transform == transform) {
                 continue;
             }
@@ -956,11 +962,7 @@ void StageManager::BuildWorlds(const std::vector<CollisionEntry>& entries, Colli
                                               glm::vec3(transform * glm::vec4(t.c, 1.0f)), t.material});
                 }
             }
-            if (cache.owner.empty() || cache.owner_label != entries[e].label) {
-                const StageData* file = piece.entity ? entries[e].stage->FileOf(piece.entity) : nullptr;
-                cache.owner_label = entries[e].label;
-                cache.owner = file ? entries[e].label + ":" + file->file->EntityName(*piece.entity) : entries[e].label;
-            }
+
         }
     });
     owners.clear();
@@ -998,6 +1000,7 @@ void StageManager::BuildWorlds(const std::vector<CollisionEntry>& entries, Colli
 
 void StageManager::BuildCollision(CollisionWorld& world, std::vector<SurfaceTriangle>* surfaces, CollisionWorld* lines,
                                   CollisionWorld* reflections) {
+    hitch::Scope hitch_scope("collision build");
     const auto start = std::chrono::steady_clock::now();
     DropCollisionBuild();
     collision_deferrable_ = false;
@@ -1006,9 +1009,18 @@ void StageManager::BuildCollision(CollisionWorld& world, std::vector<SurfaceTria
     const bool same_world=last_collision_world_==&world && last_line_world_==lines && last_reflection_world_==reflections;
     const bool valid_owners=std::all_of(collision_owners_.begin(),collision_owners_.end(),[&](const auto& owner){return owner.world<world.OwnerCount() && (!lines||owner.line==UINT32_MAX||owner.line<lines->OwnerCount()) && (!reflections||owner.reflection==UINT32_MAX||owner.reflection<reflections->OwnerCount());});
     const bool same=same_world && valid_owners && RetireCollisionOwners(collision_owners_,entries,
-        [](const auto& owner,const auto& e){return e.stage==owner.stage && e.stage->id==owner.stage_id && e.piece==owner.piece && e.piece->cache.valid && owner.label==e.label && owner.walk_detail==e.stage->walk_detail_surfaces && owner.transform==e.stage->file_to_world*e.piece->file_transform;},
+        [](const auto& owner,const auto& e){return e.stage==owner.stage && e.stage->id==owner.stage_id && e.piece==owner.piece && e.piece->cache.valid && owner.walk_detail==e.stage->walk_detail_surfaces && owner.transform==e.stage->file_to_world*e.piece->file_transform;},
         [&](const auto& owner){world.SetOwnerActive(owner.world,false);if(lines&&owner.line!=UINT32_MAX)lines->SetOwnerActive(owner.line,false);if(reflections&&owner.reflection!=UINT32_MAX)reflections->SetOwnerActive(owner.reflection,false);});
-    if (!same) {
+    if (same) {
+        for(size_t i=0;i<collision_owners_.size();++i) {
+            auto& owner=collision_owners_[i];const auto& label=entries[i].label;
+            if(owner.label==label)continue;
+            world.RelabelOwner(owner.world,owner.label,label);
+            if(lines&&owner.line!=UINT32_MAX)lines->RelabelOwner(owner.line,owner.label,label);
+            if(reflections&&owner.reflection!=UINT32_MAX)reflections->RelabelOwner(owner.reflection,owner.label,label);
+            owner.label=label;
+        }
+    } else {
         // Build into empty worlds; release the previous BVHs away from the tick
         // that switches the player's collision. Their owners are no longer read.
         auto retired = std::make_unique<PendingCollision>();
@@ -1041,6 +1053,7 @@ void StageManager::StartCollisionBuild() {
 
 void StageManager::FinishCollisionBuild(CollisionWorld& world, std::vector<SurfaceTriangle>* surfaces, CollisionWorld& lines,
                                         CollisionWorld& reflections) {
+    hitch::Scope hitch_scope("collision adoption");
     if (!pending_collision_) {
         return;
     }

@@ -789,19 +789,10 @@ void VfxScene::PrepareList(Game& game, const Camera& camera, float aspect, Scene
         }
         return s;
     };
-    resolved_textures_.clear(); resolved_cubes_.clear();
-    const vfx::TextureResolver textures = [this, &pass](const std::string& path) {
-        if (auto it=resolved_textures_.find(path); it!=resolved_textures_.end()) return it->second;
-        const uint32_t handle=pass.Texture(path);
-        if (handle!=TextureManager::kWhite) resolved_textures_.emplace(path, handle);
-        return handle;
-    };
-    const vfx::TextureResolver cubes = [this, &pass](const std::string& path) {
-        if (auto it=resolved_cubes_.find(path); it!=resolved_cubes_.end()) return it->second;
-        const uint32_t handle=pass.Cube(path);
-        if (handle!=TextureManager::kNoCube) resolved_cubes_.emplace(path, handle);
-        return handle;
-    };
+    // VfxPass already owns lifetime-scoped caches and retries unresolved slots.
+    // Avoid allocating and freeing a duplicate map of names every rendered frame.
+    const vfx::TextureResolver textures = [&pass](const std::string& path) {return pass.Texture(path);};
+    const vfx::TextureResolver cubes = [&pass](const std::string& path) {return pass.Cube(path);};
     static const bool legacy_lit = [] {
         const char* v = std::getenv("PT_VFX_LIT_LEGACY");
         return v && v[0] == '1';
@@ -825,6 +816,7 @@ void VfxScene::PrepareList(Game& game, const Camera& camera, float aspect, Scene
         };
         for (const std::string& path : preload_) {
             system_.Preload(path, collect, cubes);
+            if(auto effect=system_.Load(path))pass.Prewarm(*effect);
         }
         preload_.clear();
         pass.DecodeAhead(ahead);

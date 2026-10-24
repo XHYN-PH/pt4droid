@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <utility>
 #include <vector>
 
@@ -58,6 +59,8 @@ public:
     const SubmissionTiming& LastSubmissionTiming() const { return submission_timing_; }
     void Resize(uint32_t width, uint32_t height);
     void SetVsync(bool enabled);
+    bool QueueScreenshot(const std::filesystem::path& path,glm::vec4 crop,std::function<void(bool)> complete);
+    void PollScreenshots();
     bool SaveScreenshot(const std::filesystem::path& path, glm::vec4 crop = {0.0f, 0.0f, 1.0f, 1.0f});
 
     vk::Context& Context() { return ctx_; }
@@ -65,6 +68,7 @@ public:
     const vk::Image& SceneColor() const { return scene_color_; }
     VkExtent2D RenderExtent() const { return {scene_color_.extent.width, scene_color_.extent.height}; }
     uint32_t FrameIndex() const { return frame_index_; }
+    uint64_t FrameSerial() const {return frame_serial_;}
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
     VkFormat SceneColorFormat() const { return output_mode_ == RendererOutputMode::Sdr ? kSceneColorFormat : VK_FORMAT_R16G16B16A16_SFLOAT; }
@@ -92,6 +96,9 @@ public:
     static constexpr VkExtent2D kHudExtent{1920, 1080};
 
 private:
+    struct PendingPhoto {std::future<bool> result;std::function<void(bool)> complete;};
+    std::vector<PendingPhoto> photos_;
+    uint64_t frame_serial_=0;
     struct Frame {
         VkCommandPool pool = VK_NULL_HANDLE;
         VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -121,6 +128,8 @@ private:
     uint32_t image_index_ = 0;
     bool swapchain_dirty_ = false;
     bool mobile_sgsr_ = false;
+    bool mobile_temporal_ = false;
+    float mobile_output_scale_ = 1.f;
     bool imgui_ready_ = false;
     bool output_ready_ = false;
     bool final_ready_ = false;
@@ -147,6 +156,7 @@ private:
     // VR (SetRenderExtent, SetXrFrame)
     VkExtent2D render_extent_{0, 0};
     bool presenting_ = false;
+    bool recording_ = false;
     XrFrame xr_frame_;
     bool xr_pending_ = false;
     vk::Image hud_;

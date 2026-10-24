@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory() as temp:
     data = root / 'hallway.fox2'
     data.write_bytes(fixture())
     lua = repo / 'build/android/_deps/lua51-src/src'
-    cc = [os.environ.get('CC', 'gcc'), '-std=c99', '-O2', '-DLUA_USE_POSIX', '-D_POSIX_C_SOURCE=200809L', '-I' + str(lua)]
+    cc = [os.environ.get('CC', 'gcc'), '-std=c99', '-O2', '-DLUA_USE_POSIX', '-D_DEFAULT_SOURCE', '-D_POSIX_C_SOURCE=200809L', '-I' + str(lua)]
     objects = []
     for source in sorted(lua.glob('*.c')):
         if source.stem in ('lua', 'luac', 'print'):

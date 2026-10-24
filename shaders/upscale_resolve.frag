@@ -17,6 +17,7 @@ layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec4 out_depth;
 layout(location = 2) out vec4 out_velocity;
+layout(constant_id=0) const uint WRITE_VELOCITY=1u;
 
 // The accumulated floor reflection (reflect_temporal.frag's history, slot ids.z; 0 none) at a render position: bilinear over the
 // floor texels (amount -1 off the floors counts as no reflection)
@@ -40,8 +41,8 @@ void main() {
     vec2 render_uv = uv + pass.f0.xy;
     vec4 source = Img(IMG_HDR, SMP_LINEAR_CLAMP, render_uv);
     vec3 color = source.rgb;
-    if (pass.ids.x == 1u) {
-        color = ImgFetch(IMG_UPSCALED, ivec2(gl_FragCoord.xy)).rgb;
+    if (pass.ids.x == 1u || pass.ids.x >= 3u) {
+        color = ImgFetch(pass.ids.x >= 3u ? pass.ids.x : IMG_UPSCALED, ivec2(gl_FragCoord.xy)).rgb;
         // the handy light back on the upscaled colour (upscale_demod.frag), its factor at this output pixel's render position
         if (pass.f1.z > 0.5) {
             color *= Img(IMG_HANDY_FACTOR, SMP_LINEAR_CLAMP, render_uv).x;
@@ -64,5 +65,5 @@ void main() {
     ivec2 nearest = clamp(ivec2(floor(render_uv * pass.f1.xy)), ivec2(0), size - 1);
     out_color = vec4(color, source.a);
     out_depth = vec4(ImgFetch(IMG_DEPTH, nearest).x, 0.0, 0.0, 0.0);
-    out_velocity = ImgFetch(pass.ids.y, nearest);
+    if(WRITE_VELOCITY!=0u)out_velocity = ImgFetch(pass.ids.y, nearest);
 }

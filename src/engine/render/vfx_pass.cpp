@@ -1,4 +1,5 @@
 #include "engine/render/vfx_pass.h"
+#include "engine/render/vfx_order.h"
 
 #include "engine/render/pipeline_cache_store.h"
 
@@ -181,6 +182,7 @@ void VfxPass::Shutdown() {
         vkDestroyPipeline(device_, pipeline, nullptr);
     }
     pipelines_.clear();
+    pipeline_failures_.clear();
     for (FrameSlot& slot : slots_) {
         renderer_->Context().DestroyBuffer(slot.quads);
         renderer_->Context().DestroyBuffer(slot.fog);
@@ -266,21 +268,10 @@ void VfxPass::Submit(vfx::RenderList& list) {
         textures_->BeginTextureUse();
         for(const auto& q:list.quads){textures_->Touch(q.info.x);if(q.info.y & vfx::kQuadLiquid)textures_->TouchCube(q.info.z);else if(q.info.y & vfx::kQuadRain)textures_->Touch(q.info.z);}
     }
+    Prewarm(list);
     std::swap(list_, list);
     list.Clear();
-    order_.resize(list_.draws.size());
-    std::iota(order_.begin(), order_.end(), 0u);
-    std::stable_sort(order_.begin(), order_.end(), [&](uint32_t a, uint32_t b) {
-        const vfx::Draw& da = list_.draws[a];
-        const vfx::Draw& db = list_.draws[b];
-        if (da.layer != db.layer) {
-            return da.layer < db.layer;
-        }
-        if (da.layer == vfx::Layer::Screen) {
-            return da.priority < db.priority;
-        }
-        return da.depth > db.depth;
-    });
+    UpdateVfxOrder(order_,list_.draws);
     ++generation_;
 }
 
@@ -290,6 +281,8 @@ VkPipeline VfxPass::Pipeline(const PipelineKey& key) {
             return p;
         }
     }
+    auto failure = std::find_if(pipeline_failures_.begin(), pipeline_failures_.end(), [&](const auto& f){ return f.key == key; });
+    if (failure != pipeline_failures_.end() && generation_ < failure->retry) return VK_NULL_HANDLE;
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex_, "main", nullptr};
     stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragment_, "main", nullptr};
@@ -339,11 +332,49 @@ VkPipeline VfxPass::Pipeline(const PipelineKey& key) {
     info.pDynamicState = &dynamic;
     info.layout = layout_;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (!vk::Check(vk::CreateGraphicsPipelinesCached(device_, 1, &info, nullptr, &pipeline), "vfx pipeline")) {
-        pipeline = VK_NULL_HANDLE;
+    const VkResult result = vk::CreateGraphicsPipelinesCached(device_, 1, &info, nullptr, &pipeline);
+    if (!vk::Check(result, "vfx pipeline")) {
+        renderer_->Context().CheckDeviceLost(result, "vfx pipeline creation");
+        if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+        if (failure == pipeline_failures_.end()) {
+            pipeline_failures_.push_back({key, generation_ + 30, 1});
+        } else {
+            failure->attempts = std::min(failure->attempts + 1, 6u);
+            failure->retry = generation_ + std::min(600u, 30u << failure->attempts);
+        }
+        return VK_NULL_HANDLE;
     }
+    if (failure != pipeline_failures_.end()) pipeline_failures_.erase(failure);
     pipelines_.emplace_back(key, pipeline);
     return pipeline;
+}
+
+void VfxPass::Prewarm(const vfx::EffectDef& effect) {
+    vfx::RenderList list;
+    for(const auto& shape:effect.shapes) {
+        if(shape.kind==vfx::ShapeKind::PointLight||shape.kind==vfx::ShapeKind::SpotLight)continue;
+        vfx::Draw d;d.count=1;d.layer=shape.kind==vfx::ShapeKind::Sprite2D?vfx::Layer::Screen:vfx::Layer::World;
+        d.blend=shape.material.blend;d.cull=shape.kind==vfx::ShapeKind::Model&&shape.cull_face;
+        d.refract=shape.material.kind==vfx::MaterialKind::Liquid;d.opaque=shape.material.opaque;list.draws.push_back(d);
+    }
+    if(!effect.flares.empty()){vfx::Draw flare;flare.layer=vfx::Layer::Flare;flare.blend=vfx::BlendMode::Add;flare.count=1;list.draws.push_back(flare);}
+    Prewarm(list);
+}
+
+void VfxPass::Prewarm(const vfx::RenderList& list) {
+    // Compile only variants used by this effect set, before command recording.
+    // First demand still has a bounded fallback if a loading-time variant was absent.
+    for (const auto& d : list.draws) {
+        if (!d.count) continue;
+        if (d.layer == vfx::Layer::World) {
+            const bool offscreen = vfx::BufferedEffect(d, std::getenv("PT_VFX_LIQUID_SCENE") != nullptr);
+            Pipeline({SceneRenderer::kHdrTargetFormat, SceneRenderer::kDepthTargetFormat,
+                      uint8_t(d.blend), true, d.cull, offscreen});
+        } else {
+            Pipeline({d.layer == vfx::Layer::Screen ? renderer_->SceneColorFormat() : SceneRenderer::kPostTargetFormat,
+                      VK_FORMAT_UNDEFINED, uint8_t(d.blend), false, d.cull, false});
+        }
+    }
 }
 
 void VfxPass::WriteSet(FrameSlot& slot, VkDescriptorSet set, VkImageView view, VkImageLayout depth_layout, VkImageView scene,
@@ -515,9 +546,10 @@ void VfxPass::RecordFilter(const SceneFilterContext& context) {
         return;
     }
     FrameSlot& slot = slots_[frame];
-    if (slot.filter_view != context.depth_view || slot.filter_scene != context.source) {
-        WriteSet(slot, slot.filter, context.depth_view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, context.source, kFogStride);
+    if (slot.filter_view != context.depth_view || slot.filter_layout != context.depth_layout || slot.filter_scene != context.source) {
+        WriteSet(slot, slot.filter, context.depth_view, context.depth_layout, context.source, kFogStride);
         slot.filter_view = context.depth_view;
+        slot.filter_layout = context.depth_layout;
         slot.filter_scene = context.source;
     }
     for (const vfx::Layer layer : {vfx::Layer::Flare, vfx::Layer::Screen}) {

@@ -19,6 +19,8 @@ TURNIP_URL="https://github.com/MrPurple666/purple-turnip/releases/download/vturn
 TURNIP_SHA256="f65b2d3353fd4aa7190bb5426b94468e99ffea7a58a830bc0c4651db89353227"
 PANVK_URL="https://github.com/zenithblue-oss/panvk-kbase-android/releases/download/panvk-kbase-v0.1.0-rc3/libvulkan_panfrost-android-aarch64.so"
 PANVK_SHA256="b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445"
+ESMERINGHOY_URL="https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/download/v27.0.0-R1/Turnip_Gen8_V38_Patched.zip"
+ESMERINGHOY_SHA256="2bbb279a3da7680503a54a51a3051c7a4302c8fb2a089f8b183b4b5d6ba9ac17"
 
 cmake -G Ninja -S "$ROOT" -B "$BUILD" \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
@@ -72,6 +74,12 @@ if [ ! -f "$PANVK_LIB" ] || ! echo "$PANVK_SHA256  $PANVK_LIB" | sha256sum -c --
 fi
 echo "$PANVK_SHA256  $PANVK_LIB" | sha256sum -c
 cp "$PANVK_LIB" "$LIBS/libvulkan_panfrost.so"
+ESMERINGHOY_ZIP="$BUILD/esmeringhoy-r1-base.zip"
+if [ ! -f "$ESMERINGHOY_ZIP" ] || ! echo "$ESMERINGHOY_SHA256  $ESMERINGHOY_ZIP" | sha256sum -c --status; then
+  curl -fsSL -o "$ESMERINGHOY_ZIP" "$ESMERINGHOY_URL"
+fi
+echo "$ESMERINGHOY_SHA256  $ESMERINGHOY_ZIP" | sha256sum -c
+unzip -p "$ESMERINGHOY_ZIP" libvulkan_freedreno.so > "$LIBS/libvulkan_esmeringhoy.so"
 
 mkdir -p "$APP/assets/notices"
 cp -R "$ROOT"/assets/notices/* "$APP/assets/notices/"

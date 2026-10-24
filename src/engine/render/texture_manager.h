@@ -197,6 +197,10 @@ private:
         bool failed=false;
     };
     std::unordered_map<uint32_t,ConvertedImage> converted_images_;
+    std::unordered_map<uint32_t,uint64_t> texture_generations_;
+    std::unordered_map<uint32_t,std::shared_future<std::shared_ptr<const BcMipChain>>> restore_jobs_;
+    bool asynchronous_residency_=true;
+    uint64_t residency_ceiling_=0;
     std::unordered_set<uint32_t> texture_use_;
     uint64_t texture_epoch_=1, residency_limit_=512ull*1024*1024;
     bool residency_warning_=false;

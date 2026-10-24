@@ -1,4 +1,6 @@
+#include "engine/core/hitch_trace.h"
 #include "engine/render/vk_context.h"
+#include <fstream>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -344,6 +346,18 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
         return false;
     }
     LogInfo("vulkan: using {} (driver {:X})", properties.deviceName, properties.driverVersion);
+    VkPhysicalDeviceDriverProperties driver_properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 detailed_properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};detailed_properties.pNext=&driver_properties;
+    vkGetPhysicalDeviceProperties2(physical,&detailed_properties);
+    LogInfo("vulkan: driver identity {} / {} (ID {}, vendor {:X}, device {:X})",driver_properties.driverName,driver_properties.driverInfo,
+        uint32_t(driver_properties.driverID),properties.vendorID,properties.deviceID);
+#ifdef __ANDROID__
+    if(const char* root=SDL_GetAndroidInternalStoragePath()) {
+        std::ofstream runtime(std::filesystem::path(root)/"driver_runtime.txt");
+        runtime<<"device="<<properties.deviceName<<"\ndriver="<<driver_properties.driverName<<"\nrevision="<<driver_properties.driverInfo
+            <<"\ndriver_version="<<properties.driverVersion<<"\nrequested_turnip_profile="<<android::PerformanceOptions().turnip_profile<<'\n';
+    }
+#endif
 
 #if defined(__APPLE__) || defined(__ANDROID__)
     {
@@ -780,7 +794,8 @@ bool Context::CreateSwapchain(uint32_t width, uint32_t height, bool vsync, bool 
             logical = {extent.height, extent.width};
         }
         // Keep compositor upscaling as the fast default; full-size output is opt-in for SGSR.
-        const float scale = android::PerformanceOptions().sgsr?1.f:android::RenderScale();
+        const auto mobile=android::PerformanceOptions();
+        const float scale = (mobile.sgsr||mobile.temporal_upscaling||mobile.output_scale<1.f)?1.f:android::RenderScale();
         const VkExtent2D scaled{std::max(2u, static_cast<uint32_t>(logical.width * scale) & ~1u),
                                 std::max(2u, static_cast<uint32_t>(logical.height * scale) & ~1u)};
         extent.width = std::clamp(scaled.width, caps.minImageExtent.width, caps.maxImageExtent.width);
@@ -1238,6 +1253,44 @@ bool Context::SuboptimalNeedsRecreate() {
 #else
     return true;
 #endif
+}
+
+bool Context::WaitForTextureMutation() {
+    RetireTextureUploads(true);
+    return wait_graphics ? wait_graphics() : Check(vkDeviceWaitIdle(device), "texture mutation wait");
+}
+
+bool Context::UploadMesh(Buffer& vertices, const void* vertex_data, VkDeviceSize vertex_bytes,
+                         Buffer& indices, const void* index_data, VkDeviceSize index_bytes) {
+    hitch::Scope hitch_scope("mesh upload");
+    if (!vertices.buffer || !indices.buffer || !vertex_data || !index_data || !vertex_bytes || !index_bytes ||
+        vertex_bytes > vertices.size || index_bytes > indices.size) return false;
+    const VkDeviceSize offset = (vertex_bytes + 15) & ~VkDeviceSize(15);
+    if (offset < vertex_bytes || index_bytes > UINT64_MAX - offset) return false;
+    Buffer staging;
+    if (!CreateBuffer(staging, offset + index_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true)) return false;
+    if (!staging.mapped) { DestroyBuffer(staging); return false; }
+    std::memcpy(staging.mapped, vertex_data, size_t(vertex_bytes));
+    std::memcpy(static_cast<uint8_t*>(staging.mapped) + offset, index_data, size_t(index_bytes));
+    vmaFlushAllocation(allocator, staging.allocation, 0, staging.size);
+    const bool ok = SubmitTextureUpload([&](VkCommandBuffer cmd) {
+        VkBufferCopy v{0, 0, vertex_bytes}, i{offset, 0, index_bytes};
+        vkCmdCopyBuffer(cmd, staging.buffer, vertices.buffer, 1, &v);
+        vkCmdCopyBuffer(cmd, staging.buffer, indices.buffer, 1, &i);
+        VkBufferMemoryBarrier2 barriers[2]{};
+        for (unsigned n = 0; n < 2; ++n) {
+            auto& b = barriers[n]; b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+            b.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT; b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.buffer = n ? indices.buffer : vertices.buffer; b.size = VK_WHOLE_SIZE;
+        }
+        VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dependency.bufferMemoryBarrierCount = 2; dependency.pBufferMemoryBarriers = barriers;
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }, staging);
+    DestroyBuffer(staging); // Ownership is transferred only on successful asynchronous submission.
+    return ok;
 }
 
 bool Context::Upload(Buffer& dst, const void* data, VkDeviceSize size) {

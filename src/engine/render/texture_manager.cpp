@@ -1,3 +1,4 @@
+#include "engine/core/hitch_trace.h"
 #include "engine/core/pathcode.h"
 #include "engine/render/texture_manager.h"
 
@@ -216,6 +217,7 @@ void TextureManager::Shutdown() {
     StopDecodeWorkers();
     worker_prepared_.clear();
     read_stats_ = {};
+    restore_jobs_.clear();
     converted_images_.clear();texture_use_.clear();failed_textures_.clear();
     decoding_.clear();
     prepared_.clear();
@@ -225,7 +227,7 @@ void TextureManager::Shutdown() {
     if (!ctx_) {
         return;
     }
-    FlushUploads();ctx_->RetireTextureUploads(true);ctx_->DestroyBuffer(upload_staging_);upload_pending_.clear();upload_used_=0;upload_batch_depth_=0;fallback_bytes_=0;format_support_.clear();
+    FlushUploads();ctx_->RetireTextureUploads(true);ctx_->DestroyBuffer(upload_staging_);upload_pending_.clear();upload_used_=0;upload_batch_depth_=0;fallback_bytes_=0;format_support_.clear();texture_generations_.clear();
     for (vk::Image& image : images_) {
         ctx_->DestroyImage(image);
     }
@@ -447,6 +449,7 @@ uint32_t TextureManager::Create(const std::string& name, VkFormat format, std::s
 
 void TextureManager::WriteResidentDescriptor(uint32_t index) {
     if(index>=images_.size() || images_.size()<4)return;
+    ++texture_generations_[index];
     const VkImageView resident=images_[index].view;
     VkDescriptorImageInfo info{sampler_,cube_[index]?images_[kWhite].view:(resident?resident:images_[kWhite].view),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet writes[2]{};writes[0]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -479,6 +482,7 @@ void TextureManager::TouchMaterial(uint32_t index,bool alpha_only) {
 }
 
 void TextureManager::EvictConverted(uint64_t needed) {
+    hitch::Scope hitch_scope("texture eviction");
     if(fallback_bytes_+needed<=residency_limit_)return;
     std::vector<uint32_t> candidates;
     for(const auto& [index,entry]:converted_images_)
@@ -487,7 +491,7 @@ void TextureManager::EvictConverted(uint64_t needed) {
     if(candidates.empty())return;
     // A descriptor may still be read by the previous frame or by a queued
     // upload. Wait once for this reclamation batch, before changing any slot.
-    FlushUploads();ctx_->RetireTextureUploads(true);vkDeviceWaitIdle(ctx_->device);
+    FlushUploads();if(!ctx_->WaitForTextureMutation())return;
     for(uint32_t index:candidates){
         if(fallback_bytes_+needed<=residency_limit_)break;
         auto& entry=converted_images_.at(index);
@@ -496,8 +500,19 @@ void TextureManager::EvictConverted(uint64_t needed) {
 }
 
 void TextureManager::FinishTextureUse() {
+    hitch::Scope hitch_scope("texture residency");
     if(converted_images_.empty())return;
     ++texture_epoch_;
+    if(!residency_ceiling_)residency_ceiling_=residency_limit_;
+    if(texture_epoch_%60==0 && ctx_->memory_budget) {
+        VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};vmaGetHeapBudgets(ctx_->allocator,budgets);
+        const VkPhysicalDeviceMemoryProperties* memory=nullptr;vmaGetMemoryProperties(ctx_->allocator,&memory);
+        uint64_t available=0;
+        for(uint32_t h=0;memory&&h<memory->memoryHeapCount;++h)if(memory->memoryHeaps[h].flags&VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            available=std::max(available,budgets[h].budget>budgets[h].usage?budgets[h].budget-budgets[h].usage:0);
+        const uint64_t next=std::clamp<uint64_t>(fallback_bytes_+available/2,64ull*1024*1024,residency_ceiling_);
+        if(next+16ull*1024*1024<residency_limit_ || next>residency_limit_+16ull*1024*1024)residency_limit_=next;
+    }
     if(texture_epoch_%300==0)LogInfo("texture residency: {} converted slots, {} of {} MiB live; compatibility size {}",converted_images_.size(),fallback_bytes_/1024/1024,residency_limit_/1024/1024,
 #ifdef __ANDROID__
         android::PerformanceOptions().compat_texture_size
@@ -507,16 +522,35 @@ void TextureManager::FinishTextureUse() {
     );
     for(uint32_t index:texture_use_)if(auto it=converted_images_.find(index);it!=converted_images_.end())it->second.last_use=texture_epoch_;
     uint32_t restored=0;const auto started=std::chrono::steady_clock::now();
+    uint64_t restored_bytes=0;
+    for(auto job=restore_jobs_.begin();job!=restore_jobs_.end();) {
+        if(!texture_use_.contains(job->first)&&job->second.wait_for(std::chrono::seconds(0))==std::future_status::ready)job=restore_jobs_.erase(job);else ++job;
+    }
     for(uint32_t index:texture_use_){
         auto it=converted_images_.find(index);if(it==converted_images_.end() || images_[index].image || it->second.failed)continue;
+        if(restored && (restored_bytes>=8ull*1024*1024 || std::chrono::steady_clock::now()-started>=std::chrono::milliseconds(2)))break;
         const ConvertedImage entry=it->second;
+        std::shared_ptr<const BcMipChain> payload;
+        if(asynchronous_residency_) {
+            auto job=restore_jobs_.find(index);
+            if(job==restore_jobs_.end()) {
+                uint64_t queued=0;for(const auto& [id,task]:restore_jobs_)queued+=converted_images_.at(id).bytes;
+                if(restore_jobs_.size()<2 && (restore_jobs_.empty() || queued+entry.bytes<=64ull*1024*1024)) {
+                    try {restore_jobs_[index]=std::async(std::launch::async,[file=entry.file]{return ReadBcCache(file);}).share();}
+                    catch(const std::system_error&) {} // Retry later; preserve the valid fallback descriptor.
+                }
+                continue;
+            }
+            if(job->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready)continue;
+            try{payload=job->second.get();}catch(const std::exception& error){LogWarn("textures: cache restore failed for slot {}: {}",index,error.what());restore_jobs_.erase(index);continue;}
+        } else payload=ReadBcCache(entry.file);
+        if(!payload){it->second.failed=true;restore_jobs_.erase(index);LogError("textures: conversion backing is unreadable for slot {}",index);continue;}
         EvictConverted(entry.bytes);
         if(fallback_bytes_+entry.bytes>residency_limit_){
             if(!residency_warning_){LogWarn("textures: active converted textures exceed {} MiB; select a smaller Compatibility texture size and restart",residency_limit_/1024/1024);residency_warning_=true;}
             continue;
         }
-        auto payload=ReadBcCache(entry.file);
-        if(!payload){it->second.failed=true;LogError("textures: conversion backing is unreadable for slot {}",index);continue;}
+        if(!ctx_->WaitForTextureMutation())continue;
         std::vector<TextureMip> mips;for(uint32_t face=0;face<payload->layers;++face)for(uint32_t l=0;l<payload->levels;++l)mips.push_back({std::max(1u,payload->width>>l),std::max(1u,payload->height>>l),payload->mips[face*payload->levels+l]});
         const std::string temporary="builtin:residency-"+std::to_string(index);
         // Restore through the existing validated upload path. Its temporary
@@ -527,7 +561,7 @@ void TextureManager::FinishTextureUse() {
         restoring_=false;
         if(uploaded==kWhite)continue;
         images_[index]=images_[uploaded];images_.pop_back();cube_.pop_back();cube_slots_.erase(uploaded);by_name_.erase(temporary);
-        fallback_bytes_+=entry.bytes;WriteResidentDescriptor(index);++restored;
+        fallback_bytes_+=entry.bytes;WriteResidentDescriptor(index);++restored;restored_bytes+=entry.bytes;restore_jobs_.erase(index);
     }
     if(restored)LogDebug("textures: restored {} converted images, {} MiB live, {:.2f} ms",restored,fallback_bytes_/1024/1024,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
     // Keep the current set protected throughout the next frame's asset setup;
@@ -934,7 +968,9 @@ std::array<uint64_t,3> TextureManager::ShadowAlphaState(uint32_t index) const {
     const auto& m=materials_[index];if(!(m.flags & gpu::kMatAlphaTest))return {m.flags,0,0};
     uint32_t albedo=m.albedo;if(auto it=redirects_.find(albedo);it!=redirects_.end())albedo=it->second;
     uint32_t shown=albedo;if(enhanced_enabled_)if(auto it=enhanced_images_.find(albedo);it!=enhanced_images_.end())shown=it->second;
-    return {uint64_t(m.flags)|(uint64_t(anisotropy_)<<32),albedo,shown};
+    const auto generation = texture_generations_.find(shown);
+    return {uint64_t(m.flags)|(uint64_t(anisotropy_)<<32),(uint64_t(albedo)<<32)|shown,
+            generation==texture_generations_.end()?0:generation->second};
 }
 
 void TextureManager::FlushMaterials() {

@@ -41,10 +41,28 @@ final class SettingsPages {
             note("Changing preset can change graphics and the FPS limit. Other settings preserve your selected limit.");
             TextView caption=new TextView(activity);caption.setTextColor(MenuStyle.TEXT);column.addView(caption);caption.setText("Render scale: "+Math.round(scale[0]*100)+"%");
             MobileSettings.slider(column,"Scene resolution",Math.round(scale[0]*100)-25,75,p->{scale[0]=(p+25)/100f;caption.setText("Render scale: "+(p+25)+"%");});
+            choice("Scene output resolution","output_scale_index",new String[]{"100% • full detail","90% • sharper performance","80% • maximum performance"},0);
+            note("Output resolution reduces scene and post-processing detail while keeping menus and touch controls at display resolution. Independent of Scene resolution and graphics presets.");
             check("Optimized mobile bloom","optimized_bloom",true);
             check("Android frame pacing","frame_pacing",false);
+            check("Android performance hints","adpf",true);
+            check("Lens flares (lamp glare)","lens_flares",true);
+            choice("Lamp halo strength","flare_halo_index",new String[]{"Subtle","Balanced","Original"},1);
+            note("Controls lamp glare only. Room lighting and shadows stay active; Lens flare ghosts is a separate Game graphics option.");
+            check("Full-screen pass optimizations (experimental)","post_optimizations",false);
+            check("Parallel geometry preparation (experimental)","parallel_preparation",false);
+            CheckBox temporal=check("SGSR2 temporal upscaling (experimental)","temporal_upscaling",false);
+            CheckBox dynamic=check("Dynamic resolution (experimental)","dynamic_resolution",false);
+            temporal.setOnCheckedChangeListener((v,on)->{values.put("temporal_upscaling",on);if(!on)dynamic.setChecked(false);});
+            dynamic.setOnCheckedChangeListener((v,on)->{values.put("dynamic_resolution",on);if(on)temporal.setChecked(true);});
+            if(dynamic.isChecked()&&!temporal.isChecked())temporal.setChecked(true);
+            note("Turning SGSR2 off also turns Dynamic resolution off. Enabling Dynamic resolution enables SGSR2.");
+            choice("Dynamic resolution floor","dynamic_floor_index",new String[]{"50% • balanced floor","60% • sharper floor","67% • sharper floor"},0);
+            note("SGSR2 and dynamic resolution are independent of the graphics preset. Dynamic resolution uses SGSR2 and the selected minimum scene scale; a lower manually chosen scale is preserved.");
             check("SGSR1 sharper upscaling","sgsr",false);
             note("SGSR1 adds GPU work at reduced scene resolution. The game's FSR options are available from the launcher.");
+            choice("Turnip rendering profile • restart required","turnip_profile",new String[]{"Driver default","Prefer system memory","Prefer tile memory","Tune small passes","Tile memory + small passes"},0);
+            note("Turnip profiles are independent of the graphics preset. Compare the same scene after fully closing and reopening the game; the fastest profile depends on the GPU and driver.");
             gain("Upscaling sharpness","sharpness",1f,2f);
             choice("Ambient occlusion","ao_quality",new String[]{"Original quality","Performance • fewer samples"},0);
             choice("Screen reflections","reflection_quality",new String[]{"Original quality","Performance • fewer steps"},0);
@@ -91,8 +109,11 @@ final class SettingsPages {
         Map<File,byte[]> files=new LinkedHashMap<>();Map<String,Object> saved=new LinkedHashMap<>(values);
         Map<String,String> performance=new LinkedHashMap<>();File ini=new File(activity.getFilesDir(),"mobile_performance.ini");
         if(ini.exists())for(String line:Files.readAllLines(ini.toPath(),StandardCharsets.UTF_8)){int eq=line.indexOf('=');if(eq>0)performance.put(line.substring(0,eq).trim(),line.substring(eq+1).trim());}
-        String[] keys=advanced?new String[]{"mali_optimizations","mali_safe_lighting","compat_texture_size","frame_pacing","sgsr","sharpness","ao_quality","reflection_quality","sustained"}:new String[]{"invert_y","mouse_sensitivity","controller_sensitivity"};
+        String[] keys=advanced?new String[]{"mali_optimizations","mali_safe_lighting","compat_texture_size","frame_pacing","sgsr","sharpness","ao_quality","reflection_quality","sustained","lens_flares","post_optimizations","adpf","parallel_preparation","temporal_upscaling","dynamic_resolution","turnip_profile","dynamic_floor","output_scale","flare_halo"}:new String[]{"invert_y","mouse_sensitivity","controller_sensitivity"};
         if(advanced){saved.put("compat_texture_size",new int[]{0,2048,1024,512}[(Integer)saved.remove("compat_texture_index")]);}
+        if(advanced){saved.putIfAbsent("lens_flares",true);saved.putIfAbsent("adpf",true);for(String k:new String[]{"post_optimizations","parallel_preparation","temporal_upscaling","dynamic_resolution"})saved.putIfAbsent(k,false);if(Boolean.TRUE.equals(saved.get("dynamic_resolution"))&&!Boolean.TRUE.equals(saved.get("temporal_upscaling")))throw new IOException("Dynamic resolution requires SGSR2. Enable SGSR2 or turn Dynamic resolution off.");}
+        if(advanced){saved.putIfAbsent("turnip_profile",0);int index=(Integer)saved.getOrDefault("dynamic_floor_index",0);saved.put("dynamic_floor",new float[]{.5f,.6f,.667f}[Math.max(0,Math.min(2,index))]);}
+        if(advanced){int output=(Integer)saved.getOrDefault("output_scale_index",0),halo=(Integer)saved.getOrDefault("flare_halo_index",1);saved.put("output_scale",new float[]{1f,.9f,.8f}[Math.max(0,Math.min(2,output))]);saved.put("flare_halo",new float[]{0f,.2f,1f}[Math.max(0,Math.min(2,halo))]);}
         for(String key:keys){Object value=saved.get(key);performance.put(key,value instanceof Boolean?((Boolean)value?"1":"0"):String.valueOf(value));}
         StringBuilder text=new StringBuilder();for(Map.Entry<String,String> e:performance.entrySet())text.append(e.getKey()).append('=').append(e.getValue()).append('\n');files.put(ini,SettingsFiles.text(text.toString()));
         int selected=advanced?(Integer)saved.get("performance_profile"):originalProfile;boolean changed=advanced&&selected!=originalProfile;

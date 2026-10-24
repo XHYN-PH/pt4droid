@@ -1,0 +1,101 @@
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+#include <vector>
+#include <array>
+#include <unordered_set>
+#include <algorithm>
+#include <utility>
+#include <cassert>
+#include <cstdio>
+#include <unordered_map>
+#include <functional>
+#include <glm/glm.hpp>
+#include "engine/render/dynamic_resolution.h"
+namespace pt {
+template<class...T>void LogInfo(const char*,T...){}template<class...T>void LogError(const char*,T...){}
+static std::unordered_set<VkImage> live;static unsigned allocations=0,descriptor_writes=0,fail_at=0;
+struct Image{VkImageView view{};VkImage image{};void* allocation=nullptr;VkFormat format{};VkExtent3D extent{};VkImageUsageFlags usage{};};
+struct RenderTarget{Image image;VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;VkImageAspectFlags aspect=VK_IMAGE_ASPECT_COLOR_BIT;bool Valid()const{return image.image!=VK_NULL_HANDLE;}VkExtent2D Extent()const{return{image.extent.width,image.extent.height};}};
+struct Context{VkDevice device=reinterpret_cast<VkDevice>(1);void* allocator=nullptr;bool fail_submit=false;template<class F>bool Submit(F&& f){if(fail_submit)return false;f(VK_NULL_HANDLE);return true;}bool CreateImage(Image& i,VkFormat f,VkExtent3D e,VkImageUsageFlags u,uint32_t,uint32_t,VkImageAspectFlags){if(++allocations==fail_at)return false;i.image=reinterpret_cast<VkImage>(uintptr_t(allocations));i.view=reinterpret_cast<VkImageView>(i.image);i.allocation=i.image;i.format=f;i.extent=e;i.usage=u;assert(live.insert(i.image).second);return true;}void DestroyImage(Image& i){if(i.image)assert(live.erase(i.image)==1);i={};}};
+namespace vk{using Context=pt::Context;bool Check(VkResult r,const char*){return r==VK_SUCCESS;}}
+struct Renderer{struct pt::Context context;auto&Context(){return context;}};
+enum class UpscalerKind{Off,Sgsr2};
+constexpr VkFormat kUpscaleColorFormat=VK_FORMAT_R16G16B16A16_SFLOAT,kHdrTargetFormat=kUpscaleColorFormat,kMotionFormat=VK_FORMAT_R16G16_SFLOAT,kReactiveFormat=VK_FORMAT_R8_UNORM,kPostDepthFormat=VK_FORMAT_R32_SFLOAT,kExposureFormat=kPostDepthFormat,kHandyFactorFormat=VK_FORMAT_R16_SFLOAT;
+
+static std::unordered_map<VkDescriptorSet,std::array<VkImageView,2>> descriptor_images;
+static unsigned next_descriptor=0,sss_descriptor_writes=0,copies=0,pool_capacity=0;static bool fail_descriptor=false;
+VkResult vkCreateDescriptorSetLayout(VkDevice,const VkDescriptorSetLayoutCreateInfo*,const VkAllocationCallbacks*,VkDescriptorSetLayout* out){*out=reinterpret_cast<VkDescriptorSetLayout>(1);return VK_SUCCESS;}
+VkResult vkCreateDescriptorPool(VkDevice,const VkDescriptorPoolCreateInfo* p,const VkAllocationCallbacks*,VkDescriptorPool* out){assert(p->flags&VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT);pool_capacity=p->maxSets;*out=reinterpret_cast<VkDescriptorPool>(1);return VK_SUCCESS;}
+VkResult vkAllocateDescriptorSets(VkDevice,const VkDescriptorSetAllocateInfo* p,VkDescriptorSet* out){if(fail_descriptor)return VK_ERROR_OUT_OF_POOL_MEMORY;assert(descriptor_images.size()+p->descriptorSetCount<=pool_capacity);for(unsigned i=0;i<p->descriptorSetCount;++i){out[i]=reinterpret_cast<VkDescriptorSet>(uintptr_t(++next_descriptor));descriptor_images[out[i]]={};}return VK_SUCCESS;}
+VkResult vkFreeDescriptorSets(VkDevice,VkDescriptorPool,uint32_t count,const VkDescriptorSet* sets){for(unsigned i=0;i<count;++i)assert(descriptor_images.erase(sets[i])==1);return VK_SUCCESS;}
+void vkUpdateDescriptorSets(VkDevice,uint32_t n,const VkWriteDescriptorSet* writes,uint32_t,const VkCopyDescriptorSet*){for(unsigned i=0;i<n;++i){assert(descriptor_images.count(writes[i].dstSet));descriptor_images[writes[i].dstSet][writes[i].dstBinding]=writes[i].pImageInfo->imageView;}++sss_descriptor_writes;}
+VkResult vkCreatePipelineLayout(VkDevice,const VkPipelineLayoutCreateInfo*,const VkAllocationCallbacks*,VkPipelineLayout* out){*out=reinterpret_cast<VkPipelineLayout>(1);return VK_SUCCESS;}
+void vkDestroyPipeline(VkDevice,VkPipeline,const VkAllocationCallbacks*){}
+void vkDestroyPipelineLayout(VkDevice,VkPipelineLayout,const VkAllocationCallbacks*){}
+void vkDestroyDescriptorSetLayout(VkDevice,VkDescriptorSetLayout,const VkAllocationCallbacks*){}
+void vkDestroyDescriptorPool(VkDevice,VkDescriptorPool,const VkAllocationCallbacks*){assert(descriptor_images.empty());}
+struct PipelineDesc{VkPipelineLayout layout{};const char* fragment{};std::vector<VkFormat> colors;};
+VkPipeline CreateGraphicsPipeline(VkDevice,const PipelineDesc&){return reinterpret_cast<VkPipeline>(1);}
+constexpr VkShaderStageFlags kPushStages=VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_COMPUTE_BIT;
+namespace gpu{struct PassPush{glm::uvec4 ids;};}
+struct VmaAllocationInfo{size_t size=100;};void vmaGetAllocationInfo(void*,void*,VmaAllocationInfo*){}
+void UseTargets(VkCommandBuffer,std::initializer_list<std::pair<RenderTarget*,VkImageLayout>> targets){for(auto [p,l]:targets){assert(p->Valid());p->layout=l;}}
+struct Attachment{RenderTarget*target;bool clear;VkClearColorValue value;};
+void BeginPass(VkCommandBuffer,VkExtent2D e,std::initializer_list<Attachment> targets){for(auto t:targets){assert(t.target->Extent().width==e.width&&t.target->Extent().height==e.height);}}
+static VkExtent2D expected_copy{};
+void vkCmdCopyImage(VkCommandBuffer,VkImage a,VkImageLayout,VkImage b,VkImageLayout,uint32_t n,const VkImageCopy* r){assert(live.count(a)&&live.count(b)&&n==1);assert(r->extent.width==expected_copy.width&&r->extent.height==expected_copy.height);++copies;}
+void vkCmdBindPipeline(VkCommandBuffer,VkPipelineBindPoint,VkPipeline){}
+void vkCmdBindDescriptorSets(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t n,const VkDescriptorSet* sets,uint32_t,const uint32_t*){for(unsigned i=0;i<n;++i){assert(descriptor_images.count(sets[i]));for(auto v:descriptor_images[sets[i]])assert(live.count(reinterpret_cast<VkImage>(v)));}}
+void vkCmdPushConstants(VkCommandBuffer,VkPipelineLayout,VkShaderStageFlags,uint32_t,uint32_t,const void*){}
+void vkCmdDraw(VkCommandBuffer,uint32_t,uint32_t,uint32_t,uint32_t){}
+void vkCmdEndRendering(VkCommandBuffer){}
+struct SubsurfacePass {
+ struct TargetState{RenderTarget copy,temp;std::array<VkDescriptorSet,2>sets{};};
+ /* SUBSURFACE_INLINE */
+ vk::Context*ctx_=nullptr;VkDevice device_=VK_NULL_HANDLE;VkFormat format_{};VkSampler sampler_{};VkDescriptorSetLayout set_layout_{};VkDescriptorPool pool_{};VkPipelineLayout layout_{};VkPipeline pipeline_{};TargetState targets_;
+ bool Init(vk::Context&,VkDescriptorSetLayout,VkDescriptorSetLayout,VkFormat,VkSampler);void Shutdown();bool CreateTargets(VkExtent2D);void DestroyTargets();void DestroyTargets(TargetState&);uint64_t TargetBytes()const;void Record(VkCommandBuffer,RenderTarget&,uint32_t,const std::function<void()>&);
+};
+struct SceneRenderer{
+ /* TARGET_FIELDS */
+ Renderer renderer;Renderer*renderer_=&renderer;bool dynamic_warming_=false,dynamic_warmed_=false,dynamic_unavailable_=false,targets_upscaled_=false,history_valid_=false,mirror_history_valid_=false,reflect_history_valid_=false,rt_ao_history_=false;
+ unsigned mirror_history_size_=0;uint64_t target_mapping_epoch_=0;struct{bool valid=false;}mirror_stale_;struct{float dynamic_shared_mb=0;}stats_;pt::DynamicResolution dynamic_resolution_;
+ struct{bool motion_blur=false;}toggles;struct{UpscalerKind kind=UpscalerKind::Sgsr2;}upscale;struct{void*backend=nullptr;bool reset=false;}up_;
+ VkPipeline up_resolve_static_=reinterpret_cast<VkPipeline>(1);SubsurfacePass sss_;
+ VkExtent2D extent_{},output_extent_{};struct TargetBank{VkExtent2D render{},output{};std::vector<RenderTarget>targets;SubsurfacePass::TargetState subsurface;};std::vector<TargetBank>target_banks_;
+ std::vector<RenderTarget*>BankTargets();std::vector<RenderTarget*>SharedTargets();void DropTargetBanks();bool SwitchTargetBank(VkExtent2D,VkExtent2D);
+ bool CreateTarget(RenderTarget&,VkFormat,VkExtent2D,VkImageUsageFlags,VkImageAspectFlags);bool CreateUpscaleTargets(VkExtent2D,VkExtent2D);void DestroyTargets();void DestroyUpscaleTargets();
+ void WriteImageDescriptors(bool){++descriptor_writes;}
+};}
+int main(){using namespace pt;
+ const auto start_allocations=allocations;SceneRenderer s;assert(s.CreateUpscaleTargets({160,90},{320,180}));const auto upscale_allocations=allocations-start_allocations;assert(upscale_allocations==9&&!s.upscaled_.Valid());assert(!s.post_object_velocity_.Valid()&&!s.exposure_image_.Valid());assert(s.motion_.Valid()&&s.sgsr_history_[0].Valid());
+ assert(s.sss_.Init(s.renderer.context,{}, {},kHdrTargetFormat,{}));assert(s.sss_.CreateTargets({160,90}));
+ auto shared=s.SharedTargets(),bank=s.BankTargets();for(auto* p:shared)assert(std::find(bank.begin(),bank.end(),p)==bank.end());
+ std::vector<VkImage> ids;for(auto*p:shared)ids.push_back(p->image.image);
+ SceneRenderer::TargetBank base;base.render={160,90};base.output={320,180};for(auto*p:bank)base.targets.push_back(std::exchange(*p,{}));base.subsurface=s.sss_.TakeTargets();s.target_banks_.push_back(std::move(base));
+ s.dynamic_warming_=true;s.DestroyTargets();for(size_t i=0;i<shared.size();++i)assert(shared[i]->image.image==ids[i]);unsigned before=allocations;
+ assert(s.CreateUpscaleTargets({120,68},{320,180}));assert(allocations-before==5);for(size_t i=0;i<shared.size();++i)assert(shared[i]->image.image==ids[i]);
+ assert(s.sss_.CreateTargets({120,68}));const auto low_set=s.sss_.targets_.sets;unsigned sss_writes=sss_descriptor_writes;
+ s.dynamic_warming_=false;s.extent_={120,68};s.output_extent_={320,180};before=allocations;assert(s.SwitchTargetBank({160,90},{320,180}));assert(s.extent_.width==160&&s.up_.reset&&descriptor_writes==1&&allocations==before);assert(s.sss_.targets_.copy.Extent().width==160&&s.sss_.targets_.sets!=low_set);
+ RenderTarget diffuse;assert(s.CreateTarget(diffuse,kHdrTargetFormat,{160,90},VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT));expected_copy={160,90};s.sss_.Record({},diffuse,0,[]{});assert(copies==1);s.renderer.context.DestroyImage(diffuse.image);before=allocations;
+ assert(s.SwitchTargetBank({120,68},{320,180}));assert(allocations==before);assert(s.sss_.targets_.sets==low_set&&sss_descriptor_writes==sss_writes);
+ assert(s.CreateTarget(diffuse,kHdrTargetFormat,{120,68},VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT));expected_copy={120,68};s.sss_.Record({},diffuse,0,[]{});assert(copies==2);s.renderer.context.DestroyImage(diffuse.image);
+ s.dynamic_unavailable_=true;s.DropTargetBanks();assert(!s.dynamic_unavailable_&&!s.dynamic_warmed_);s.DestroyTargets();s.sss_.Shutdown();assert(live.empty()&&descriptor_images.empty());
+ SceneRenderer motion;motion.toggles.motion_blur=true;assert(motion.CreateUpscaleTargets({160,90},{320,180}));assert(motion.post_object_velocity_.Valid());motion.DestroyTargets();assert(live.empty());
+ SceneRenderer fallback;fallback.up_resolve_static_=VK_NULL_HANDLE;assert(fallback.CreateUpscaleTargets({160,90},{320,180}));assert(fallback.post_object_velocity_.Valid());fallback.DestroyTargets();assert(live.empty());
+ SceneRenderer backend;backend.up_.backend=&backend;assert(backend.CreateUpscaleTargets({160,90},{320,180}));assert(backend.exposure_image_.Valid());backend.DestroyTargets();assert(live.empty());
+ for(unsigned failure=1;failure<=upscale_allocations;++failure){SceneRenderer failed;fail_at=allocations+failure;assert(!failed.CreateUpscaleTargets({160,90},{320,180}));failed.DestroyTargets();assert(live.empty());fail_at=0;}
+ // A failed second bank must retain the original shared output and base bank.
+ SceneRenderer failed_bank;assert(failed_bank.CreateUpscaleTargets({160,90},{320,180}));auto preserved=failed_bank.SharedTargets();ids.clear();for(auto*p:preserved)ids.push_back(p->image.image);
+ SceneRenderer::TargetBank saved;saved.render={160,90};saved.output={320,180};for(auto*p:failed_bank.BankTargets())saved.targets.push_back(std::exchange(*p,{}));failed_bank.target_banks_.push_back(std::move(saved));failed_bank.dynamic_warming_=true;
+ fail_at=allocations+4;assert(!failed_bank.CreateUpscaleTargets({120,68},{320,180}));for(size_t i=0;i<preserved.size();++i)assert(preserved[i]->image.image==ids[i]);fail_at=0;
+ failed_bank.DestroyTargets();assert(failed_bank.SwitchTargetBank({160,90},{320,180}));failed_bank.dynamic_warming_=false;failed_bank.DropTargetBanks();failed_bank.DestroyTargets();assert(live.empty());
+ // Production SSS creation must release partial images/sets on every failure.
+ SubsurfacePass partial;Context context;assert(partial.Init(context,{}, {},kHdrTargetFormat,{}));
+ for(unsigned failure=1;failure<=2;++failure){fail_at=allocations+failure;assert(!partial.CreateTargets({160,90}));assert(live.empty()&&descriptor_images.empty());fail_at=0;}
+ fail_descriptor=true;assert(!partial.CreateTargets({160,90}));fail_descriptor=false;assert(live.empty()&&descriptor_images.empty());
+ context.fail_submit=true;assert(!partial.CreateTargets({160,90}));context.fail_submit=false;assert(live.empty()&&descriptor_images.empty());
+ assert(partial.CreateTargets({160,90}));auto saved_sss=partial.TakeTargets();const auto saved_sets=saved_sss.sets;
+ context.fail_submit=true;assert(!partial.CreateTargets({120,68}));context.fail_submit=false;partial.SwapTargets(saved_sss);assert(partial.targets_.sets==saved_sets&&partial.targets_.copy.Extent().width==160);partial.DestroyTargets(saved_sss);partial.DestroyTargets();assert(live.empty()&&descriptor_images.empty());
+ for(unsigned i=0;i<20;++i){assert(partial.CreateTargets({160,90}));partial.DestroyTargets();assert(live.empty()&&descriptor_images.empty());}partial.Shutdown();
+ puts("Production target banks: unique ownership, shared image preservation, five internal allocations, allocation-free switches with SSS images/descriptors, partial SSS failure cleanup, conditional velocity/exposure, all nine single-output SGSR allocation failures, failed-bank recovery and complete cleanup passed");
+}

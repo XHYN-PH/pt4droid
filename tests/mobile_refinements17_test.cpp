@@ -9,6 +9,7 @@
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <future>
 
 int main() {
     std::mt19937 rng(17017);
@@ -75,10 +76,12 @@ int main() {
         auto ready = entered.get_future();
         assert(retirement.Retire(std::unique_ptr<Packet>(new Packet{&entered, released, &destroyed})));
         assert(ready.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+        assert(retirement.Retire(std::unique_ptr<Packet>(new Packet{nullptr, {}, &destroyed})));
+        assert(retirement.Retire(std::unique_ptr<Packet>(new Packet{nullptr, {}, &destroyed})));
         assert(!retirement.Retire(std::unique_ptr<Packet>(new Packet{nullptr, {}, &destroyed})));
         assert(destroyed == 1); release.set_value();
     }
-    assert(destroyed == 2);
+    assert(destroyed == 4);
     struct GpuStats {
         bool gpu_timing_valid = true;
         uint64_t gpu_sample = 1;

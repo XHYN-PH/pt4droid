@@ -11,9 +11,13 @@ def method(signature):
     return source[start:end]
 code=r'''
 import java.util.*;
+import java.io.File;
 import java.util.function.Consumer;
 public class SetupMenuTest {
  int starts=0,checks=0;List<Button> buttons=new ArrayList<>();
+ File getFilesDir(){return new File(System.getProperty("java.io.tmpdir"),"pt-empty-setup-test");}
+ void showError(String text){throw new AssertionError(text);}
+ static class DriverImportJob{static void atomicWrite(File f,byte[] b)throws java.io.IOException{java.nio.file.Files.createDirectories(f.toPath().getParent());java.nio.file.Files.write(f.toPath(),b);}}
  class Panel {void removeAllViews(){buttons.clear();}} Panel panel=new Panel();
  class TextView {void setTextSize(int n){}void setPadding(int a,int b,int c,int d){}}
  class Button {String label;Consumer<Button> action;Button(String l,Consumer<Button> a){label=l;action=a;}void requestFocus(){}void click(){action.accept(this);}}
@@ -40,7 +44,12 @@ public class SetupMenuTest {
   s.ok(s.starts==1,"provider refusal does not start game");s.named("Enter menu").click();s.named("Start");
   DocumentsContract.fail=true;s.showDone(pkg);s.named("Delete the .pkg and enter menu").click();
   s.ok(s.starts==1,"provider exception leaves Enter menu available");s.named("Enter menu").click();s.named("Start");
-  s.ok(s.buttons.size()==5,"ready screen retains Start, Settings, Delete saves, GitHub and Quit");
+  s.ok(s.buttons.size()==4,"ready screen retains Start, Settings, Delete saves and Quit");
+  s.named("Start");s.named("Settings");s.named("Delete saves");s.named("Quit");
+  try{s.getFilesDir().mkdirs();java.nio.file.Files.writeString(new File(s.getFilesDir(),"driver_startup_failed.txt").toPath(),"failed");}
+  catch(java.io.IOException e){throw new RuntimeException(e);}
+  s.showReady();s.ok(s.buttons.size()==5,"driver failure adds recovery action");int previous=s.starts;s.named("Retry with system driver").click();
+  s.ok(s.starts==previous+1&&!new File(s.getFilesDir(),"driver_startup_failed.txt").exists(),"system-driver recovery consumes failure marker and launches");
   System.out.println("Post-import menu checks passed: "+s.checks);
  }
 }

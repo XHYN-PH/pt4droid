@@ -1,3 +1,4 @@
+#include "engine/core/hitch_trace.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #ifdef __ANDROID__
@@ -545,7 +546,7 @@ int RunVoiceTest(const std::filesystem::path& input) {
         std::ifstream list(input);
         for (std::string line; std::getline(list, line);) {
             while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-            if (!line.empty()) files.emplace_back(std::filesystem::u8path(line));
+            if (!line.empty()) files.emplace_back(pt::os::PathFromUtf8(line));
         }
     } else {
         files.push_back(input);
@@ -1300,6 +1301,7 @@ pt::RayTracingSettings RayTracingFromApp(const pt::AppSettings& s) {
 }
 
 void ApplyGraphicsSettings(App& app) {
+    app.scene.SetFrameTarget(app.settings.display.fps_limit);
 #ifdef __ANDROID__
     app.settings.graphics.enhanced_textures=false; app.settings.display.hdr=false;
 #endif
@@ -3552,6 +3554,7 @@ int RunViewer(App& app, pt::Vfs& vfs) {
     int frame = 0;
     uint64_t last_ticks = SDL_GetTicksNS();
     while (running) {
+        app.scene.SetFrameTarget(app.settings.display.fps_limit);
         if (!PumpEvents(app, nullptr, running)) {
             continue;
         }
@@ -3774,6 +3777,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
         app.scene.vfx_forward = [&vfx_pass](const pt::SceneVfxContext& c) { vfx_pass.RecordForward(c); };
         app.scene.vfx_offscreen_available = [&vfx_pass] { return vfx_pass.HasOffscreenDraws(); };
         app.scene.vfx_filter = [&vfx_pass](const pt::SceneFilterContext& c) { vfx_pass.RecordFilter(c); };
+        app.scene.vfx_filter_samples_scene=[&vfx_pass]{return vfx_pass.FilterSamplesScene();};
     }
     pt::game::RenderSceneBuilder scene_builder;
     pt::SceneLighting lighting;
@@ -4040,8 +4044,13 @@ int RunGame(App& app, pt::Vfs& vfs) {
     int diagnostic_state = -1;
     while (running) {
         std::array<float, 8> diagnostic_parts{};
+        app.scene.SetFrameTarget(app.settings.display.fps_limit);
         bool diagnostic_rendered = false;
+        pt::hitch::Enable(pt::LogEnabled());pt::hitch::Frame(frame+1);
         const auto frame_started = std::chrono::steady_clock::now();
+#ifdef __ANDROID__
+        const auto cpu_started=pt::android::ThreadCpuTimeNs();
+#endif
         // VR: the headset is the view, a minimized window does not stop it; the frame wait paces the loop. While the runtime has
         // no running session (the headset asleep or not yet ready, its compositor restarting) the game holds as a window in the
         // background does
@@ -5076,10 +5085,12 @@ int RunGame(App& app, pt::Vfs& vfs) {
             }
             for (const std::string& shot : shots) {
                 const glm::vec4 crop = photo_capture && !photo_four_k ? glm::vec4(photo_crop.x,photo_crop.y,photo_crop.width,photo_crop.height) : glm::vec4(0,0,1,1);
-                const bool shot_saved=app.renderer.SaveScreenshot(shot,crop);
+                bool shot_saved=false;
 #ifdef __ANDROID__
-                if(shot_saved && photo_capture)pt::android::PhotoSaved(shot);
+                if(photo_capture){shot_saved=app.renderer.QueueScreenshot(shot,crop,[shot](bool ok){if(ok)pt::android::PhotoSaved(shot);else pt::android::PhotoSaveFailed();});if(shot_saved){photo_status="Saving photo…";photo_status_time=4.f;}}
+                else
 #endif
+                shot_saved=app.renderer.SaveScreenshot(shot,crop);
                 if (!shot_saved && photo_capture) {
                     photo_status = std::string(pt::game::PcText("pc_photo_save_failed", std::clamp(game.Options().subtitle_language, 0, pt::game::UiAssets::kLanguageCount - 1)));
                     photo_status_time=4.0f;
@@ -5197,6 +5208,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 const auto status_now = std::chrono::steady_clock::now();
                 const double status_seconds = std::chrono::duration<double>(status_now - status_start).count();
                 if (status_seconds >= 10.0) {
+                    static uint64_t hitch_cursor=0;
+                    for(const auto& event:pt::hitch::Slowest(hitch_cursor))if(event.name)
+                        pt::LogInfo("frame event: frame {}, {} {:.2f} ms",event.frame,event.name,event.milliseconds);
                     VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
                     vmaGetHeapBudgets(app.renderer.Context().allocator, budgets);
                     const VkPhysicalDeviceMemoryProperties* memory = nullptr;
@@ -5209,7 +5223,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
                             budget += static_cast<double>(budgets[h].budget);
                         }
                     }
-                    const VkExtent2D render_extent = app.renderer.RenderExtent();
+                    const auto& live_upscale=app.scene.UpscaleStatistics();
+                    const VkExtent2D render_extent = live_upscale.active?live_upscale.render:app.renderer.RenderExtent();
                     int effective_cap = app.settings.display.fps_limit;
 #ifdef __ANDROID__
                     effective_cap = pt::android::EffectiveFrameLimit(effective_cap);
@@ -5240,8 +5255,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
                     pt::LogInfo("status: {:.0f} fps, gpu {:.2f} ms, vram {:.0f} of {:.0f} MB, {}x{}, upscaler {} {}, frame generation {}, vsync {}, "
                                 "fps limit {}, floor {}{}",
                                 status_frames / status_seconds, timings.GpuMean(timings.gpu_ms), used / 1048576.0,
-                                budget / 1048576.0, render_extent.width, render_extent.height, app.settings.upscaling.upscaler,
-                                app.settings.upscaling.quality, app.settings.upscaling.frame_generation,
+                                budget / 1048576.0, render_extent.width, render_extent.height, pt::UpscalerKey(live_upscale.active?live_upscale.kind:pt::UpscalerKind::Off),
+                                pt::UpscaleQualityKey(app.scene.upscale.quality), app.settings.upscaling.frame_generation,
                                 app.settings.display.vsync ? "on" : "off", app.settings.display.fps_limit, game.Floor().CurrentFloorName(),
                                 ui_ready && ui.MenuOpen() ? ", menu open" : "");
 #ifdef __ANDROID__
@@ -5254,6 +5269,22 @@ int RunGame(App& app, pt::Vfs& vfs) {
                         pt::LogInfo("mobile passes: GPU timings unavailable; renderer CPU avg {:.2f} ms", timings.CpuMean(timings.cpu_ms));
                     }
                     pt::LogInfo("mobile probe map: used {}, covered {} pixels, build {:.2f} ms",app.scene.Stats().probe_map_used,app.scene.Stats().probe_covered_pixels,app.scene.Stats().probe_map_ms);
+                    pt::LogInfo("render path: output {}x{}, internal {}x{}, upscaler {}, target {}, dynamic floor {:.0f}%, shared output targets {:.1f} MiB",
+                        app.renderer.RenderExtent().width,app.renderer.RenderExtent().height,render_extent.width,render_extent.height,
+                        pt::UpscalerKey(live_upscale.active?live_upscale.kind:pt::UpscalerKind::Off),app.settings.display.fps_limit,
+                        pt::android::PerformanceOptions().dynamic_floor*100,app.scene.Stats().dynamic_shared_mb);
+                    pt::LogInfo("output resolution: scene {}x{}, display {}x{}, scale {:.0f}%; lamp halo {:.0f}%",
+                        app.renderer.RenderExtent().width,app.renderer.RenderExtent().height,
+                        app.renderer.Context().swapchain.extent.width,app.renderer.Context().swapchain.extent.height,
+                        pt::android::PerformanceOptions().output_scale*100,pt::android::PerformanceOptions().flare_halo*100);
+                    pt::LogInfo("lighting state: lamp flares {}, flare ghosts {}, bloom {}, SGSR2 {}, dynamic resolution {}, EV {:.3f}, exposure {:.6f}, metered luminance {:.5f}",
+                        pt::android::PerformanceOptions().lens_flares, app.settings.graphics.lens_ghosts, app.scene.toggles.bloom,
+                        live_upscale.active&&live_upscale.kind==pt::UpscalerKind::Sgsr2, pt::android::PerformanceOptions().dynamic_resolution,
+                        app.scene.Stats().ev, app.scene.Stats().exposure, app.scene.Stats().luminance);
+                    if(timings.gpu_samples)pt::LogInfo("post detail avg: flare {:.2f}, tonemap {:.2f}, AA/DOF {:.2f}, motion {:.2f}, grade {:.2f}, history blur {:.2f}, banding {:.2f}, screen {:.2f} ms; temporal inputs {:.2f}, reflections {:.2f}, upscale/resolve {:.2f} ms",
+                        timings.GpuMean(timings.post[0]),timings.GpuMean(timings.post[1]),timings.GpuMean(timings.post[2]),timings.GpuMean(timings.post[3]),
+                        timings.GpuMean(timings.post[4]),timings.GpuMean(timings.post[5]),timings.GpuMean(timings.post[6]),timings.GpuMean(timings.post[7]),
+                        timings.GpuMean(timings.parts[2]),timings.GpuMean(timings.parts[3]),timings.GpuMean(timings.parts[4]));
                     if (timings.gpu_samples) pt::LogInfo("mobile composition avg: composite {:.2f}, forward geometry {:.2f}, scene effects/copies {:.2f}, particle/depth {:.2f}, effect copy/composite {:.2f} ms; scene copies {:.2f}",
                         timings.GpuMean(timings.composition[0]), timings.GpuMean(timings.composition[1]), timings.GpuMean(timings.composition[2]),
                         timings.GpuMean(timings.composition[3]), timings.GpuMean(timings.composition[4]), timings.CpuMean(timings.scene_copies));
@@ -5310,6 +5341,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 cap = 0;
             }
 #ifdef __ANDROID__
+            pt::android::ReportFrameWork(pt::android::ThreadCpuTimeNs()-cpu_started,cap);
             app.renderer.Context().SetPacingGpuTime(app.scene.Stats().gpu_ms);
             app.renderer.Context().SetAndroidFramePacing(cap);
             if(app.renderer.Context().AndroidFramePacingActive())cap=0;
@@ -5354,6 +5386,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     app.scene.vfx_forward = nullptr;
     app.scene.vfx_offscreen_available = nullptr;
     app.scene.vfx_filter = nullptr;
+    app.scene.vfx_filter_samples_scene=nullptr;
     vfx_pass.Shutdown();
     app.renderer.overlay = nullptr;
     ui.Shutdown();
@@ -5715,6 +5748,9 @@ int main(int argc, char** argv) {
         app.scene.upscale.frame_generation = pt::FrameGenKind::Off;
     }
     ApplyGraphicsSettings(app);
+#ifdef __ANDROID__
+    ApplyMobileGameGraphicsChanges(app);
+#endif
     settings.vsync=app.settings.display.vsync; settings.hdr=app.settings.display.hdr;
     // the ray query extensions and features only when the option is on at start
     const pt::RayTracingSettings& rt = app.scene.raytracing;

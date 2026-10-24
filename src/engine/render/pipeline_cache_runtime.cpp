@@ -1,3 +1,4 @@
+#include "engine/core/hitch_trace.h"
 #include "engine/render/pipeline_cache_store.h"
 
 #include <chrono>
@@ -40,6 +41,7 @@ std::mutex& PipelineCacheCreationMutex() { return g_pipeline_mutex; }
 
 VkResult CreateGraphicsPipelinesCached(VkDevice device, uint32_t count, const VkGraphicsPipelineCreateInfo* infos,
                                       const VkAllocationCallbacks* allocator, VkPipeline* pipelines) {
+    hitch::Scope hitch_scope("graphics pipeline");
     std::lock_guard lock(g_pipeline_mutex);
     const auto start = std::chrono::steady_clock::now();
     const VkResult result = vkCreateGraphicsPipelines(device, CacheFor(device), count, infos, allocator, pipelines);
@@ -52,6 +54,7 @@ VkResult CreateGraphicsPipelinesCached(VkDevice device, uint32_t count, const Vk
 
 VkResult CreateComputePipelinesCached(VkDevice device, uint32_t count, const VkComputePipelineCreateInfo* infos,
                                      const VkAllocationCallbacks* allocator, VkPipeline* pipelines) {
+    hitch::Scope hitch_scope("compute pipeline");
     std::lock_guard lock(g_pipeline_mutex);
     const auto start = std::chrono::steady_clock::now();
     const VkResult result = vkCreateComputePipelines(device, CacheFor(device), count, infos, allocator, pipelines);

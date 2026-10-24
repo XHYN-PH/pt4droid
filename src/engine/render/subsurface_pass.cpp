@@ -25,20 +25,13 @@ bool SubsurfacePass::Init(vk::Context& ctx, VkDescriptorSetLayout textures_layou
     if (!vk::Check(vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &set_layout_), "subsurface set layout")) {
         return false;
     }
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
     VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pool_info.maxSets = 2;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 4;
     pool_info.poolSizeCount = 1;
     pool_info.pPoolSizes = &size;
     if (!vk::Check(vkCreateDescriptorPool(device_, &pool_info, nullptr, &pool_), "subsurface descriptor pool")) {
-        return false;
-    }
-    const VkDescriptorSetLayout layouts[2] = {set_layout_, set_layout_};
-    VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    alloc.descriptorPool = pool_;
-    alloc.descriptorSetCount = 2;
-    alloc.pSetLayouts = layouts;
-    if (!vk::Check(vkAllocateDescriptorSets(device_, &alloc, sets_), "subsurface descriptor sets")) {
         return false;
     }
     const VkDescriptorSetLayout sets[3] = {textures_layout, frame_layout, set_layout_};
@@ -83,7 +76,6 @@ void SubsurfacePass::Shutdown() {
     pipeline_ = VK_NULL_HANDLE;
     layout_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
-    sets_[0] = sets_[1] = VK_NULL_HANDLE;
     set_layout_ = VK_NULL_HANDLE;
     device_ = VK_NULL_HANDLE;
 }
@@ -92,24 +84,39 @@ bool SubsurfacePass::CreateTargets(VkExtent2D extent) {
     DestroyTargets();
     const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     const VkExtent3D size{std::max(extent.width, 1u), std::max(extent.height, 1u), 1};
-    if (!ctx_->CreateImage(copy_.image, format_, size, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 1, 1,
+    if (!ctx_->CreateImage(targets_.copy.image, format_, size, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 1, 1,
                            VK_IMAGE_ASPECT_COLOR_BIT) ||
-        !ctx_->CreateImage(temp_.image, format_, size, usage, 1, 1, VK_IMAGE_ASPECT_COLOR_BIT)) {
+        !ctx_->CreateImage(targets_.temp.image, format_, size, usage, 1, 1, VK_IMAGE_ASPECT_COLOR_BIT)) {
         LogError("subsurface: cannot create targets {}x{}", extent.width, extent.height);
+        DestroyTargets();
         return false;
     }
+    const VkDescriptorSetLayout layouts[2] = {set_layout_, set_layout_};
+    VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    alloc.descriptorPool = pool_;
+    alloc.descriptorSetCount = 2;
+    alloc.pSetLayouts = layouts;
+    std::array<VkDescriptorSet, 2> sets{};
+    if (!vk::Check(vkAllocateDescriptorSets(device_, &alloc, sets.data()), "subsurface descriptor sets")) {
+        DestroyTargets();
+        return false;
+    }
+    targets_.sets = sets;
     // both are shader read between the passes; the set is written once per size (the device is idle while targets change)
-    ctx_->Submit([&](VkCommandBuffer cmd) {
-        UseTargets(cmd, {{&copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&temp_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
-    });
-    const VkDescriptorImageInfo copy{sampler_, copy_.image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    const VkDescriptorImageInfo temp{sampler_, temp_.image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    if (!ctx_->Submit([&](VkCommandBuffer cmd) {
+        UseTargets(cmd, {{&targets_.copy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&targets_.temp, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    })) {
+        DestroyTargets();
+        return false;
+    }
+    const VkDescriptorImageInfo copy{sampler_, targets_.copy.image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo temp{sampler_, targets_.temp.image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     // binding 0 the copy in both sets; binding 1 the copy (horizontal) or the temporary target (vertical)
     const VkDescriptorImageInfo* infos[4] = {&copy, &copy, &copy, &temp};
     VkWriteDescriptorSet writes[4]{};
     for (uint32_t i = 0; i < 4; ++i) {
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        writes[i].dstSet = sets_[i / 2];
+        writes[i].dstSet = targets_.sets[i / 2];
         writes[i].dstBinding = i % 2;
         writes[i].descriptorCount = 1;
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -119,41 +126,54 @@ bool SubsurfacePass::CreateTargets(VkExtent2D extent) {
     return true;
 }
 
-void SubsurfacePass::DestroyTargets() {
-    if (!ctx_) {
-        return;
+void SubsurfacePass::DestroyTargets() { DestroyTargets(targets_); }
+
+void SubsurfacePass::DestroyTargets(TargetState& targets) {
+    if (!ctx_) return;
+    ctx_->DestroyImage(targets.copy.image);
+    ctx_->DestroyImage(targets.temp.image);
+    if (targets.sets[0]) vkFreeDescriptorSets(device_, pool_, 2, targets.sets.data());
+    targets = {};
+}
+
+uint64_t SubsurfacePass::TargetBytes() const {
+    uint64_t bytes = 0;
+    for (const auto* target : {&targets_.copy, &targets_.temp}) {
+        if (target->image.allocation) {
+            VmaAllocationInfo info{};
+            vmaGetAllocationInfo(ctx_->allocator, target->image.allocation, &info);
+            bytes += info.size;
+        }
     }
-    ctx_->DestroyImage(copy_.image);
-    ctx_->DestroyImage(temp_.image);
-    copy_ = RenderTarget{};
-    temp_ = RenderTarget{};
+    return bytes;
 }
 
 void SubsurfacePass::Record(VkCommandBuffer cmd, RenderTarget& diffuse, uint32_t view_index, const std::function<void()>& bind_sets) {
-    if (!pipeline_ || !copy_.Valid()) {
+    if (!pipeline_ || !targets_.copy.Valid() || !targets_.temp.Valid() ||
+        targets_.copy.Extent().width != diffuse.Extent().width || targets_.copy.Extent().height != diffuse.Extent().height) {
         return;
     }
     // 0xDDBEA0: CopyBuffer (light -> copy), SubSurfaceScattering with m_localParam[0].x = 0 (copy -> temporary, horizontal),
     // then with 1 (temporary and copy -> light, vertical and the mix)
-    UseTargets(cmd, {{&diffuse, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&copy_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
+    UseTargets(cmd, {{&diffuse, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&targets_.copy, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
     VkImageCopy region{};
     region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.extent = {copy_.Extent().width, copy_.Extent().height, 1};
-    vkCmdCopyImage(cmd, diffuse.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+    region.extent = {targets_.copy.Extent().width, targets_.copy.Extent().height, 1};
+    vkCmdCopyImage(cmd, diffuse.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, targets_.copy.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                    &region);
-    UseTargets(cmd, {{&diffuse, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    UseTargets(cmd, {{&diffuse, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&targets_.copy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     struct Step {
         RenderTarget* target;
         uint32_t mode;
     };
-    const Step steps[2] = {{&temp_, 1u}, {&diffuse, 2u}};
+    const Step steps[2] = {{&targets_.temp, 1u}, {&diffuse, 2u}};
     for (const Step& step : steps) {
         UseTargets(cmd, {{step.target, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
         BeginPass(cmd, step.target->Extent(), {{step.target, false, {}}});
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         bind_sets();
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 2, 1, &sets_[step.mode - 1], 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 2, 1, &targets_.sets[step.mode - 1], 0, nullptr);
         gpu::PassPush push;
         push.ids = glm::uvec4(view_index, step.mode, 0, 0);
         vkCmdPushConstants(cmd, layout_, kPushStages, 0, sizeof(push), &push);

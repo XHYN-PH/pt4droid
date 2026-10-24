@@ -62,6 +62,11 @@ public:
     }
     size_t OwnerCount()const{return owners_.size();}
     const std::string& OwnerName(uint32_t owner) const { return owners_[owner]; }
+    void RelabelOwner(uint32_t owner,const std::string& from,const std::string& to) {
+        auto& name=owners_[owner];
+        if(name==from)name=to;
+        else if(name.starts_with(from+":"))name=to+name.substr(from.size());
+    }
     // An inactive owner's triangles stay in the world and its grid but no query, ray or sweep sees them: a geom toggle
     // (BodyState::geom_active) is a flag here instead of a rebuild. The active triangles keep their relative order, so the
     // queries return what a world built from the active owners alone returns, in the same order.

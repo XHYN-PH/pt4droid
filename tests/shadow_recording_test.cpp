@@ -12,6 +12,7 @@
 #include <vulkan/vulkan.h>
 #include "engine/render/geometry_bounds.h"
 #include "engine/render/shadow_cache.h"
+#include "engine/render/shadow_template_pool.h"
 #include "engine/render/render_sync.h"
 
 namespace pt {
@@ -34,7 +35,7 @@ static void vkCmdEndRendering(VkCommandBuffer){}
 static void UseTargets(VkCommandBuffer,std::initializer_list<TargetUse>);
 static void BeginPass(VkCommandBuffer,VkExtent2D area,std::initializer_list<ColorOutput>,RenderTarget* target,bool,bool clear){drawing=target->image.image==reinterpret_cast<VkImage>(2)?&static_pixels:&pixels;if(clear){if(drawing==&pixels)++full_clears;for(uint32_t y=0;y<area.height;++y)for(uint32_t x=0;x<area.width;++x)(*drawing)[x+4*y]=0;}}
 static void BeginPass(VkCommandBuffer,VkRect2D area,std::span<const ColorOutput>,RenderTarget* target,bool,bool clear){drawing=target->image.image==reinterpret_cast<VkImage>(2)?&static_pixels:&pixels;current_tile=area.offset.x+4*area.offset.y;if(clear)(*drawing)[current_tile]=0;}
-static void vkCmdCopyImage(VkCommandBuffer,VkImage source,VkImageLayout,VkImage destination,VkImageLayout,uint32_t n,const VkImageCopy* copy){assert(source==reinterpret_cast<VkImage>(2)&&destination==reinterpret_cast<VkImage>(1)&&n==1);int tile=copy->dstOffset.x+4*copy->dstOffset.y;pixels[tile]=static_pixels[tile];}
+static void vkCmdCopyImage(VkCommandBuffer,VkImage source,VkImageLayout,VkImage destination,VkImageLayout,uint32_t n,const VkImageCopy* copy){assert(source==reinterpret_cast<VkImage>(2)&&destination==reinterpret_cast<VkImage>(1)&&n==1);int tile=copy->dstOffset.x+4*copy->dstOffset.y;pixels[tile]=static_pixels[copy->srcOffset.x+4*copy->srcOffset.y];}
 static void SetViewport(VkCommandBuffer,VkRect2D r){current_tile=r.offset.x+4*r.offset.y;}
 template<class... Args> void LogInfo(const char*,Args...){}
 struct SubMesh { bool shadow=true,skinned=false,shadow_double_sided=false; uint32_t index_count=3; };
@@ -56,6 +57,7 @@ struct SceneRenderer {
     std::vector<ShadowView> shadow_views_;std::vector<Draw> draws_;
     std::array<ShadowTileCache,16> shadow_cache_,shadow_static_cache_,shadow_static_seen_;
     RenderTarget shadow_static_;bool shadow_static_unavailable_=false;
+    std::array<int,16> shadow_static_owners_{};std::array<VkOffset2D,16> shadow_static_offsets_{};
     std::array<ShadowMapState,16> shadow_static_states_;
     std::array<std::vector<const Draw*>,16> shadow_static_casters_;
     std::vector<glm::mat4> skin_matrices_;

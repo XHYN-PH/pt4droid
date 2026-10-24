@@ -69,6 +69,17 @@ bool Renderer::Init(SDL_Window* window, const RendererSettings& settings) {
     if (const char* brightness = std::getenv("PT_OUTPUT_BRIGHTNESS")) {
         brightness_override_ = static_cast<float>(std::atof(brightness));
     }
+    photos_.reserve(2);
+    ctx_.wait_graphics = [this] {
+        // A recording slot has already been waited, but its fence is reset.
+        // Asset loads between frames must wait every submitted slot.
+        for(uint32_t i=0;i<kFramesInFlight;++i)if((!recording_ || i!=frame_index_) && frames_[i].in_flight) {
+            const VkResult result=vkWaitForFences(ctx_.device,1,&frames_[i].in_flight,VK_TRUE,UINT64_MAX);
+            ctx_.CheckDeviceLost(result,"texture descriptor frame wait");
+            if(!vk::Check(result,"texture descriptor frame wait"))return false;
+        }
+        return true;
+    };
     ctx_.pipeline_cache_dir = settings.pipeline_cache_dir;
     window_ = settings.headless ? nullptr : window;
     if (!ctx_.Init(window_, settings.validation, settings.hdr && !settings.headless)) {
@@ -177,10 +188,13 @@ bool Renderer::CreateTargets(uint32_t width, uint32_t height) {
     const VkExtent3D extent{width, height, 1};
     VkExtent3D scene_extent=extent;
 #ifdef __ANDROID__
-    mobile_sgsr_=android::PerformanceOptions().sgsr;
+    const auto mobile=android::PerformanceOptions();
+    mobile_temporal_=mobile.temporal_upscaling;
+    mobile_output_scale_=mobile.output_scale;
+    mobile_sgsr_=mobile.sgsr||mobile_temporal_;
     if(mobile_sgsr_&&composite_layout_&&!sgsr_pipeline_&&!CreateCompositeShader(final_format_,"composite_sgsr.frag",sgsr_pipeline_))return false;
-    if(mobile_sgsr_&&window_&&render_extent_.width==0){
-        const float scale=android::RenderScale();
+    if(window_&&render_extent_.width==0){
+        const float scale=mobile_output_scale_*((!mobile_temporal_&&(mobile_sgsr_||mobile_output_scale_<1.f))?android::RenderScale():1.f);
         scene_extent.width=std::max(2u,static_cast<uint32_t>(width*scale)&~1u);
         scene_extent.height=std::max(2u,static_cast<uint32_t>(height*scale)&~1u);
     }
@@ -357,6 +371,8 @@ bool Renderer::CreateCompositeShader(VkFormat output_format,const char* fragment
 }
 
 void Renderer::Shutdown() {
+    for(auto& photo:photos_)if(photo.result.valid())photo.result.wait();
+    PollScreenshots();
     if (!ctx_.device) {
         ctx_.Shutdown();
         return;
@@ -401,9 +417,12 @@ void Renderer::Resize(uint32_t width, uint32_t height) {
 }
 
 bool Renderer::BeginFrame(bool present) {
+    PollScreenshots();
     ctx_.RetireTextureUploads();
 #ifdef __ANDROID__
-    if (android::ConsumeRenderScaleChange()||mobile_sgsr_!=android::PerformanceOptions().sgsr) swapchain_dirty_ = true;
+    const auto mobile=android::PerformanceOptions();
+    if (android::ConsumeRenderScaleChange() || mobile_temporal_!=mobile.temporal_upscaling || mobile_output_scale_!=mobile.output_scale ||
+        mobile_sgsr_!=(mobile.sgsr||mobile.temporal_upscaling)) swapchain_dirty_ = true;
 #endif
     Frame& frame = frames_[frame_index_];
     ctx_.CheckDeviceLost(vkWaitForFences(ctx_.device, 1, &frame.in_flight, VK_TRUE, UINT64_MAX), "frame fence wait");
@@ -476,6 +495,7 @@ bool Renderer::BeginFrame(bool present) {
         }
     }
     vkResetFences(ctx_.device, 1, &frame.in_flight);
+    recording_ = true;
     vkResetCommandPool(ctx_.device, frame.pool, 0);
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -499,6 +519,7 @@ bool Renderer::BeginFrame(bool present) {
     vkCmdEndRendering(frame.cmd);
     streamline::SetMarker(streamline::Marker::SimulationEnd);
     streamline::SetMarker(streamline::Marker::RenderSubmitStart);
+    ++frame_serial_;
     return true;
 }
 
@@ -731,7 +752,104 @@ void Renderer::EndFrame(bool draw_ui) {
             swapchain_dirty_ = true;
         }
     }
+    recording_ = false;
     frame_index_ = (frame_index_ + 1) % kFramesInFlight;
+}
+
+namespace {
+bool EncodeScreenshot(const std::filesystem::path& path,uint32_t width,uint32_t height,VkFormat format,const void* mapped) {
+    const VkDeviceSize bytes_per_pixel=format==VK_FORMAT_R16G16B16A16_SFLOAT?8:4;
+    const uint8_t* pixels = static_cast<const uint8_t*>(mapped);
+    std::vector<uint8_t> cropped(size_t(width) * height * 4);
+    const bool bgra = format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const size_t src = (size_t(y) * width + x) * bytes_per_pixel;
+            uint8_t* dst = cropped.data() + (size_t(y) * width + x) * 4;
+            if (format == VK_FORMAT_R16G16B16A16_SFLOAT) {
+                const uint16_t* half = reinterpret_cast<const uint16_t*>(pixels + src);
+                for (int c = 0; c < 3; ++c) dst[c] = render::LinearToSrgb8(HalfToFloat(half[c]) * (80.0f / 203.0f));
+            } else if (format == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
+                uint32_t packed;
+                std::memcpy(&packed, pixels + src, sizeof(packed));
+                float r = render::PqDecodeNits(float(packed & 0x3ffu) / 1023.0f);
+                float g = render::PqDecodeNits(float((packed >> 10) & 0x3ffu) / 1023.0f);
+                float b = render::PqDecodeNits(float((packed >> 20) & 0x3ffu) / 1023.0f);
+                const float r709 = 1.660491f * r - 0.587641f * g - 0.072850f * b;
+                const float g709 = -0.124550f * r + 1.132900f * g - 0.008349f * b;
+                const float b709 = -0.018151f * r - 0.100579f * g + 1.118730f * b;
+                dst[0] = render::LinearToSrgb8(r709 / 203.0f);
+                dst[1] = render::LinearToSrgb8(g709 / 203.0f);
+                dst[2] = render::LinearToSrgb8(b709 / 203.0f);
+            } else {
+                const uint8_t* p = pixels + src;
+                dst[0] = p[bgra ? 2 : 0];
+                dst[1] = p[1];
+                dst[2] = p[bgra ? 0 : 2];
+            }
+            dst[3] = 255;
+        }
+    }
+    const int ok = stbi_write_png(path.string().c_str(), static_cast<int>(width), static_cast<int>(height), 4, cropped.data(), static_cast<int>(width * 4));
+    if (ok) {
+        LogInfo("screenshot written to {}", path.string());
+    } else {
+        LogError("screenshot {} write failed", path.string());
+    }
+    return ok != 0;
+}
+}
+
+void Renderer::PollScreenshots() {
+    for(auto it=photos_.begin();it!=photos_.end();) {
+        if(it->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready){++it;continue;}
+        bool ok=false;try{ok=it->result.get();}catch(const std::exception& e){LogError("photo: {}",e.what());}
+        if(it->complete)it->complete(ok);it=photos_.erase(it);
+    }
+}
+
+bool Renderer::QueueScreenshot(const std::filesystem::path& path,glm::vec4 crop,std::function<void(bool)> complete) {
+    PollScreenshots();if(photos_.size()>=2||!output_.image||!final_ready_)return false;
+    render::PixelRect rect;if(!render::MakePixelCrop(output_.extent.width,output_.extent.height,crop,rect))return false;
+    vk::Buffer readback;VkCommandPool pool=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;VkCommandBuffer cmd=VK_NULL_HANDLE;
+    auto cleanup=[&]{ctx_.DestroyBuffer(readback);if(fence)vkDestroyFence(ctx_.device,fence,nullptr);if(pool)vkDestroyCommandPool(ctx_.device,pool,nullptr);};
+    const auto format=output_.format;const auto bpp=format==VK_FORMAT_R16G16B16A16_SFLOAT?8u:4u;
+    if(!ctx_.CreateBuffer(readback,VkDeviceSize(rect.width)*rect.height*bpp,VK_BUFFER_USAGE_TRANSFER_DST_BIT,true))return false;
+    VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.queueFamilyIndex=ctx_.queue_family;pi.flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if(vkCreateCommandPool(ctx_.device,&pi,nullptr,&pool)!=VK_SUCCESS||vkCreateFence(ctx_.device,&fi,nullptr,&fence)!=VK_SUCCESS){cleanup();return false;}
+    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ai.commandPool=pool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if(vkAllocateCommandBuffers(ctx_.device,&ai,&cmd)!=VK_SUCCESS||vkBeginCommandBuffer(cmd,&bi)!=VK_SUCCESS){cleanup();return false;}
+    if(!output_ready_) {
+        vk::ImageBarrier(cmd,output_.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};color.imageView=output_.view;color.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};info.renderArea={{0,0},{output_.extent.width,output_.extent.height}};info.layerCount=1;info.colorAttachmentCount=1;info.pColorAttachments=&color;
+        vkCmdBeginRendering(cmd,&info);Composite(cmd,final_set_,1.0f,info.renderArea.extent,output_.format);vkCmdEndRendering(cmd);
+        vk::ImageBarrier(cmd,output_.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_READ_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    }
+    VkBufferImageCopy region{};region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};region.imageOffset={int32_t(rect.x),int32_t(rect.y),0};region.imageExtent={rect.width,rect.height,1};
+    vkCmdCopyImageToBuffer(cmd,output_.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback.buffer,1,&region);
+    VkBufferMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};barrier.srcStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;barrier.srcAccessMask=VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barrier.dstStageMask=VK_PIPELINE_STAGE_2_HOST_BIT;barrier.dstAccessMask=VK_ACCESS_2_HOST_READ_BIT;barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;barrier.buffer=readback.buffer;barrier.size=VK_WHOLE_SIZE;
+    VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};dependency.bufferMemoryBarrierCount=1;dependency.pBufferMemoryBarriers=&barrier;vkCmdPipelineBarrier2(cmd,&dependency);
+    if(vkEndCommandBuffer(cmd)!=VK_SUCCESS){cleanup();return false;}
+    VkCommandBufferSubmitInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};command.commandBuffer=cmd;VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};submit.commandBufferInfoCount=1;submit.pCommandBufferInfos=&command;
+    const VkResult submitted=vkQueueSubmit2(ctx_.queue,1,&submit,fence);ctx_.CheckDeviceLost(submitted,"photo readback submit");if(submitted!=VK_SUCCESS){cleanup();return false;}
+    auto encode=[this,readback,pool,fence,path,rect,format]()mutable{
+        bool ok=false;
+        if(vkWaitForFences(ctx_.device,1,&fence,VK_TRUE,UINT64_MAX)==VK_SUCCESS) {
+            vmaInvalidateAllocation(ctx_.allocator,readback.allocation,0,VK_WHOLE_SIZE);
+            if(readback.mapped)try{ok=EncodeScreenshot(path,rect.width,rect.height,format,readback.mapped);}catch(...){ok=false;}
+        }
+        ctx_.DestroyBuffer(readback);vkDestroyFence(ctx_.device,fence,nullptr);vkDestroyCommandPool(ctx_.device,pool,nullptr);return ok;
+    };
+    try {photos_.push_back({std::async(std::launch::async,encode),std::move(complete)});}
+    catch(const std::exception&){const bool ok=encode();if(complete)complete(ok);}
+    return true;
 }
 
 bool Renderer::SaveScreenshot(const std::filesystem::path& path, glm::vec4 crop) {
@@ -789,45 +907,9 @@ bool Renderer::SaveScreenshot(const std::filesystem::path& path, glm::vec4 crop)
         LogError("screenshot {} not written: readback buffer is not mapped", path.string());
         return false;
     }
-    uint8_t* pixels = static_cast<uint8_t*>(readback.mapped);
-    std::vector<uint8_t> cropped(size_t(width) * height * 4);
-    const bool bgra = format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
-    for (uint32_t y = 0; y < height; ++y) {
-        for (uint32_t x = 0; x < width; ++x) {
-            const size_t src = (size_t(y) * width + x) * bytes_per_pixel;
-            uint8_t* dst = cropped.data() + (size_t(y) * width + x) * 4;
-            if (format == VK_FORMAT_R16G16B16A16_SFLOAT) {
-                const uint16_t* half = reinterpret_cast<const uint16_t*>(pixels + src);
-                for (int c = 0; c < 3; ++c) dst[c] = render::LinearToSrgb8(HalfToFloat(half[c]) * (80.0f / 203.0f));
-            } else if (format == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
-                uint32_t packed;
-                std::memcpy(&packed, pixels + src, sizeof(packed));
-                float r = render::PqDecodeNits(float(packed & 0x3ffu) / 1023.0f);
-                float g = render::PqDecodeNits(float((packed >> 10) & 0x3ffu) / 1023.0f);
-                float b = render::PqDecodeNits(float((packed >> 20) & 0x3ffu) / 1023.0f);
-                const float r709 = 1.660491f * r - 0.587641f * g - 0.072850f * b;
-                const float g709 = -0.124550f * r + 1.132900f * g - 0.008349f * b;
-                const float b709 = -0.018151f * r - 0.100579f * g + 1.118730f * b;
-                dst[0] = render::LinearToSrgb8(r709 / 203.0f);
-                dst[1] = render::LinearToSrgb8(g709 / 203.0f);
-                dst[2] = render::LinearToSrgb8(b709 / 203.0f);
-            } else {
-                const uint8_t* p = pixels + src;
-                dst[0] = p[bgra ? 2 : 0];
-                dst[1] = p[1];
-                dst[2] = p[bgra ? 0 : 2];
-            }
-            dst[3] = 255;
-        }
-    }
-    const int ok = stbi_write_png(path.string().c_str(), static_cast<int>(width), static_cast<int>(height), 4, cropped.data(), static_cast<int>(width * 4));
+    const bool ok=EncodeScreenshot(path,width,height,format,readback.mapped);
     ctx_.DestroyBuffer(readback);
-    if (ok) {
-        LogInfo("screenshot written to {}", path.string());
-    } else {
-        LogError("screenshot {} write failed", path.string());
-    }
-    return ok != 0;
+    return ok;
 }
 
 // VR (docs/vr.md): the HUD image (the overlay alone, cleared to transparent) and the copies of the frame and the HUD into the

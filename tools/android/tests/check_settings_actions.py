@@ -30,6 +30,12 @@ public class SettingsActionsTest {
    ok(ini.contains(advanced?"invert_y=0":"mali_optimizations=0"),"preserve other page's INI keys");
    if(!advanced)ok(Files.readString(root.resolve("render_scale.txt")).equals("0.8"),"Controls never writes render scale");
   }
+  for(int output=0;output<3;++output)for(int halo=0;halo<3;++halo){t.advanced(0);t.values.put("output_scale_index",output);t.values.put("flare_halo_index",halo);int cap=PTActivity.cap;t.apply(true,0,.8f);String ini=Files.readString(root.resolve("mobile_performance.ini"));ok(ini.contains("output_scale="+new String[]{"1.0","0.9","0.8"}[output])&&ini.contains("flare_halo="+new String[]{"0.0","0.2","1.0"}[halo]),"output and halo choices reach native configuration");ok(PTActivity.cap==cap,"output/halo choice preserves frame cap");}
+  for(boolean enabled:new boolean[]{false,true}){t.advanced(0);t.values.put("lens_flares",enabled);int previousCap=PTActivity.cap;t.apply(true,0,.8f);ok(PTActivity.cap==previousCap,"glare control preserves FPS cap");ok(Files.readString(root.resolve("mobile_performance.ini")).contains("lens_flares="+(enabled?"1":"0")),"main flare control persists through actual Apply");ok(t.prefs.getBoolean("lens_flares",!enabled)==enabled,"main flare preference matches native config");}
+  t.advanced(0);t.values.put("dynamic_resolution",true);t.values.put("temporal_upscaling",false);String unchanged=Files.readString(root.resolve("mobile_performance.ini"));
+  try{t.apply(true,0,.8f);throw new AssertionError("inconsistent temporal state must fail");}catch(IOException expected){}
+  ok(Files.readString(root.resolve("mobile_performance.ini")).equals(unchanged),"invalid dependency never silently re-enables SGSR2 or writes settings");
+  t.values.put("temporal_upscaling",true);t.apply(true,0,.8f);ok(Files.readString(root.resolve("mobile_performance.ini")).contains("temporal_upscaling=1"),"consistent dynamic dependency persists");
   t.advanced(1);t.apply(true,2,.8f);ok(PTActivity.cap==0&&PTActivity.presetCalls==1,"explicit preset applies once");
   ok(!Files.exists(root.resolve("game_graphics_pending.ini"))&&Files.readString(root.resolve("performance_profile_pending.txt")).trim().equals("1"),"explicit preset replaces old overlay");
   // Failure on the second write restores the already written first file and preferences.

@@ -29,6 +29,8 @@ void SetRenderScale(float value);
 bool ConsumeRenderScaleChange();
 MobilePerformanceOptions PerformanceOptions();
 int EffectiveFrameLimit(int requested);
+void ReportFrameWork(int64_t work_ns,int target_fps);
+int64_t ThreadCpuTimeNs();
 int ThermalStatus();
 int ConsumePerformanceProfile();
 int BloomPassLimit();
@@ -43,6 +45,7 @@ void GameGraphicsSettingsFailed(const std::string& message);
 void LoadingProgress(const std::string& message, int completed, int total);
 /* A PNG already saved in DataDir()/photos; Android publishes it through MediaStore. */
 void PhotoSaved(const std::string& path);
+void PhotoSaveFailed();
 void GraphicsStartupFailed(const std::string& message);
 void PublishGameGraphicsSettings(std::string text);
 bool ConsumeGameGraphicsChanges();

@@ -23,7 +23,7 @@ final class Diagnostics {
                     entry(zip,"device.txt",("pt4droid "+version+"\n"+Build.MANUFACTURER+" "+Build.MODEL+"\nAndroid "+Build.VERSION.RELEASE+" (API "+Build.VERSION.SDK_INT+")\n"+DisplayRefresh.describe(activity)+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     String snapshot=PTActivity.gameRunning()?PTActivity.nativeGetGameGraphicsSettings():"";
                     entry(zip,"settings/effective_graphics.ini",GameGraphicsData.load(activity,snapshot).text().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    for(String name:new String[]{"driver.txt","render_scale.txt","mobile_performance.ini","performance_profile.txt","game_graphics_pending.ini"})copy(zip,new File(activity.getFilesDir(),name),"settings/"+name,64*1024);
+                    for(String name:new String[]{"driver.txt","driver_runtime.txt","render_scale.txt","mobile_performance.ini","performance_profile.txt","game_graphics_pending.ini"})copy(zip,new File(activity.getFilesDir(),name),"settings/"+name,64*1024);
                     File ext=activity.getExternalFilesDir(null);
                     File[] dirs={new File("/storage/emulated/0/Download/PT-logs-test"),new File(activity.getFilesDir(),"data"),ext==null?null:new File(ext,"data")};
                     int i=0;for(File dir:dirs){if(dir==null)continue;for(String name:new String[]{"pt.log","pt.log.previous","pt-java-crash.txt","pt-import.log"})copy(zip,new File(dir,name),"logs/"+i+"-"+name,2*1024*1024);i++;}

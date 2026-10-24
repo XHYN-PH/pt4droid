@@ -48,8 +48,6 @@ add_custom_target(pt_version
   BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/pt_version.h")
 
 add_library(pt_engine STATIC ${PT_ENGINE_SOURCES} ${PT_GAME_SOURCES})
-execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE PT_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE)
-set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS PT_BUILD_ID="${PT_BUILD_ID}")
 # Game+ (docs/gameplay.md, Game+): the content a finished game unlocks, ON since 1.0 (every release ships it). OFF builds keep
 # it inert (the save still stores the finish tag and count, nothing else changes). The first configure takes the default from
 # the environment variable PT_GAMEPLUS.
@@ -103,7 +101,7 @@ target_link_libraries(pt PRIVATE pt_engine)
 if(WIN32)
   target_link_libraries(pt PRIVATE dbghelp ole32 uuid)
 endif()
-# PT_BUILD_ID: the commit the executable is built from (plus "-dirty" for local changes), in the crash dump names and pt.log
+# PT_BUILD_ID: the commit plus a source fingerprint for local changes, in crash names and pt.log.
 add_custom_target(pt_build_id
   COMMAND "${CMAKE_COMMAND}" "-DOUT=${CMAKE_BINARY_DIR}/generated/build_id.h" "-DSOURCE=${CMAKE_SOURCE_DIR}" -P "${CMAKE_SOURCE_DIR}/cmake/build_id.cmake"
   BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/build_id.h")

@@ -18,7 +18,7 @@ layout(location = 0) out vec4 out_color;
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     if (pass.ids.x == 1u) {
-        vec4 scene = ImgFetch(IMG_HDR_COPY, pixel);
+        vec4 scene = ImgFetch(pass.ids.y!=0u?pass.ids.y:IMG_HDR_COPY, pixel);
         vec4 particles = ImgFetch(IMG_PARTICLES, pixel);
         if (particles.a >= 1.0 && all(equal(particles.rgb, vec3(0.0)))) {
             out_color = scene;

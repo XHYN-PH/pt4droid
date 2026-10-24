@@ -1,3 +1,6 @@
+#include "engine/core/hitch_trace.h"
+#include <future>
+#include <thread>
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <array>
@@ -29,6 +32,7 @@ static void vkGetPhysicalDeviceFormatProperties(VkPhysicalDevice,VkFormat f,VkFo
 static VkResult vkGetPhysicalDeviceImageFormatProperties(VkPhysicalDevice,VkFormat,VkImageType,VkImageTiling,VkImageUsageFlags,VkImageCreateFlags,VkImageFormatProperties*out){out->maxExtent={16384,16384,1};out->maxMipLevels=15;out->maxArrayLayers=6;return VK_SUCCESS;}
 struct VmaBudget{uint64_t budget=0,usage=0;};static void vmaGetHeapBudgets(void*,VmaBudget*out){out[0].budget=64ull*1024*1024;}
 static void vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice,VkPhysicalDeviceMemoryProperties*out){out->memoryHeapCount=1;out->memoryHeaps[0].flags=VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;}
+static void vmaGetMemoryProperties(void*,const VkPhysicalDeviceMemoryProperties** out){static VkPhysicalDeviceMemoryProperties p{};p.memoryHeapCount=1;p.memoryHeaps[0].flags=VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;*out=&p;}
 static void vmaFlushAllocation(void*,void*,size_t,size_t){}
 static void vkCmdCopyBufferToImage(VkCommandBuffer,VkBuffer buffer,VkImage image,VkImageLayout,uint32_t count,const VkBufferImageCopy*regions){auto&b=buffers.at(buffer);auto&r=records.at(image);for(uint32_t i=0;i<count;++i){auto&v=regions[i];bool bc;uint32_t block=FormatBlockBytes(r.format,bc);size_t n=bc?size_t((v.imageExtent.width+3)/4)*((v.imageExtent.height+3)/4)*block:size_t(v.imageExtent.width)*v.imageExtent.height*block;assert(v.bufferOffset+n<=b.second&&v.imageSubresource.mipLevel<r.levels&&v.imageSubresource.baseArrayLayer<r.layers);r.bytes[v.imageSubresource.baseArrayLayer*r.levels+v.imageSubresource.mipLevel].assign(b.first+v.bufferOffset,b.first+v.bufferOffset+n);}}
 static void vkUpdateDescriptorSets(VkDevice,uint32_t n,const VkWriteDescriptorSet*w,uint32_t,const VkCopyDescriptorSet*){for(uint32_t i=0;i<n;++i)assert(w[i].pImageInfo->imageView!=VK_NULL_HANDLE);}
@@ -36,7 +40,7 @@ static bool CountedDecodeBcMip(VkFormat f,uint32_t w,uint32_t h,std::span<const 
 namespace vk {
 struct Image{VkImage image{};VkImageView view{};};struct Buffer{VkBuffer buffer{};void*allocation{};void*mapped{};size_t size=0;};
 static void ImageBarrier(VkCommandBuffer,VkImage,VkImageAspectFlags,VkPipelineStageFlags2,VkAccessFlags2,VkImageLayout,VkPipelineStageFlags2,VkAccessFlags2,VkImageLayout){}
-struct Context{void RetireTextureUploads(bool){}
+struct Context{ bool WaitForTextureMutation(){RetireTextureUploads(true);return true;}void RetireTextureUploads(bool){}
 VkPhysicalDevice physical{};VkDevice device{};void*allocator{};bool memory_budget=false;
  bool CreateImage(Image&o,VkFormat f,VkExtent3D,VkImageUsageFlags,uint32_t levels,uint32_t layers,VkImageAspectFlags,bool){static uintptr_t serial=1;o.image=handle<VkImage>(serial++);o.view=handle<VkImageView>(serial++);records.emplace(o.image,RecordedImage{f,levels,layers,std::vector<std::vector<uint8_t>>(levels*layers)});return true;}
  void DestroyImage(Image&o){records.erase(o.image);o={};}
@@ -52,7 +56,7 @@ struct TextureManager{static constexpr uint32_t kWhite=0,kMaxTextures=8192,kMaxC
  struct PendingUpload{VkImage image;std::vector<VkBufferImageCopy>regions;};vk::Buffer upload_staging_;size_t upload_used_=0;std::vector<PendingUpload>upload_pending_;uint32_t upload_batch_depth_=0;uint64_t fallback_bytes_=0;double upload_ms_=0;
  struct FormatSupport{VkFormatProperties properties{};VkImageFormatProperties image{};bool valid=false;};std::unordered_map<uint64_t,FormatSupport>format_support_;
  struct ConvertedImage {std::filesystem::path file;uint64_t bytes=0,last_use=0;VkFormat format=VK_FORMAT_UNDEFINED;bool failed=false;};
- std::unordered_map<uint32_t,ConvertedImage> converted_images_;std::unordered_set<uint32_t> texture_use_;
+ std::unordered_map<uint32_t,ConvertedImage> converted_images_;std::unordered_map<uint32_t,uint64_t> texture_generations_;std::unordered_map<uint32_t,std::shared_future<std::shared_ptr<const BcMipChain>>> restore_jobs_;bool asynchronous_residency_=false;uint64_t residency_ceiling_=0;std::unordered_set<uint32_t> texture_use_;
  std::unordered_map<std::string,std::string>failed_textures_;std::unordered_map<uint32_t,uint32_t>redirects_,enhanced_images_;
  bool enhanced_enabled_=false,restoring_=false,residency_warning_=false;uint64_t texture_epoch_=1,residency_limit_=1024;
  void WriteResidentDescriptor(uint32_t);void Touch(uint32_t);void TouchCube(uint32_t);void EvictConverted(uint64_t);void FinishTextureUse();
@@ -78,6 +82,22 @@ int main(){using namespace pt;
   // Failed backing is reported once; an unrelated live texture is retained.
   const uint32_t live=m.images_[a].image?a:b,dead=live==a?b:a;
   std::filesystem::remove(m.converted_images_.at(dead).file);m.texture_use_={live,dead};m.residency_limit_=128;m.FinishTextureUse();assert(m.converted_images_.at(dead).failed && m.images_[live].image);
+ }
+ assert(records.empty() && buffers.empty());std::filesystem::remove_all(cache);
+ ConfigureBcConversion(native,cache/"async",0);
+ {
+  TextureManager m;m.asynchronous_residency_=true;
+  for(int i=0;i<4;++i)m.Create("builtin"+std::to_string(i),VK_FORMAT_R8G8B8A8_UNORM,{&builtin,1});
+  m.residency_limit_=64;
+  const auto a=m.Create("async-a",VK_FORMAT_BC1_RGBA_UNORM_BLOCK,{&source,1});
+  const auto bytes=records.at(m.images_[a].image).bytes;
+  const auto b=m.Create("async-b",VK_FORMAT_BC1_RGBA_UNORM_BLOCK,{&source,1});
+  assert(!m.images_[a].image&&m.images_[b].image);
+  m.texture_use_={a};m.FinishTextureUse();
+  assert(!m.images_[a].image&&m.images_[b].image&&m.restore_jobs_.size()==1);
+  m.restore_jobs_.at(a).wait();m.FinishTextureUse();
+  assert(m.images_[a].image&&!m.images_[b].image&&m.restore_jobs_.empty()&&m.fallback_bytes_==64);
+  assert(records.at(m.images_[a].image).bytes==bytes&&m.by_name_.at("async-a")==a);
  }
  assert(records.empty() && buffers.empty());std::filesystem::remove_all(cache);
  // Native compressed bytes remain exactly as supplied; compatibility limit is ignored.

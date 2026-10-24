@@ -70,7 +70,7 @@ layout(std430, set = 1, binding = 1) readonly buffer SkinData {
     mat4 skin[];
 };
 
-layout(set = 1, binding = 2) uniform texture2D images[60];
+layout(set = 1, binding = 2) uniform texture2D images[64];
 layout(set = 1, binding = 3) uniform sampler samplers[5];
 layout(set = 1, binding = 4) uniform texture3D lut2_image;
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include <array>
+#include <utility>
 
 #include "engine/render/render_util.h"
 #include "engine/render/vk_context.h"
@@ -17,7 +19,17 @@ public:
               VkSampler point_clamp);
     void Shutdown();
     bool CreateTargets(VkExtent2D extent);
+    struct TargetState {
+        RenderTarget copy, temp;
+        std::array<VkDescriptorSet, 2> sets{};
+    };
+    // Images and descriptors travel together. A bank never rewrites sets that
+    // an earlier frame may still be using.
+    TargetState TakeTargets() { return std::exchange(targets_, {}); }
+    void SwapTargets(TargetState& bank) { std::swap(targets_, bank); }
     void DestroyTargets();
+    void DestroyTargets(TargetState& targets);
+    uint64_t TargetBytes() const;
     // between the lighting and the composition; diffuse ends as a shader read target. bind_sets binds sets 0 and 1.
     void Record(VkCommandBuffer cmd, RenderTarget& diffuse, uint32_t view_index, const std::function<void()>& bind_sets);
 
@@ -29,11 +41,9 @@ private:
     VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     // [0]: (copy, copy) for the horizontal pass, [1]: (copy, temporary) for the vertical one
-    VkDescriptorSet sets_[2] = {};
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
-    RenderTarget copy_;
-    RenderTarget temp_;
+    TargetState targets_;
 };
 
 }

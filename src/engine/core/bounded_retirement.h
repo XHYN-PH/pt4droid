@@ -1,27 +1,33 @@
 #pragma once
-#include <chrono>
-#include <future>
+#include <condition_variable>
+#include <deque>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <system_error>
-
 namespace pt {
-// At most one retired packet is destroyed off-thread. If that worker is still
-// busy, destroy the next packet locally instead of growing a queue or waiting.
-// The future joins at owner destruction, so no detached cleanup outlives it.
-template<class T>
-class BoundedRetirement {
-public:
-    bool Retire(std::unique_ptr<T> value) {
-        if (!value || (worker_.valid() && worker_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)) return false;
-        if (worker_.valid()) worker_.get();
-        try {
-            worker_ = std::async(std::launch::async, [retired = std::move(value)]() mutable { retired.reset(); });
-            return true;
-        } catch (const std::system_error&) {
-            return false;
+template<class T> class BoundedRetirement {
+    std::mutex mutex_; std::condition_variable changed_; std::deque<std::unique_ptr<T>> pending_;
+    std::thread worker_; bool stopping_=false;
+    void Run() {
+        for(;;) {
+            std::unique_ptr<T> value;
+            { std::unique_lock lock(mutex_); changed_.wait(lock,[&]{return stopping_||!pending_.empty();});
+              if(pending_.empty()&&stopping_)return;
+              value=std::move(pending_.front());pending_.pop_front(); }
+            value.reset();
         }
     }
-private:
-    std::future<void> worker_;
+public:
+    BoundedRetirement()=default;
+    BoundedRetirement(const BoundedRetirement&)=delete;
+    ~BoundedRetirement(){ {std::lock_guard lock(mutex_);stopping_=true;}changed_.notify_one();if(worker_.joinable())worker_.join(); }
+    bool Retire(std::unique_ptr<T> value) {
+        if(!value)return false;
+        std::lock_guard lock(mutex_);
+        if(pending_.size()>=2)return false;
+        if(!worker_.joinable()) {try {worker_=std::thread([this]{Run();});}catch(const std::system_error&){return false;}}
+        pending_.push_back(std::move(value));changed_.notify_one();return true;
+    }
 };
 }

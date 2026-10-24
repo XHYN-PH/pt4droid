@@ -1471,6 +1471,7 @@ void SceneRenderer::PrepareShadowCasters() {
             if (glm::dot(delta, delta) > reach * reach) {
                 continue;
             }
+            if(bounded && !BoundsTouchSphere(d.shadow_bounds,sv.center,sv.radius))continue;
             if (sv.frustum && (bounded ? !BoundsInPlanes(d.shadow_bounds, sv.planes) : !SphereInPlanes(d.center, d.radius, sv.planes))) {
                 continue;
             }
@@ -1493,7 +1494,8 @@ void SceneRenderer::PrepareShadowCasters() {
                     ShadowCasterState next = {reinterpret_cast<uintptr_t>(d.mesh), uint32_t(d.sub - d.mesh->submeshes.data()),
                         d.material, uint32_t(d.sub->shadow_double_sided) | (uint32_t(d.sub->skinned)<<1), d.transform,
                         textures_->ShadowAlphaState(d.material), std::move(pose)};
-                    shadow_draw_stable_[index]=metadata==next;
+                    shadow_draw_stable_[index]=metadata==next ||
+                        (!d.sub->skinned && d.skin_base==gpu::kInvalid && metadata.mesh==0);
                     metadata=std::move(next);
                     shadow_draw_state_ready_[index] = 1;
                 }
@@ -1501,6 +1503,7 @@ void SceneRenderer::PrepareShadowCasters() {
                 state.casters.push_back(shadow_draw_states_[index]);
             }
         }
+        if(cache_enabled)state.CanonicalizeCasters();
     }
 
     static const bool share = [] { const char* v = std::getenv("PT_SHADOW_SHARE"); return !v || std::string_view(v) != "0"; }();
@@ -1555,7 +1558,7 @@ std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, cons
     // Keep the extra depth atlas within 64 MiB. A stable projection must be
     // observed twice before paying for its static template; moving lights keep
     // the original path. Empty/static-only tiles use whole-tile reuse instead.
-    if(!enabled || shadow_.Extent().width>4096 || shadow_static_unavailable_)return use;
+    if(!enabled || shadow_static_unavailable_)return use;
     bool needed=false;
     const uint32_t tile_size=shadow_.Extent().width/kShadowTiles;
     for(const ShadowView& sv:shadow_views_) {
@@ -1569,16 +1572,35 @@ std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, cons
             // consecutive observations. Pose/transform/alpha changes remove it
             // immediately; cache equality then rebuilds the template.
             const size_t index=size_t(d-draws_.data());
-            if((d->sub->skinned || d->skin_base!=gpu::kInvalid) && (!shadow_draw_stable_[index] || !shadow_draw_states_[index].pose))continue;
+            if(!shadow_draw_stable_[index])continue;
+            if((d->sub->skinned || d->skin_base!=gpu::kInvalid) && !shadow_draw_states_[index].pose)continue;
             casters.push_back(d);state.casters.push_back(shadow_draw_states_[size_t(d-draws_.data())]);
         }
+        state.CanonicalizeCasters();
         const bool eligible=state.reusable && casters.size()>=32 && casters.size()<shadow_casters_[tile].size();
         use[tile]=dirty[tile] && eligible && shadow_static_seen_[tile].Reuse(state);
         needed=needed||use[tile];
         shadow_static_seen_[tile].Recorded(state);
     }
     if(!needed)return use;
-    if(!shadow_static_.Valid() && !CreateTarget(shadow_static_,kDepthTargetFormat,shadow_.Extent(),
+    // A 64 MiB template pool also supports PS4's 8K atlas: cache up to four
+    // full-quality 2K tiles rather than allocating a second 256 MiB atlas.
+    std::array<uint32_t,16> savings{};for(uint32_t i=0;i<16;++i)savings[i]=uint32_t(shadow_static_casters_[i].size());
+    const auto plan=PlanShadowTemplates(shadow_.Extent().width,tile_size,use,savings);
+    const uint32_t pool_size=plan.width;use=plan.use;
+    if(!shadow_static_.Valid()) {
+        shadow_static_owners_.fill(-1);
+        for(auto& cache:shadow_static_cache_)cache.Invalidate();
+    }
+    for(uint32_t slot=0;slot<plan.count;++slot) {
+        const auto tile=plan.tiles[slot];
+        if(shadow_static_owners_[slot]!=int(tile)) {
+            if(shadow_static_owners_[slot]>=0)shadow_static_cache_[shadow_static_owners_[slot]].Invalidate();
+            shadow_static_cache_[tile].Invalidate();shadow_static_owners_[slot]=int(tile);
+        }
+        shadow_static_offsets_[tile]=plan.offsets[tile];
+    }
+    if(!shadow_static_.Valid() && !CreateTarget(shadow_static_,kDepthTargetFormat,{pool_size,pool_size},
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_DEPTH_BIT)) {
         shadow_static_unavailable_=true;use.fill(false);return use;
     }
@@ -1587,7 +1609,8 @@ std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, cons
         if(!use[tile] || shadow_static_cache_[tile].Reuse(shadow_static_states_[tile]))continue;
         UseTargets(cmd,{{&shadow_static_,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
         mesh_draw_state_.Reset();
-        BeginPass(cmd,sv.rect,{},&shadow_static_,false,true);
+        VkRect2D source_rect{shadow_static_offsets_[tile],sv.rect.extent};
+        BeginPass(cmd,source_rect,{},&shadow_static_,false,true);
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shadow_pipeline_);
         vkCmdSetDepthBias(cmd,sv.bias_constant,0.0f,sv.bias_slope);
         for(const Draw* d:shadow_static_casters_[tile]) {DrawMesh(cmd,*d,sv.view,0,false,false,nullptr,sv.cull,true);++stats_.shadow_draws;}
@@ -1664,7 +1687,7 @@ void SceneRenderer::RecordShadows(VkCommandBuffer cmd) {
             const uint32_t tile=uint32_t(sv.rect.offset.x)/tile_size+kShadowTiles*(uint32_t(sv.rect.offset.y)/tile_size);
             if(!static_tiles[tile])continue;
             VkImageCopy copy{};copy.srcSubresource=copy.dstSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
-            copy.srcOffset=copy.dstOffset={sv.rect.offset.x,sv.rect.offset.y,0};copy.extent={sv.rect.extent.width,sv.rect.extent.height,1};
+            copy.srcOffset={shadow_static_offsets_[tile].x,shadow_static_offsets_[tile].y,0};copy.dstOffset={sv.rect.offset.x,sv.rect.offset.y,0};copy.extent={sv.rect.extent.width,sv.rect.extent.height,1};
             vkCmdCopyImage(cmd,shadow_static_.image.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,shadow_.image.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
             ++stats_.shadow_static_copies;
             stats_.shadow_static_saved_draws+=uint32_t(shadow_static_casters_[tile].size());
@@ -2349,24 +2372,29 @@ void SceneRenderer::RecordForward(VkCommandBuffer cmd, const ViewSetup& view, Re
         return;
     }
     vkCmdEndRendering(cmd);
-    UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
-    VkImageCopy copy{};
-    copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.dstSubresource = copy.srcSubresource;
-    copy.extent = {extent_.width, extent_.height, 1};
-    ++stats_.scene_copies;
-    vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                   &copy);
-    UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                     {&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                     {&particles_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
-    mesh_draw_state_.Reset();
-    BeginPass(cmd, extent_, {{&output, false, {}}});
-    gpu::PassPush push;
-    // vfx_composite: the forward blends also take the scene alpha (the composite's bloom luminance) down by the transmittance
-    push.ids.x = 1u;
-    Fullscreen(cmd, vfx_composite_, push);
-    vkCmdEndRendering(cmd);
+    std::array<VkDescriptorSet,2> pass_sets{};
+    bool pingpong=false;
+#ifdef __ANDROID__
+    pingpong=android::PerformanceOptions().post_optimizations && AllocatePassDescriptors(pass_sets);
+#endif
+    if(pingpong) {
+        // Read the existing HDR image and composite into its scratch partner.
+        // Earlier commands retain their descriptor sets; future commands get
+        // fresh sets after the logical targets are exchanged.
+        UseTargets(cmd,{{&output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{&hdr_copy_,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                        {&particles_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        mesh_draw_state_.Reset();BeginPass(cmd,extent_,{{&hdr_copy_,false,{},true}});
+        gpu::PassPush push;push.ids={1u,gpu::kImgHdr,0u,0u};Fullscreen(cmd,vfx_composite_,push);vkCmdEndRendering(cmd);
+        std::swap(output,hdr_copy_);++target_mapping_epoch_;
+        auto& slot=slots_[renderer_->FrameIndex()];slot.set=pass_sets[0];slot.post_set=pass_sets[1];
+        WriteImageDescriptors(true);BindSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS);
+    } else {
+        UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
+        VkImageCopy copy{};copy.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.dstSubresource=copy.srcSubresource;copy.extent={extent_.width,extent_.height,1};
+        ++stats_.scene_copies;vkCmdCopyImage(cmd,output.image.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,hdr_copy_.image.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+        UseTargets(cmd,{{&output,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},{&hdr_copy_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{&particles_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        mesh_draw_state_.Reset();BeginPass(cmd,extent_,{{&output,false,{}}});gpu::PassPush push;push.ids.x=1u;Fullscreen(cmd,vfx_composite_,push);vkCmdEndRendering(cmd);
+    }
     UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
     BeginPass(cmd, extent_, {{&output, false, {}}}, &depth_, false, false);
@@ -2440,14 +2468,17 @@ void SceneRenderer::RecordEffects(VkCommandBuffer cmd, RenderTarget& output, Sce
     vkCmdEndRendering(cmd);
     Stamp(cmd, 21);
     if (recorded > 0) {
-        UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
-        VkImageCopy copy{};
-        copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        copy.dstSubresource = copy.srcSubresource;
-        copy.extent = {extent_.width, extent_.height, 1};
-        ++stats_.scene_copies;
-        vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                       1, &copy);
+        // Refraction already captured this scene; only the offscreen layers changed.
+        if (!copied) {
+            UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
+            VkImageCopy copy{};
+            copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.dstSubresource = copy.srcSubresource;
+            copy.extent = {extent_.width, extent_.height, 1};
+            ++stats_.scene_copies;
+            vkCmdCopyImage(cmd, output.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hdr_copy_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           1, &copy);
+        }
         UseTargets(cmd, {{&output, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                          {&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                          {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
@@ -2693,6 +2724,7 @@ void SceneRenderer::RecordReflectionTemporal(VkCommandBuffer cmd, const ViewSetu
 }
 
 void SceneRenderer::Stamp(VkCommandBuffer cmd, uint32_t index) {
+    if(!LogEnabled() && index!=0 && index!=6)return;
     if (queries_) {
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, queries_, index);
     }
@@ -2939,12 +2971,26 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
     if (frame_counter_ == 0) {
         ApplyEnvironmentOverrides();
     }
+    const bool first_scene_this_frame=slots_[renderer_->FrameIndex()].descriptor_serial!=renderer_->FrameSerial();
+    ResetPassDescriptors();
+    // Only before this renderer records its first scene of the frame: a later
+    // photo/VR view may follow commands already referencing optional images.
+    if(first_scene_this_frame)ReleaseDisabledTargets();
+#ifdef __ANDROID__
+    if(!android::PerformanceOptions().dynamic_resolution&&(dynamic_warmed_||dynamic_unavailable_||!target_banks_.empty())) {
+        if(!target_banks_.empty())vkDeviceWaitIdle(device_);
+        DropTargetBanks();
+    }
+#endif
     if(!EnsureShadowTarget()) return;
+    lighting_=lighting.valid?&lighting:&fallback_;
     const VkExtent2D output = renderer_->RenderExtent();
     const bool upscaling = BeginUpscaleFrame(output);
     if (!EnsureTargets(upscaling ? up_.render : output, output, upscaling)) {
         return;
     }
+    WarmDynamicTargets(output);
+    if(slots_[renderer_->FrameIndex()].base_mapping_epoch!=target_mapping_epoch_)WriteImageDescriptors(true);
     FrameSlot& slot = slots_[renderer_->FrameIndex()];
     textures_->FlushMaterials();
     if (has_last_eye_ && glm::distance(camera.position, last_eye_) > kCameraCutDistance) {
@@ -3151,7 +3197,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         EndLabel(cmd);
         post_bindings_ = false;
     } else {
-        for (uint32_t index : {8u, 9u, 10u, 11u}) {
+        for (uint32_t index : {8u, 9u, 10u, 11u,22u,23u,24u,25u,26u,27u,28u,29u}) {
             Stamp(cmd, index);
         }
         BeginLabel(cmd, "debug view");

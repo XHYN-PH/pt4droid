@@ -1,4 +1,5 @@
 #include "engine/render/scene_renderer.h"
+#include "engine/core/parallel_for.h"
 #include "engine/assets/compatible_texture.h"
 #include "engine/assets/bc_texture.h"
 #include "engine/platform/android.h"
@@ -98,11 +99,14 @@ bool SceneRenderer::EnsureShadowTarget() {
         return shadow_.Valid();
     auto& ctx=renderer_->Context();
     vkDeviceWaitIdle(device_);
-    ctx.Submit([&](VkCommandBuffer cmd){
+    if(!ctx.Submit([&](VkCommandBuffer cmd){
         UseTargets(cmd,{{&replacement,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}});
         BeginPass(cmd,{size,size},{},&replacement,false,true);vkCmdEndRendering(cmd);
         UseTargets(cmd,{{&replacement,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
-    });
+    })) {
+        ctx.DestroyImage(replacement.image);
+        return shadow_.Valid();
+    }
     ctx.DestroyImage(shadow_.image); ctx.DestroyImage(shadow_static_.image); shadow_static_={}; shadow_static_unavailable_=false; shadow_=replacement;
     InvalidateShadowCache();
     if(extent_.width>0) WriteImageDescriptors();
@@ -264,6 +268,7 @@ bool SceneRenderer::CreateDescriptors() {
             !vk::Check(vkAllocateDescriptorSets(device_, &alloc, &slot.post_set), "post descriptor set")) {
             return false;
         }
+        slot.base_set=slot.set;slot.base_post_set=slot.post_set;
     }
     return true;
 }
@@ -327,8 +332,8 @@ bool SceneRenderer::CreatePipelines() {
     }
     const auto map_required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     if ((map_support.optimalTilingFeatures & map_required) == map_required) {
-        volume.fragment_constants = {{0, 1}};
-        if(mali_probe_filter_){volume.fragment="probe_mali.frag";volume.fragment_constants.push_back({1,mali_safe?0u:1u});}
+        volume.fragment_constants = {{0, 1}, {1, (map_support.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? 1u : 0u}};
+        if(mali_probe_filter_){volume.fragment="probe_mali.frag";volume.fragment_constants[1].second=mali_safe?0u:1u;}
         probe_cached_ = CreateGraphicsPipeline(device_, volume);
         volume.fragment="probe.frag";
         volume.fragment_constants.clear();
@@ -474,6 +479,8 @@ bool SceneRenderer::CreatePipelines() {
     post.fragment = "screen_fx.frag";
     post.colors = {renderer_->SceneColorFormat()};
     screen_fx_ = CreateGraphicsPipeline(device_, post);
+    post.fragment="tonemap_screen.frag";tonemap_screen_=CreateGraphicsPipeline(device_,post);
+    post.fragment="grade_screen.frag";grade_screen_=CreateGraphicsPipeline(device_,post);
     post.fragment = "debug.frag";
     debug_ = CreateGraphicsPipeline(device_, post);
     post.fragment = "ssao.frag";
@@ -529,7 +536,7 @@ void SceneRenderer::DestroyPipelines() {
             *p = VK_NULL_HANDLE;
         }
     }
-    for (VkPipeline* p : {&compose_plain_, &compose_fog_, &compose_plain_noao_, &compose_fog_noao_, &tonemap_base_, &tonemap_grade_, &probe_cached_, &probe_map_pipeline_}) {
+    for (VkPipeline* p : {&grade_screen_,&tonemap_screen_,&compose_plain_, &compose_fog_, &compose_plain_noao_, &compose_fog_noao_, &tonemap_base_, &tonemap_grade_, &probe_cached_, &probe_map_pipeline_}) {
         if (*p) vkDestroyPipeline(device_, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }
@@ -543,6 +550,7 @@ void SceneRenderer::Shutdown() {
     }
     vk::Context& ctx = renderer_->Context();
     vkDeviceWaitIdle(device_);
+    DropTargetBanks();
     sss_.Shutdown();
     if (last_timed_slot_ < Renderer::kFramesInFlight && slots_[last_timed_slot_].timed) {
         ReadTimestamps(slots_[last_timed_slot_]);
@@ -622,6 +630,7 @@ void SceneRenderer::Shutdown() {
         }
     }
     DestroyPipelines();
+    DropTargetBanks();
     DestroyTargets();
     ctx.DestroyBuffer(dump_compose_);
     ctx.DestroyBuffer(dump_forward_);
@@ -637,6 +646,7 @@ void SceneRenderer::Shutdown() {
         ctx.DestroyBuffer(slot.frame_data);
         ctx.DestroyBuffer(slot.skin);
         ctx.DestroyBuffer(slot.luminance);
+        if(slot.pass_pool)vkDestroyDescriptorPool(device_,slot.pass_pool,nullptr);
         if(slot.queries)vkDestroyQueryPool(device_, slot.queries, nullptr);
         if(slot.upscale_queries)vkDestroyQueryPool(device_, slot.upscale_queries, nullptr);
     }
@@ -652,6 +662,7 @@ void SceneRenderer::Shutdown() {
 }
 
 bool SceneRenderer::CreateTarget(RenderTarget& target, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage, VkImageAspectFlags aspect) {
+    if(dynamic_warming_ && target.Valid())return target.image.format==format && target.image.extent.width==std::max(extent.width,1u) && target.image.extent.height==std::max(extent.height,1u) && (target.image.usage&usage)==usage && target.aspect==aspect;
     target = RenderTarget{};
     target.aspect = aspect;
     return renderer_->Context().CreateImage(target.image, format, {std::max(extent.width, 1u), std::max(extent.height, 1u), 1}, usage, 1, 1, aspect);
@@ -659,6 +670,7 @@ bool SceneRenderer::CreateTarget(RenderTarget& target, VkFormat format, VkExtent
 
 void SceneRenderer::DestroyTargets() {
     vk::Context& ctx = renderer_->Context();
+    const auto shared=dynamic_warming_?SharedTargets():std::vector<RenderTarget*>{};
     RenderTarget* targets[] = {&albedo_, &normal_, &material_, &depth_, &diffuse_, &specular_, &probe_acc_, &probe_map_, &hdr_, &bloom_[0], &bloom_[1], &bloom_[2],
                                &flare_, &ldr_[0], &ldr_[1], &history_, &mirror_, &ao_[0], &ao_[1], &refmap_, &hdr_copy_, &particles_,
                                &particles_near_, &particles_far_, &near_far_depth_, &near_far_depth_attachment_, &dof_half_,
@@ -667,6 +679,7 @@ void SceneRenderer::DestroyTargets() {
                                &mb_blur_[0], &mb_blur_[1], &mirror_history_, &mirror_temporal_, &reflect_layer_, &reflect_offset_,
                                &reflect_history_[0], &reflect_history_[1]};
     for (RenderTarget* t : targets) {
+        if(std::find(shared.begin(),shared.end(),t)!=shared.end())continue;
         ctx.DestroyImage(t->image);
         *t = RenderTarget{};
     }
@@ -686,10 +699,31 @@ void SceneRenderer::DestroyTargets() {
     output_extent_ = {0, 0};
 }
 
+void SceneRenderer::ReleaseDisabledTargets() {
+    if(toggles.motion_blur || dynamic_warming_)return;
+    std::array<RenderTarget*,12> targets={&velocity_,&mb_neighbour_,&mb_bake_,&mb_blur_[0],&mb_blur_[1],
+        &mb_tile_[0],&mb_tile_[1],&mb_tile_[2],&mb_tile_[3],&mb_tile_[4]};
+    size_t count=10;
+    if(!up_.enabled)targets[count++]=&object_velocity_;
+    if(up_resolve_static_)targets[count++]=&post_object_velocity_;
+    if(std::none_of(targets.begin(),targets.begin()+count,[](auto* target){return target->Valid();}))return;
+    auto& ctx=renderer_->Context();
+    const auto waited=vkDeviceWaitIdle(device_);
+    ctx.CheckDeviceLost(waited,"optional target cleanup");
+    if(!vk::Check(waited,"optional target cleanup"))return;
+    for(size_t i=0;i<count;++i){auto* target=targets[i];ctx.DestroyImage(target->image);*target={};}
+    ++target_mapping_epoch_;
+    WriteImageDescriptors();
+    uint64_t shared=0;
+    for(auto* target:SharedTargets())if(target->image.allocation){VmaAllocationInfo info{};vmaGetAllocationInfo(ctx.allocator,target->image.allocation,&info);shared+=info.size;}
+    if(dynamic_warmed_)stats_.dynamic_shared_mb=float(shared/1048576.0);
+}
+
 bool SceneRenderer::EnsureOptionalTargets(VkExtent2D extent,VkExtent2D output,bool upscaling,bool initialize){
     const bool need_ao=toggles.occlusion && !ao_[0].Valid(),need_dof=toggles.depth_of_field && !dof_half_.Valid();
     const bool need_motion=toggles.motion_blur && !velocity_.Valid(),need_object=(toggles.motion_blur || upscaling) && !object_velocity_.Valid();
-    if(!need_ao && !need_dof && !need_motion && !need_object)return true;
+    const bool need_post_velocity=upscaling&&(toggles.motion_blur||!up_resolve_static_)&&!post_object_velocity_.Valid();
+    if(!need_ao && !need_dof && !need_motion && !need_object&&!need_post_velocity)return true;
     if(initialize)vkDeviceWaitIdle(device_);
     const VkImageUsageFlags color=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     const VkImageAspectFlags c=VK_IMAGE_ASPECT_COLOR_BIT;
@@ -699,11 +733,79 @@ bool SceneRenderer::EnsureOptionalTargets(VkExtent2D extent,VkExtent2D output,bo
     if(need_ao){make(ao_[0],kAoFormat,extent);make(ao_[1],kAoFormat,extent,color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);}
     if(need_dof){make(dof_half_,kPostFormat,shift1);for(auto& t:dof_quarter_)make(t,kPostFormat,shift2);for(auto& t:dof_eighth_)make(t,kPostFormat,shift3);}
     if(need_object)make(object_velocity_,kPostFormat,extent);
+    if(need_post_velocity)make(post_object_velocity_,kPostFormat,output);
     if(need_motion){make(velocity_,kPostFormat,output);for(auto& t:mb_blur_)make(t,kPostFormat,shift1);for(uint32_t i=0;i<5;++i){const uint32_t round=(2u<<i)-1u;make(mb_tile_[i],kPostFormat,{(output.width+round)>>(i+1),(output.height+round)>>(i+1)});}make(mb_neighbour_,kPostFormat,mb_tile_[4].Extent());make(mb_bake_,kPostFormat,{(output.width+1)>>1,(output.height+1)>>1});}
     if(!ok){for(auto* t:made)renderer_->Context().DestroyImage(t->image);return false;}
     if(initialize){const bool initialized=renderer_->Context().Submit([&](VkCommandBuffer cmd){for(auto* t:made){UseTargets(cmd,{{t,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});BeginPass(cmd,t->Extent(),{{t,true,{}}});vkCmdEndRendering(cmd);UseTargets(cmd,{{t,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});}});
         if(!initialized){for(auto* t:made)renderer_->Context().DestroyImage(t->image);return false;}WriteImageDescriptors();}
     return true;
+}
+
+std::vector<RenderTarget*> SceneRenderer::BankTargets() {
+    return {&albedo_,&normal_,&material_,&depth_,&diffuse_,&specular_,&probe_acc_,&hdr_,&mirror_,&ao_[0],&ao_[1],&refmap_,&hdr_copy_,
+        &particles_,&particles_near_,&particles_far_,&near_far_depth_,&near_far_depth_attachment_,&object_velocity_,
+        &mirror_history_,&mirror_temporal_,&reflect_layer_,&reflect_offset_,&reflect_history_[0],&reflect_history_[1],
+        &sgsr_motion_,&motion_,&reactive_,&opaque_,&handy_factor_};
+}
+std::vector<RenderTarget*> SceneRenderer::SharedTargets() {
+    // Their extent and meaning depend on the output, never the internal bank.
+    // Histories are reset when switching internal resolution.
+    return {&probe_map_,&bloom_[0],&bloom_[1],&bloom_[2],&flare_,&ldr_[0],&ldr_[1],&history_,&dof_half_,
+        &dof_quarter_[0],&dof_quarter_[1],&dof_eighth_[0],&dof_eighth_[1],&velocity_,&mb_tile_[0],&mb_tile_[1],&mb_tile_[2],
+        &mb_tile_[3],&mb_tile_[4],&mb_neighbour_,&mb_bake_,&mb_blur_[0],&mb_blur_[1],&exposure_image_,&upscaled_,
+        &sgsr_history_[0],&sgsr_history_[1],&post_hdr_,&post_depth_,&post_object_velocity_};
+}
+void SceneRenderer::DropTargetBanks() {
+    for(auto& bank:target_banks_) {
+        for(auto& target:bank.targets)renderer_->Context().DestroyImage(target.image);
+        sss_.DestroyTargets(bank.subsurface);
+    }
+    target_banks_.clear();dynamic_warmed_=false;dynamic_resolution_.Reset();stats_.dynamic_shared_mb=0;dynamic_unavailable_=false;
+}
+bool SceneRenderer::SwitchTargetBank(VkExtent2D render,VkExtent2D output) {
+    auto found=std::find_if(target_banks_.begin(),target_banks_.end(),[&](const auto& b){return b.render.width==render.width&&b.render.height==render.height&&b.output.width==output.width&&b.output.height==output.height;});
+    if(found==target_banks_.end())return false;
+    auto pointers=BankTargets();if(found->targets.size()!=pointers.size())return false;
+    for(size_t i=0;i<pointers.size();++i)std::swap(*pointers[i],found->targets[i]);
+    sss_.SwapTargets(found->subsurface);
+    std::swap(extent_,found->render);std::swap(output_extent_,found->output);
+    targets_upscaled_=true;history_valid_=mirror_history_valid_=reflect_history_valid_=false;
+    mirror_stale_.valid=false;up_.reset=true;++target_mapping_epoch_;WriteImageDescriptors(true);
+    LogInfo("dynamic resolution: internal {}x{} -> output {}x{}; shared output targets {:.1f} MiB",extent_.width,extent_.height,output_extent_.width,output_extent_.height,stats_.dynamic_shared_mb);return true;
+}
+void SceneRenderer::WarmDynamicTargets(VkExtent2D output) {
+#ifdef __ANDROID__
+    const auto options=android::PerformanceOptions();
+    const float floor=DynamicFloorScale(options.dynamic_floor,upscale.scale);
+    if(dynamic_warmed_&&warmed_floor_!=floor){vkDeviceWaitIdle(device_);DropTargetBanks();dynamic_unavailable_=false;}
+    if(dynamic_warmed_||dynamic_warming_||dynamic_unavailable_||!options.dynamic_resolution||up_.kind!=UpscalerKind::Sgsr2||vr_eye_>=0)return;
+    const VkExtent2D base=extent_;
+    const auto low=UpscaleRenderExtent(output,UpscaleQuality::Custom,floor);
+    warmed_floor_=floor;
+    if(low.width==base.width&&low.height==base.height){dynamic_warmed_=true;return;}
+    auto& ctx=renderer_->Context();
+    // Refuse the optional second bank when it would consume the driver's remaining budget.
+    uint64_t bytes=0;for(auto* target:BankTargets())if(target->image.allocation){VmaAllocationInfo info{};vmaGetAllocationInfo(ctx.allocator,target->image.allocation,&info);bytes+=info.size;}
+    bytes += sss_.TargetBytes();
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};vmaGetHeapBudgets(ctx.allocator,budgets);uint64_t free=0;
+    const VkPhysicalDeviceMemoryProperties* memory=nullptr;vmaGetMemoryProperties(ctx.allocator,&memory);
+    for(uint32_t h=0;memory&&h<memory->memoryHeapCount;++h)if(memory->memoryHeaps[h].flags&VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+        free=std::max(free,budgets[h].budget>budgets[h].usage?budgets[h].budget-budgets[h].usage:0);
+    if(free<bytes+128ull*1024*1024){dynamic_unavailable_=true;LogInfo("dynamic resolution: insufficient spare image budget; keeping fixed resolution");return;}
+    uint64_t shared_bytes=0;for(auto* target:SharedTargets())if(target->image.allocation){VmaAllocationInfo info{};vmaGetAllocationInfo(ctx.allocator,target->image.allocation,&info);shared_bytes+=info.size;}
+    stats_.dynamic_shared_mb=float(shared_bytes/1048576.0);
+    dynamic_warming_=true;
+    TargetBank bank;bank.render=extent_;bank.output=output_extent_;
+    for(auto* target:BankTargets())bank.targets.push_back(std::exchange(*target,{}));
+    bank.subsurface=sss_.TakeTargets();
+    target_banks_.push_back(std::move(bank));extent_={};output_extent_={};
+    const bool ok=EnsureTargets(low,output,true);
+    if(!ok){DestroyTargets();dynamic_unavailable_=true;}
+    // The base bank is restored even after an allocation failure.
+    SwitchTargetBank(base,output);
+    dynamic_warming_=false;dynamic_warmed_=ok;
+    if(!ok){DropTargetBanks();dynamic_unavailable_=true;LogWarn("dynamic resolution: second image bank failed; keeping fixed resolution");}
+#endif
 }
 
 bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool upscaling) {
@@ -714,7 +816,9 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
         output.height == output_extent_.height && upscaling == targets_upscaled_) {
         return EnsureOptionalTargets(extent,output,upscaling);
     }
+    if(upscaling && up_.kind==UpscalerKind::Sgsr2 && !target_banks_.empty() && SwitchTargetBank(extent,output))return EnsureOptionalTargets(extent,output,true);
     vkDeviceWaitIdle(device_);
+    if(!dynamic_warming_)DropTargetBanks();
     DestroyTargets();
     // the new mirror_ target holds no capture
     mirror_stale_.valid = false;
@@ -732,8 +836,8 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
                            VK_IMAGE_ASPECT_DEPTH_BIT) &&
               CreateTarget(diffuse_, kLightFormat, extent, dumped, c) && CreateTarget(specular_, kLightFormat, extent, dumped, c) &&
               CreateTarget(probe_acc_, kLightFormat, extent, dumped, c) &&
-              CreateTarget(hdr_, kHdrFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
-              CreateTarget(hdr_copy_, kHdrFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
+              CreateTarget(hdr_, kHdrFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
+              CreateTarget(hdr_copy_, kHdrFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
               CreateTarget(particles_, kHdrFormat, extent, dumped, c) &&
               CreateTarget(particles_near_, kHdrFormat, {(extent.width + 1) / 2, (extent.height + 1) / 2}, dumped, c) &&
               CreateTarget(particles_far_, kHdrFormat, {(extent.width + 1) / 2, (extent.height + 1) / 2}, dumped, c) &&
@@ -767,8 +871,8 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
         LogError("scene renderer: cannot create render targets {}x{}", extent.width, extent.height);
         return false;
     }
-    renderer_->Context().Submit([&](VkCommandBuffer cmd) {
-        RenderTarget* colors[] = {&albedo_, &normal_, &material_, &diffuse_, &specular_, &probe_acc_, &hdr_, &mirror_, &bloom_[0], &bloom_[1], &bloom_[2],
+    if (!renderer_->Context().Submit([&](VkCommandBuffer cmd) {
+        RenderTarget* colors[] = {&sgsr_motion_,&sgsr_history_[0],&sgsr_history_[1],&albedo_, &normal_, &material_, &diffuse_, &specular_, &probe_acc_, &hdr_, &mirror_, &bloom_[0], &bloom_[1], &bloom_[2],
                                   &flare_, &ldr_[0], &ldr_[1], &history_, &ao_[0], &ao_[1], &refmap_, &hdr_copy_, &particles_,
                                   &particles_near_, &particles_far_, &near_far_depth_, &dof_half_,
                                   &dof_quarter_[0], &dof_quarter_[1], &dof_eighth_[0], &dof_eighth_[1], &velocity_, &object_velocity_, &mb_tile_[0],
@@ -810,16 +914,39 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
                 UseTargets(cmd, {{t, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
             }
         }
-    });
+    })) {
+        DestroyTargets();
+        return false;
+    }
     extent_ = extent;
     output_extent_ = output;
     targets_upscaled_ = upscaling;
     history_valid_ = false;
-    WriteImageDescriptors();
+    ++target_mapping_epoch_;WriteImageDescriptors();
     return true;
 }
 
-void SceneRenderer::WriteImageDescriptors() {
+void SceneRenderer::ResetPassDescriptors() {
+    auto& slot=slots_[renderer_->FrameIndex()];
+    if(slot.descriptor_serial==renderer_->FrameSerial())return;
+    slot.set=slot.base_set;slot.post_set=slot.base_post_set;
+    if(slot.pass_pool)vkResetDescriptorPool(device_,slot.pass_pool,0);
+    slot.descriptor_serial=renderer_->FrameSerial();
+}
+bool SceneRenderer::AllocatePassDescriptors(std::array<VkDescriptorSet,2>& sets) {
+    auto& slot=slots_[renderer_->FrameIndex()];
+    if(!slot.pass_pool) {
+        constexpr uint32_t count=16;
+        VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3*count},{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,(gpu::kImageSlots+1)*count},{VK_DESCRIPTOR_TYPE_SAMPLER,gpu::kSmpCount*count}};
+        VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};info.maxSets=count;info.poolSizeCount=3;info.pPoolSizes=sizes;
+        if(vkCreateDescriptorPool(device_,&info,nullptr,&slot.pass_pool)!=VK_SUCCESS)return false;
+    }
+    VkDescriptorSetLayout layouts[]={frame_layout_,frame_layout_};VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    info.descriptorPool=slot.pass_pool;info.descriptorSetCount=2;info.pSetLayouts=layouts;
+    return vkAllocateDescriptorSets(device_,&info,sets.data())==VK_SUCCESS;
+}
+
+void SceneRenderer::WriteImageDescriptors(bool current_only) {
     VkDescriptorImageInfo images[gpu::kImageSlots];
     for (VkDescriptorImageInfo& info : images) {
         info = {VK_NULL_HANDLE, white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -905,7 +1032,9 @@ void SceneRenderer::WriteImageDescriptors() {
     std::copy(std::begin(images), std::end(images), std::begin(post_images));
     WriteUpscaleDescriptors(post_images, true);
     for (int set_index = 0; set_index < 2 * static_cast<int>(Renderer::kFramesInFlight); ++set_index) {
+        if(current_only && uint32_t(set_index/2)!=renderer_->FrameIndex())continue;
         FrameSlot& slot = slots_[set_index / 2];
+        if(slot.set==slot.base_set)slot.base_mapping_epoch=target_mapping_epoch_;
         const bool post = (set_index & 1) != 0;
         VkDescriptorBufferInfo frame_info{slot.frame_data.buffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo skin_info{slot.skin.buffer, 0, VK_WHOLE_SIZE};
@@ -1204,9 +1333,14 @@ std::unique_ptr<GpuMesh> SceneRenderer::Upload(const MeshData& data) {
     mesh->groups = data.groups;
     mesh->bounds_min = data.bounds_min;
     mesh->bounds_max = data.bounds_max;
-    for (SubMesh& sub : mesh->submeshes) {
-        sub.bounds = sub.skinned ? GeometryBounds{} : IndexedBounds<Vertex>(data.vertices, data.indices, sub.first_index, sub.index_count, sub.vertex_offset);
-    }
+    size_t bounds_chunks=1;
+#ifdef __ANDROID__
+    if(android::PerformanceOptions().parallel_preparation)bounds_chunks=ParallelChunkCount(data.indices.size(),65536);
+#endif
+    ParallelChunks(mesh->submeshes.size(),bounds_chunks,[&](size_t,size_t begin,size_t end){
+        for(size_t i=begin;i<end;++i){auto& sub=mesh->submeshes[i];
+            sub.bounds=sub.skinned?GeometryBounds{}:IndexedBounds<Vertex>(data.vertices,data.indices,sub.first_index,sub.index_count,sub.vertex_offset);}
+    });
     for (const SubMesh& sub : data.submeshes) {
         mesh->skinned = mesh->skinned || sub.skinned;
     }
@@ -1218,14 +1352,18 @@ std::unique_ptr<GpuMesh> SceneRenderer::Upload(const MeshData& data) {
     // on a device with ray queries the meshes are also acceleration structure inputs, read by address (ray traced shadows)
     const VkBufferUsageFlags rt_usage =
         ctx.ray_query ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0;
-    ctx.CreateBuffer(mesh->vertices, vertex_bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rt_usage, false);
-    ctx.CreateBuffer(mesh->indices, index_bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rt_usage, false);
-    ctx.Upload(mesh->vertices, data.vertices.data(), vertex_bytes);
-    ctx.Upload(mesh->indices, data.indices.data(), index_bytes);
+    if (!ctx.CreateBuffer(mesh->vertices, vertex_bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rt_usage, false) ||
+        !ctx.CreateBuffer(mesh->indices, index_bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rt_usage, false) ||
+        !ctx.UploadMesh(mesh->vertices, data.vertices.data(), vertex_bytes, mesh->indices, data.indices.data(), index_bytes)) {
+        ctx.DestroyBuffer(mesh->indices); ctx.DestroyBuffer(mesh->vertices);
+        LogError("mesh: {} could not be uploaded", data.name);
+        return nullptr;
+    }
     return mesh;
 }
 
 void SceneRenderer::Destroy(GpuMesh& mesh) {
+    renderer_->Context().RetireTextureUploads(true);
     InvalidateShadowCache();
     auto& ctx = renderer_->Context();
     if (rt_) {
@@ -1266,7 +1404,11 @@ float SceneRenderer::ExposureFor(float ev, const ExposureSettings& s) const {
 }
 
 bool SceneRenderer::EnsureTimingQueries(FrameSlot& slot) {
-    if (!LogEnabled() || timing_failed_ || renderer_->Context().timestamp_bits == 0) return false;
+    bool dynamic=false;
+#ifdef __ANDROID__
+    dynamic=android::PerformanceOptions().dynamic_resolution;
+#endif
+    if ((!LogEnabled()&&!dynamic) || timing_failed_ || renderer_->Context().timestamp_bits == 0) return false;
     if (slot.queries && slot.upscale_queries) return true;
     VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
     info.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -1284,6 +1426,13 @@ bool SceneRenderer::EnsureTimingQueries(FrameSlot& slot) {
 }
 
 void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
+    if(!LogEnabled()) {
+        uint64_t begin=0,end=0;
+        if(vkGetQueryPoolResults(device_,slot.queries,0,1,sizeof(begin),&begin,sizeof(begin),VK_QUERY_RESULT_64_BIT)!=VK_SUCCESS ||
+           vkGetQueryPoolResults(device_,slot.queries,6,1,sizeof(end),&end,sizeof(end),VK_QUERY_RESULT_64_BIT)!=VK_SUCCESS)return;
+        if(end>=begin){stats_.gpu_ms=float(double(end-begin)*renderer_->Context().properties.limits.timestampPeriod*1e-6);stats_.gpu_timing_valid=true;++stats_.gpu_sample;}
+        return;
+    }
     uint64_t stamps[kTimestamps] = {};
     const VkResult result =
         vkGetQueryPoolResults(device_, slot.queries, 0, kTimestamps, sizeof(stamps), stamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
@@ -1314,6 +1463,7 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
     stats_.composition_ms[2] = span(7, 20);
     stats_.composition_ms[3] = span(20, 21);
     stats_.composition_ms[4] = span(21, 5);
+    for(uint32_t i=0;i<8;++i)stats_.post_ms[i]=span(i?21+i:11,22+i);
     stats_.gpu_ms = span(0, 6);
     stats_.gpu_timing_valid = true;
     ++stats_.gpu_sample;
@@ -1321,7 +1471,7 @@ void SceneRenderer::ReadTimestamps(FrameSlot& slot) {
 
 void SceneRenderer::ReadMeasurements(FrameSlot& slot, float dt, const ExposureSettings& settings) {
     stats_.gpu_timing_valid = false;
-    if (slot.timed && LogEnabled()) {
+    if (slot.timed) {
         ReadTimestamps(slot);
     }
     if (slot.reflection_sampled) {

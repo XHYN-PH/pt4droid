@@ -1,0 +1,76 @@
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <functional>
+#include <vector>
+static bool wait_ok=true;static unsigned waits=0,copies=0,writes=0;
+VkResult vkDeviceWaitIdle(VkDevice){++waits;return wait_ok?VK_SUCCESS:VK_ERROR_OUT_OF_DEVICE_MEMORY;}
+void vkCmdEndRendering(VkCommandBuffer){}
+void vkCmdCopyImage(VkCommandBuffer,VkImage,VkImageLayout,VkImage,VkImageLayout,uint32_t,const VkImageCopy*){++copies;}
+struct VmaAllocationInfo{uint64_t size=64;};void vmaGetAllocationInfo(void*,void*,VmaAllocationInfo*){}
+namespace pt {
+namespace vk{bool Check(VkResult result,const char*){return result==VK_SUCCESS;}}
+namespace gpu{constexpr uint32_t kImgObjectVelocity=10,kImgReflectHistoryA=11,kImgDofHalf=1,kImgDofQuarterA=2,kImgDofQuarterB=3,kImgDofEighthA=4,kImgDofEighthB=5,kImgLdrA=6,kImgLdrB=7,kImgOpaque=8,kImgHdr=9;
+struct PassPush{glm::uvec4 ids{};glm::vec4 f0{},f1{},f2{};glm::mat4 m{1};};}
+struct Image{VkImage image{};void*allocation{};VkExtent3D extent{2400,1080,1};};
+struct RenderTarget{Image image;bool Valid()const{return image.image!=VK_NULL_HANDLE;}VkExtent2D Extent()const{return {image.extent.width,image.extent.height};}};
+struct Context{void*allocator=nullptr;unsigned destroyed=0;void CheckDeviceLost(VkResult,const char*){}void DestroyImage(Image& image){if(image.image)++destroyed;image={};}};
+struct Renderer{pt::Context context;pt::Context&Context(){return context;}};
+struct ColorOutput{RenderTarget*target;bool clear;VkClearColorValue value;bool discard=false;};
+struct DrawPass{std::vector<RenderTarget*>colors;VkPipeline pipeline{};gpu::PassPush push;};
+static std::vector<DrawPass>passes;
+void UseTargets(VkCommandBuffer,std::initializer_list<std::pair<RenderTarget*,VkImageLayout>> uses){for(auto&use:uses)assert(use.first->Valid());}
+void BeginPass(VkCommandBuffer,VkExtent2D,std::initializer_list<ColorOutput> colors){DrawPass p;for(auto&color:colors){assert(color.target->Valid());p.colors.push_back(color.target);}passes.push_back(p);}
+enum class UpscalerKind{Off,Sgsr2};
+struct ScreenSettings{float aperture=4,focus_distance=1,focal_length=50;uint32_t dof_flags=2;};
+struct SceneRenderer{
+ Renderer renderer;Renderer*renderer_=&renderer;VkDevice device_{};
+ bool dynamic_warming_=false,dynamic_warmed_=true,handy_demod_=false;uint64_t target_mapping_epoch_=0;
+ struct{bool motion_blur=false;}toggles;struct{bool enabled=true,reset=true,warp_test=false,warp_history=false;UpscalerKind kind=UpscalerKind::Sgsr2;glm::vec2 jitter_pixels{};}up_;
+ struct{float dynamic_shared_mb=0;unsigned scene_copies=0;}stats_;
+ struct{void Reset(){}}mesh_draw_state_;struct{uint32_t index=0;}main_view_;struct{float fov_y=1.f;}camera_;
+ VkExtent2D extent_{1200,540},output_extent_{2400,1080};
+ VkPipeline up_resolve_static_=(VkPipeline)1,sgsr_convert_=(VkPipeline)2,sgsr_upscale_=(VkPipeline)3,dof_ratio_=(VkPipeline)4,dof_down_=(VkPipeline)5,dof_blur_=(VkPipeline)6,dof_blend_=(VkPipeline)7,vfx_composite_=(VkPipeline)8;
+ bool reflect_post_upscale_=false;uint32_t reflect_history_index_=0;float exposure_=1,sgsr_exposure_=1;uint32_t post_view_=0,sgsr_history_index_=0;
+ RenderTarget velocity_,mb_neighbour_,mb_bake_,mb_blur_[2],mb_tile_[5],object_velocity_,post_object_velocity_;
+ RenderTarget depth_,motion_,hdr_,sgsr_motion_,sgsr_history_[2],upscaled_,hdr_copy_,near_far_depth_,particles_near_,particles_far_;
+ RenderTarget ldr_[2],dof_half_,dof_quarter_[2],dof_eighth_[2];
+ std::vector<RenderTarget*>All(){return {&velocity_,&mb_neighbour_,&mb_bake_,&mb_blur_[0],&mb_blur_[1],&mb_tile_[0],&mb_tile_[1],&mb_tile_[2],&mb_tile_[3],&mb_tile_[4],&object_velocity_,&post_object_velocity_,&depth_,&motion_,&hdr_,&sgsr_motion_,&sgsr_history_[0],&sgsr_history_[1],&hdr_copy_,&near_far_depth_,&particles_near_,&particles_far_,&ldr_[0],&ldr_[1],&dof_half_,&dof_quarter_[0],&dof_quarter_[1],&dof_eighth_[0],&dof_eighth_[1]};}
+ void Init(){uintptr_t id=1;for(auto*target:All()){target->image.image=(VkImage)id++;target->image.allocation=(void*)1;}}
+ std::vector<RenderTarget*>SharedTargets(){return {&velocity_,&post_object_velocity_};}
+ void WriteImageDescriptors(){++writes;}void BindSets(VkCommandBuffer,VkPipelineBindPoint){}void Stamp(VkCommandBuffer,unsigned){}
+ void Fullscreen(VkCommandBuffer,VkPipeline pipeline,const gpu::PassPush&push){assert(!passes.empty());passes.back().pipeline=pipeline;passes.back().push=push;}
+ void PostPass(VkCommandBuffer,RenderTarget&target,VkPipeline pipeline,const gpu::PassPush&push){DrawPass p;p.colors={&target};p.pipeline=pipeline;p.push=push;passes.push_back(p);}
+ void ReleaseDisabledTargets();bool RecordDepthOfField(VkCommandBuffer,const ScreenSettings&,int&);
+ void Dispatch(){VkCommandBuffer cmd{};bool upscaled=false;
+/* SGSR_DISPATCH */
+ assert(upscaled);}
+ uint32_t ResolveId(bool upscaled){gpu::PassPush push;
+/* RESOLVE_IDS */
+ return push.ids.x;}
+ void CompositeEffects(bool copied,unsigned recorded){VkCommandBuffer cmd{};RenderTarget&output=hdr_;struct{glm::mat4 projection{1};}context;
+/* EFFECT_COMPOSITE */
+ }
+};
+/* METHODS */
+}
+int main(){using namespace pt;
+ SceneRenderer s;s.Init();passes.clear();s.Dispatch();assert(s.sgsr_history_index_==1&&s.ResolveId(true)==62&&passes.size()==2&&passes[1].colors.size()==1&&passes[1].colors[0]==&s.sgsr_history_[1]&&!s.upscaled_.Valid());
+ passes.clear();s.Dispatch();assert(s.sgsr_history_index_==0&&s.ResolveId(true)==61&&passes[1].colors.size()==1&&passes[1].colors[0]==&s.sgsr_history_[0]);
+ waits=writes=0;s.ReleaseDisabledTargets();assert(waits==1&&writes==1&&s.renderer.context.destroyed==11&&s.object_velocity_.Valid()&&!s.post_object_velocity_.Valid()&&!s.velocity_.Valid());
+ s.ReleaseDisabledTargets();assert(waits==1&&writes==1);s.up_.enabled=false;s.ReleaseDisabledTargets();assert(waits==2&&!s.object_velocity_.Valid());
+ SceneRenderer retained;retained.Init();retained.toggles.motion_blur=true;retained.ReleaseDisabledTargets();assert(retained.velocity_.Valid());retained.toggles.motion_blur=false;retained.dynamic_warming_=true;retained.ReleaseDisabledTargets();assert(retained.velocity_.Valid());retained.dynamic_warming_=false;wait_ok=false;retained.ReleaseDisabledTargets();assert(retained.velocity_.Valid());wait_ok=true;
+ SceneRenderer fallback;fallback.Init();fallback.up_resolve_static_={};fallback.ReleaseDisabledTargets();assert(fallback.post_object_velocity_.Valid()&&fallback.object_velocity_.Valid());
+ SceneRenderer dof;dof.Init();ScreenSettings screen;int current=0;
+ passes.clear();assert(dof.RecordDepthOfField({},screen,current));assert(current==1&&passes.size()==10);bool eighth_before_far=false;for(auto&p:passes){if(p.colors[0]==&dof.dof_eighth_[0]&&p.pipeline==dof.dof_down_)eighth_before_far=true;if(p.pipeline==dof.dof_blur_){assert(eighth_before_far);break;}}
+ current=0;screen.dof_flags=3;passes.clear();assert(dof.RecordDepthOfField({},screen,current));assert(passes.size()==6);for(auto&p:passes)assert(p.colors[0]!=&dof.dof_eighth_[0]&&p.colors[0]!=&dof.dof_eighth_[1]);
+ screen.aperture=0;screen.dof_flags=0;passes.clear();assert(!dof.RecordDepthOfField({},screen,current)&&passes.empty());
+ SceneRenderer effects;effects.Init();copies=0;passes.clear();effects.CompositeEffects(true,4);assert(copies==0&&effects.stats_.scene_copies==0&&passes.size()==1);
+ effects.CompositeEffects(false,4);assert(copies==1&&effects.stats_.scene_copies==1);effects.CompositeEffects(false,0);assert(copies==1);
+ puts("Release recordings: single SGSR history output with alternating buffers; optional cleanup preserves temporal/fallback inputs; DOF near/far scheduling; refraction snapshot reuse and empty effect path passed");
+}

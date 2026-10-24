@@ -28,6 +28,16 @@ void Reload() {
         else if(key=="mali_optimizations")next.mali_optimizations=value>0;
         else if(key=="sgsr")next.sgsr=value>0;
         else if(key=="sustained")next.sustained=value>0;
+        else if(key=="lens_flares")next.lens_flares=value>0;
+        else if(key=="post_optimizations")next.post_optimizations=value>0;
+        else if(key=="adpf")next.adpf=value>0;
+        else if(key=="parallel_preparation")next.parallel_preparation=value>0;
+        else if(key=="dynamic_resolution")next.dynamic_resolution=value>0;
+        else if(key=="temporal_upscaling")next.temporal_upscaling=value>0;
+        else if(key=="turnip_profile")next.turnip_profile=int(std::clamp(value,0.f,4.f));
+        else if(key=="output_scale")next.output_scale=value>=.95f?1.f:value>=.85f?.9f:.8f;
+        else if(key=="flare_halo")next.flare_halo=std::clamp(value,0.f,1.f);
+        else if(key=="dynamic_floor")next.dynamic_floor=std::clamp(value,.5f,1.f);
         else if(key=="invert_y")next.invert_y=value>0;
         else if(key=="sharpness")next.sharpness=std::clamp(value,0.f,2.f);
         else if(key=="mouse_sensitivity")next.mouse_sensitivity=std::clamp(value,.25f,3.f);

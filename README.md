@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.18">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.22">Download APK</a>
   &nbsp;·&nbsp;
   <a href="#screenshots">Screenshots</a>
   &nbsp;·&nbsp;
@@ -27,7 +27,7 @@
 
 Play **P.T. on Android** with customizable touch controls, controller support and graphics settings. Maintained by **XHYN-PH**.
 
-**[Download Test 18](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.18)** · Android 10+ · 64-bit phones
+**[Download Test 22](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.22)** · Android 10+ · 64-bit phones
 
 **Game files are not included.** You need your own P.T. game dump.
 
@@ -48,7 +48,7 @@ Play **P.T. on Android** with customizable touch controls, controller support an
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.18-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.18) and install it.
+1. Download **pt4droid-v0.2.1-test.22-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.22) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package.
 3. Wait for the import to finish, then tap **Enter menu**.
 4. Choose your settings and tap **Start**.
@@ -79,6 +79,17 @@ The US game dump, **CUSA01127**, is the reference version. Allow about **1.4 GB*
 - **Camera and photos:** use the toolbar beside **Settings** for free camera, photo mode and third-person view. Tap **Hide** to fold it away. Photos appear in **Pictures/PT Photos**.
 - **Return to menu:** open the in-game settings. **Delete saves** is available from the main menu only.
 
+### Performance and visuals
+
+All graphics presets support the options in **Settings → Performance & advanced**:
+
+- **SGSR2 temporal upscaling** reconstructs a sharper image from a lower scene resolution. **Dynamic resolution** adjusts the scene scale within your selected range and requires SGSR2.
+- **Scene output resolution** offers 100%, 90% and 80%. Lower values reduce scene and post-processing detail while menus and touch controls stay at display resolution.
+- **Lamp halo strength** offers Subtle, Balanced and Original. Turn **Lens flares (lamp glare)** off if you prefer no glare. Room lights and shadows stay active.
+- **Turnip rendering profiles** provide device-dependent alternatives. Restart the game after changing one.
+
+For a Snapdragon 8 Gen 3, start with **Balanced**, a **60 FPS** limit, SGSR2 and **100% output resolution**. Adjust scene resolution first; try 90% output if sustained performance is still low. Choose Original (PS4) for the original graphics preset and adjust individual effects as needed. Frame rate depends on the scene, driver and device temperature.
+
 Controllers, keyboard and mouse are also supported. The ending supports microphone input; the touch **Name** button is also available.
 
 ## Compatibility
@@ -86,6 +97,8 @@ Controllers, keyboard and mouse are also supported. The ending supports micropho
 You need a compatible **64-bit Android 10+ phone** with **Vulkan 1.3** support. Performance varies by device. Mali and Xclipse support is experimental.
 
 Start with the **Automatic** graphics driver. If a custom driver prevents the game from starting, tap **Retry with system driver** or choose **System Vulkan driver** in the launcher's **Settings → Graphics driver**, then restart.
+
+**ESMERINGHOY 27.0.0-devel** is an optional bundled Turnip driver for compatible Adreno devices. It is based on StevenMXZ’s Mesa package; source and license credits are included. It does not change GPU clocks. Keep Automatic or System available when comparing drivers.
 
 Optional driver ZIPs are for matching devices only. Read their release-page descriptions before importing one.
 

@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <algorithm>
+#include <bit>
+#include <tuple>
 
 namespace pt {
 struct ShadowCasterState {
@@ -33,6 +36,26 @@ struct ShadowMapState {
     // Exact alpha and immutable pose snapshots permit reuse only while unchanged.
     bool reusable = true;
     bool operator==(const ShadowMapState&) const = default;
+    void CanonicalizeCasters() {
+        // Depth writes are order independent. Preserve every dependency while
+        // avoiding misses caused only by the scene's changing emission order.
+        auto matrix_less=[](const glm::mat4& a,const glm::mat4& b) {
+            for(int c=0;c<4;++c)for(int r=0;r<4;++r) {
+                auto x=std::bit_cast<uint32_t>(a[c][r]),y=std::bit_cast<uint32_t>(b[c][r]);
+                if(x!=y)return x<y;
+            }
+            return false;
+        };
+        std::sort(casters.begin(),casters.end(),[&](const auto& a,const auto& b) {
+            auto x=std::tie(a.mesh,a.submesh,a.material,a.flags,a.alpha),y=std::tie(b.mesh,b.submesh,b.material,b.flags,b.alpha);
+            if(x!=y)return x<y;
+            if(matrix_less(a.transform,b.transform))return true;
+            if(matrix_less(b.transform,a.transform))return false;
+            if(bool(a.pose)!=bool(b.pose))return !a.pose;
+            if(!a.pose)return false;
+            return std::lexicographical_compare(a.pose->begin(),a.pose->end(),b.pose->begin(),b.pose->end(),matrix_less);
+        });
+    }
     void CopyProjection(const ShadowMapState& source) {
         view_projection=source.view_projection;view=source.view;projection_param=source.projection_param;
         eye=source.eye;shadow=source.shadow;bias_constant=source.bias_constant;bias_slope=source.bias_slope;

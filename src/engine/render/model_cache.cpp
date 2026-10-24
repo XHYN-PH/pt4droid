@@ -551,7 +551,7 @@ const ModelEntry* ModelCache::Load(const std::string& path, const std::string& k
     }
     entry.materials = std::move(model.materials);
     entry.raw_positions = std::move(model.raw_positions);
-    ++loaded_;
+    if (entry.mesh) ++loaded_; else ++failed_;
     auto [slot, inserted] = entries_.emplace(key, std::move(entry));
     return slot->second.mesh ? &slot->second : nullptr;
 }

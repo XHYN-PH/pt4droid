@@ -1,0 +1,60 @@
+#version 460
+#include "common.glsl"
+
+layout(push_constant) uniform PassPush {
+    uvec4 ids;
+    vec4 f0;
+    vec4 f1;
+    vec4 f2;
+    mat4 m;
+} pass;
+
+layout(location = 0) in vec2 in_uv;
+layout(location = 0) out vec4 out_color;
+// 2 keeps the general path; 0 and 1 specialize the existing two separate passes.
+layout(constant_id = 0) const uint TONEMAP_MODE = 2u;
+
+vec3 Lut16(uint lut, vec3 c) {
+    float slice = floor(15.0 * c.b);
+    float u = c.r * (15.0 / 256.0) + 1.0 / 512.0 + slice / 16.0;
+    float v = c.g * (15.0 / 16.0) + 1.0 / 32.0;
+    vec3 a = Img(lut, SMP_LINEAR_CLAMP, vec2(u, v)).rgb;
+    vec3 b = Img(lut, SMP_LINEAR_CLAMP, vec2(u + 1.0 / 16.0, v)).rgb;
+    return mix(a, b, 15.0 * c.b - slice);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    vec3 c;
+    vec3 hdr = vec3(0.0);
+    if (TONEMAP_MODE == 1u || (TONEMAP_MODE == 2u && pass.ids.y == 1u)) {
+        c = ImgFetch(pass.ids.x, pixel).rgb;
+    } else {
+        hdr = ImgFetch(IMG_HDR, pixel).rgb * pass.f0.z;
+        // the lens flare buffer adds to the encoded scene before the Tonemap pass (CopyRenderBuffer, ONE + ONE on the UNORM view)
+        vec3 x = min(SrgbEncode(clamp(hdr, 0.0, 1.0)) + max(ImgFetch(IMG_FLARE, pixel).rgb, vec3(0.0)), vec3(1.0));
+        // Tonemap samples the bloom half a bloom texel down and right of the pixel (m_renderBuffer.zw * 2 at 1080p)
+        vec2 bloom_uv = in_uv + 0.5 / ImgSize(IMG_BLOOM_SUM);
+        vec3 b = pass.f0.x > 0.0 ? min(vec3(0.5), Img(IMG_BLOOM_SUM, SMP_LINEAR_CLAMP, bloom_uv).rgb) : vec3(0.0);
+        vec3 x2 = x * x;
+        // Tonemap ps: r rsqrt(max(1/512, r))
+        vec3 r = clamp(x2 + b - x2 * b, 0.0, 1.0);
+        c = clamp(r * inversesqrt(max(vec3(1.0 / 512.0), r)), 0.0, 1.0);
+    }
+    c=floor(clamp(c,0.0,1.0)*255.0+0.5)/255.0;
+    vec3 graded = c;
+    if (TONEMAP_MODE == 1u || (TONEMAP_MODE == 2u && pass.f0.w > 0.0)) {
+        graded = Lut16(RES_COLOR_LUT, c);
+        if (pass.f0.y < 1.0) {
+            graded = mix(Lut16(RES_COLOR_LUT_PREV, c), graded, pass.f0.y);
+        }
+    }
+    if (pass.f1.x > 0.5 && TONEMAP_MODE != 1u && (TONEMAP_MODE != 2u || pass.ids.y != 1u)) {
+        vec3 extended = SrgbEncode(max(hdr, vec3(1.0)));
+        graded = mix(graded, max(graded, extended), greaterThan(hdr, vec3(1.0)));
+    }
+    graded=floor(clamp(graded,0.0,1.0)*255.0+0.5)/255.0;
+    vec3 seed=fract(vec3(gl_FragCoord.xyx)*vec3(.1031,.1030,.0973));seed+=dot(seed,seed.yxz+33.33);
+    float noise=fract((seed.x+seed.y)*seed.z)-.5;
+    out_color=vec4(clamp(graded+noise/255.0,0.0,1.0),1.0);
+}

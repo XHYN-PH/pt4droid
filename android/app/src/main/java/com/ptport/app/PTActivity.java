@@ -60,7 +60,9 @@ public class PTActivity extends SDLActivity {
         catch(java.io.IOException error){AppLog.w("pt","Could not save driver recovery",error);}
     }
     static native void nativeReloadPerformance();
+    static void photoSaveFailed(){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->android.widget.Toast.makeText(a,"Photo could not be saved. Please try again.",android.widget.Toast.LENGTH_LONG).show());}
     static native void nativeThermalStatus(int status);
+    static void reportFrameWork(long work,long target,boolean enabled){final PTActivity a=current;if(a!=null)FrameHints.report(a,work,target,enabled);}
     static native void nativeGyroDelta(float dx,float dy);
     static void reloadPerformance(){final PTActivity a=current;if(a!=null){nativeReloadPerformance();if(a.mobileRuntime!=null)a.mobileRuntime.reload();}}
     public static void setGameplayLookEnabled(boolean enabled){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{if(a.mobileRuntime!=null)a.mobileRuntime.allow(enabled);});}
@@ -91,8 +93,8 @@ public class PTActivity extends SDLActivity {
         });
     }
     @Override protected void onActivityResult(int request,int result,Intent data){if(mobileSettings!=null && mobileSettings.activityResult(request,result,data))return;super.onActivityResult(request,result,data);}
-    @Override protected void onResume(){super.onResume();hapticsActive=true;DisplayRefresh.invalidate();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
-    @Override protected void onPause(){hapticsActive=false;if(phoneHaptics!=null)phoneHaptics.cancel();if(cameraControls!=null)cameraControls.clear();if(mobileRuntime!=null)mobileRuntime.pause();if(touchControls!=null)touchControls.releaseAll();super.onPause();}
+    @Override protected void onResume(){FrameHints.resume();super.onResume();hapticsActive=true;DisplayRefresh.invalidate();refreshDisplay();if(touchControls!=null)touchControls.focusReturned();if(mobileSettings!=null)mobileSettings.resumeImport();if(mobileRuntime!=null)mobileRuntime.resume();}
+    @Override protected void onPause(){FrameHints.pause();hapticsActive=false;if(phoneHaptics!=null)phoneHaptics.cancel();if(cameraControls!=null)cameraControls.clear();if(mobileRuntime!=null)mobileRuntime.pause();if(touchControls!=null)touchControls.releaseAll();super.onPause();}
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);hapticsActive=focus;if(!focus){if(phoneHaptics!=null)phoneHaptics.cancel();if(cameraControls!=null)cameraControls.clear();}if(mobileRuntime!=null)mobileRuntime.focus(focus);if(focus){DisplayRefresh.invalidate();refreshDisplay();}if(touchControls!=null){if(focus)touchControls.focusReturned();else touchControls.releaseAll();}}
     void returnToMenu() {
         if (returningToMenu || isFinishing()) return;

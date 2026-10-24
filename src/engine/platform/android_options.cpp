@@ -1,4 +1,5 @@
 #include "engine/platform/android.h"
+#include <time.h>
 #ifdef __ANDROID__
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_system.h>
@@ -78,6 +79,13 @@ void OpenMobileSettings(){Activity("openMobileSettings","()V",[](JNIEnv* e,jclas
 void GameGraphicsPresetSelected(int preset){profile=-1;std::error_code ec;std::filesystem::remove(PrivateFile("performance_profile_pending.txt"),ec);Activity("gameGraphicsPresetSelected","(I)V",[&](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m,preset);});}
 void GameGraphicsSettingsFailed(const std::string& text){Activity("gameGraphicsSettingsFailed","(Ljava/lang/String;)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value);e->DeleteLocalRef(value);});}
 void LoadingProgress(const std::string& text,int completed,int total){if(!text.empty()&&text!="Preparing graphics")return;Activity("loadingProgress","(Ljava/lang/String;II)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value,completed,total);e->DeleteLocalRef(value);});}
+int64_t ThreadCpuTimeNs(){timespec value{};return clock_gettime(CLOCK_THREAD_CPUTIME_ID,&value)==0?int64_t(value.tv_sec)*1000000000LL+value.tv_nsec:0;}
+void ReportFrameWork(int64_t work_ns,int target_fps){
+    Activity("reportFrameWork","(JJZ)V",[&](JNIEnv* e,jclass c,jmethodID m){
+        e->CallStaticVoidMethod(c,m,jlong(work_ns),jlong(1000000000LL/std::clamp(target_fps>0?target_fps:60,10,240)),jboolean(PerformanceOptions().adpf));
+    });
+}
+void PhotoSaveFailed(){Activity("photoSaveFailed","()V",[](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m);});}
 void PhotoSaved(const std::string& path){Activity("photoSaved","(Ljava/lang/String;)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(path.c_str());e->CallStaticVoidMethod(c,m,value);e->DeleteLocalRef(value);});}
 void GraphicsStartupFailed(const std::string& text){Activity("graphicsStartupFailed","(Ljava/lang/String;)V",[&](JNIEnv* e,jclass c,jmethodID m){jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value);e->DeleteLocalRef(value);});}
 }

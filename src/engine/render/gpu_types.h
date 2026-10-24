@@ -10,7 +10,7 @@ constexpr uint32_t kMaxViews = 64;
 constexpr uint32_t kMaxLights = 256;
 constexpr uint32_t kMaxProbes = 512;
 constexpr uint32_t kMaxSkinMatrices = 16384;
-constexpr uint32_t kImageSlots = 60;
+constexpr uint32_t kImageSlots = 64;
 constexpr uint32_t kInvalid = 0xFFFFFFFFu;
 // The luminance buffer (set 1 binding 5) of each frame slot: luminance.comp's partial sums of up to kLuminanceGroups groups,
 // then the flashlight reflection's colour (reflect_colour.comp, two vec2: r g, b 1)

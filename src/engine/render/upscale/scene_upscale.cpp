@@ -1,3 +1,4 @@
+#include "engine/platform/android.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -131,6 +132,8 @@ bool SceneRenderer::CreateUpscalePipelines() {
     resolve.fragment = "upscale_resolve.frag";
     resolve.colors = {kUpscaleColorFormat, kPostDepthFormat, kUpscaleColorFormat};
     up_resolve_ = CreateGraphicsPipeline(device_, resolve);
+    resolve.colors={kUpscaleColorFormat,kPostDepthFormat};resolve.fragment_constants={{0,0}};
+    up_resolve_static_=CreateGraphicsPipeline(device_,resolve);
 
     PipelineDesc demod;
     demod.layout = layout_;
@@ -142,11 +145,14 @@ bool SceneRenderer::CreateUpscalePipelines() {
         LogError("scene renderer: upscale pipeline creation failed");
         return false;
     }
+    PipelineDesc sgsr;sgsr.layout=layout_;sgsr.fragment="sgsr2_convert.frag";sgsr.colors={kUpscaleColorFormat};
+    sgsr_convert_=CreateGraphicsPipeline(device_,sgsr);
+    sgsr.fragment="sgsr2_upscale.frag";sgsr.colors={kUpscaleColorFormat};sgsr_upscale_=CreateGraphicsPipeline(device_,sgsr);
     return true;
 }
 
 void SceneRenderer::DestroyUpscalePipelines() {
-    VkPipeline* all[] = {&up_motion_, &up_object_motion_, &up_reactive_, &up_resolve_, &up_demod_};
+    VkPipeline* all[] = {&up_resolve_static_,&sgsr_convert_,&sgsr_upscale_,&up_motion_, &up_object_motion_, &up_reactive_, &up_resolve_, &up_demod_};
     for (VkPipeline* p : all) {
         if (*p) {
             vkDestroyPipeline(device_, *p, nullptr);
@@ -158,14 +164,17 @@ void SceneRenderer::DestroyUpscalePipelines() {
 bool SceneRenderer::CreateUpscaleTargets(VkExtent2D render, VkExtent2D output) {
     const VkImageUsageFlags color = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     const VkImageAspectFlags c = VK_IMAGE_ASPECT_COLOR_BIT;
-    const bool ok = CreateTarget(motion_, kMotionFormat, render, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) && CreateTarget(reactive_, kReactiveFormat, render, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
+    const bool temporal=upscale.kind==UpscalerKind::Sgsr2;
+    const bool sgsr_ok=!temporal || (CreateTarget(sgsr_motion_,kUpscaleColorFormat,render,color,c) &&
+        CreateTarget(sgsr_history_[0],kUpscaleColorFormat,output,color,c) && CreateTarget(sgsr_history_[1],kUpscaleColorFormat,output,color,c));
+    const bool ok = sgsr_ok && CreateTarget(motion_, kMotionFormat, render, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) && CreateTarget(reactive_, kReactiveFormat, render, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
                     CreateTarget(opaque_, kHdrTargetFormat, render, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
                     CreateTarget(handy_factor_, kHandyFactorFormat, render, color, c) &&
-                    CreateTarget(exposure_image_, kExposureFormat, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
-                    CreateTarget(upscaled_, kUpscaleColorFormat, output,
-                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
+                    (!up_.backend || CreateTarget(exposure_image_, kExposureFormat, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c)) &&
+                    (temporal || CreateTarget(upscaled_, kUpscaleColorFormat, output,
+                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, c)) &&
                     CreateTarget(post_hdr_, kUpscaleColorFormat, output, color, c) && CreateTarget(post_depth_, kPostDepthFormat, output, color, c) &&
-                    CreateTarget(post_object_velocity_, kUpscaleColorFormat, output, color, c);
+                    (!(toggles.motion_blur||!up_resolve_static_) || CreateTarget(post_object_velocity_, kUpscaleColorFormat, output, color, c));
     if (!ok) {
         LogError("scene renderer: cannot create upscale targets {}x{} -> {}x{}", render.width, render.height, output.width, output.height);
     }
@@ -174,8 +183,10 @@ bool SceneRenderer::CreateUpscaleTargets(VkExtent2D render, VkExtent2D output) {
 
 void SceneRenderer::DestroyUpscaleTargets() {
     vk::Context& ctx = renderer_->Context();
-    RenderTarget* targets[] = {&motion_, &reactive_, &opaque_, &handy_factor_, &exposure_image_, &upscaled_, &post_hdr_, &post_depth_, &post_object_velocity_};
+    const auto shared=dynamic_warming_?SharedTargets():std::vector<RenderTarget*>{};
+    RenderTarget* targets[] = {&sgsr_motion_,&sgsr_history_[0],&sgsr_history_[1],&motion_, &reactive_, &opaque_, &handy_factor_, &exposure_image_, &upscaled_, &post_hdr_, &post_depth_, &post_object_velocity_};
     for (RenderTarget* t : targets) {
+        if(std::find(shared.begin(),shared.end(),t)!=shared.end())continue;
         ctx.DestroyImage(t->image);
         *t = RenderTarget{};
     }
@@ -189,6 +200,7 @@ void SceneRenderer::WriteUpscaleDescriptors(VkDescriptorImageInfo* images, bool 
             images[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         }
     };
+    set(63,reactive_);set(60,sgsr_motion_);set(61,sgsr_history_[0]);set(62,sgsr_history_[1]);
     set(gpu::kImgUpscaled, upscaled_);
     set(gpu::kImgOpaque, opaque_);
     set(gpu::kImgMotion, motion_);
@@ -201,6 +213,11 @@ void SceneRenderer::WriteUpscaleDescriptors(VkDescriptorImageInfo* images, bool 
 }
 
 bool SceneRenderer::BeginUpscaleFrame(VkExtent2D output) {
+#ifdef __ANDROID__
+    if(android::PerformanceOptions().temporal_upscaling) {
+        upscale.kind=UpscalerKind::Sgsr2;upscale.quality=UpscaleQuality::Custom;upscale.scale=android::RenderScale();
+    } else if(upscale.kind==UpscalerKind::Sgsr2) {upscale.kind=UpscalerKind::Off;}
+#endif
     UpscaleHost::Get().FrameTick();
     const bool active = SetupUpscaler(output);
     // Streamline loaded: DLSS Frame Generation instead of FSR 3's (one owns the swapchain)
@@ -260,12 +277,22 @@ bool SceneRenderer::SetupUpscaler(VkExtent2D output) {
         upscale_stats_.error.clear();
         return false;
     }
+    if(kind==UpscalerKind::Sgsr2 && (!sgsr_convert_||!sgsr_upscale_)){upscale_stats_.error="SGSR2 pipelines unavailable; using the original renderer";return false;}
     std::string reason;
     if (!UpscaleHost::Get().Available(kind, reason)) {
         upscale_stats_.error = reason;
         return false;
     }
-    const VkExtent2D render = UpscaleRenderExtent(output, upscale.quality, upscale.scale);
+    VkExtent2D render = UpscaleRenderExtent(output, upscale.quality, upscale.scale);
+#ifdef __ANDROID__
+    if(kind==UpscalerKind::Sgsr2) {
+        const bool enabled=android::PerformanceOptions().dynamic_resolution&&dynamic_warmed_&&!dynamic_unavailable_&&vr_eye_<0 &&
+            !raytracing.shadows&&!raytracing.reflections&&!raytracing.ambient_occlusion&&!raytracing.contact_shadows &&
+            !(lighting_&&lighting_->screen.subsurface_scatter);
+        if(dynamic_resolution_.Observe(stats_.gpu_sample,stats_.gpu_timing_valid?stats_.gpu_ms:0,DynamicFrameBudget(target_fps_,renderer_->Context().DisplayRefreshHz()),enabled))
+            render=UpscaleRenderExtent(output,UpscaleQuality::Custom,DynamicFloorScale(android::PerformanceOptions().dynamic_floor,upscale.scale));
+    }
+#endif
     UpscaleSettings key_settings = upscale;
     key_settings.sharpness = 0.0f;
     key_settings.frame_generation = FrameGenKind::Off;
@@ -281,13 +308,13 @@ bool SceneRenderer::SetupUpscaler(VkExtent2D output) {
         if (failed_key == up_.failed_key) {
             return false;
         }
-        vkDeviceWaitIdle(device_);
+        if(kind!=UpscalerKind::Sgsr2 || up_.backend)vkDeviceWaitIdle(device_);
         if (up_.created && up_.backend) {
             up_.backend->Release();
         }
         up_.created = false;
-        up_.backend = kind == UpscalerKind::Spatial ? nullptr : UpscaleHost::Get().Backend(kind);
-        if (kind != UpscalerKind::Spatial) {
+        up_.backend = kind == UpscalerKind::Spatial || kind == UpscalerKind::Sgsr2 ? nullptr : UpscaleHost::Get().Backend(kind);
+        if (kind != UpscalerKind::Spatial && kind != UpscalerKind::Sgsr2) {
             if (!up_.backend) {
                 up_.failed_key = failed_key;
                 upscale_stats_.error = "backend unavailable";
@@ -470,12 +497,14 @@ void SceneRenderer::RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& vi
 void SceneRenderer::RecordUpscale(VkCommandBuffer cmd, float dt) {
     FrameSlot& slot = slots_[renderer_->FrameIndex()];
     if(queries_ && slot.upscale_queries)vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.upscale_queries, 2);
+    if(up_.backend) {
     UseTargets(cmd, {{&exposure_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
     VkClearColorValue value{};
     value.float32[0] = exposure_;
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(cmd, exposure_image_.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
     UseTargets(cmd, {{&exposure_image_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    }
     bool upscaled = false;
     if (up_.backend) {
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -546,27 +575,46 @@ void SceneRenderer::RecordUpscale(VkCommandBuffer cmd, float dt) {
             upscale_stats_.error = "dispatch failed, see pt.log";
         }
     }
+    if(up_.kind==UpscalerKind::Sgsr2 && sgsr_convert_ && sgsr_upscale_ && sgsr_motion_.Valid()) {
+        UseTargets(cmd,{{&depth_,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},{&motion_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {&hdr_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{&sgsr_motion_,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        gpu::PassPush p;p.ids={61+sgsr_history_index_,handy_demod_?gpu::kImgOpaque:gpu::kImgHdr,0,main_view_.index};
+        p.f0={extent_.width,extent_.height,output_extent_.width,output_extent_.height};
+        p.f1={up_.jitter_pixels.x,up_.jitter_pixels.y,std::tan(camera_.fov_y*.5f)*float(extent_.width)/extent_.height,up_.reset?1.f:0.f};
+        p.f2={exposure_/std::max(sgsr_exposure_,1e-12f),0,0,0};
+        mesh_draw_state_.Reset();BeginPass(cmd,extent_,{{&sgsr_motion_,false,{},true}});Fullscreen(cmd,sgsr_convert_,p);vkCmdEndRendering(cmd);
+        const uint32_t next=1-sgsr_history_index_;
+        UseTargets(cmd,{{&sgsr_motion_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{&sgsr_history_[sgsr_history_index_],VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {&sgsr_history_[next],VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        mesh_draw_state_.Reset();BeginPass(cmd,output_extent_,{{&sgsr_history_[next],false,{},true}});Fullscreen(cmd,sgsr_upscale_,p);vkCmdEndRendering(cmd);
+        // Resolve reads the freshly written history directly; no duplicate output attachment.
+        sgsr_history_index_=next;sgsr_exposure_=exposure_;
+        UseTargets(cmd,{{&sgsr_history_[next],VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        upscaled=true;
+    }
     up_.reset = false;
+    const bool velocity=toggles.motion_blur||!up_resolve_static_;
     UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                      {&object_velocity_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                      {&post_hdr_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                     {&post_depth_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                     {&post_object_velocity_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+                     {&post_depth_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+    if(velocity)UseTargets(cmd,{{&post_object_velocity_,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
     mesh_draw_state_.Reset();
-    BeginPass(cmd, output_extent_, {{&post_hdr_, false, {}, true}, {&post_depth_, false, {}, true}, {&post_object_velocity_, false, {}, true}});
+    if(velocity)BeginPass(cmd, output_extent_, {{&post_hdr_, false, {}, true}, {&post_depth_, false, {}, true}, {&post_object_velocity_, false, {}, true}});
+    else BeginPass(cmd,output_extent_,{{&post_hdr_,false,{},true},{&post_depth_,false,{},true}});
     gpu::PassPush push;
     const bool warp = up_.warp_test && up_.warp_history && !up_.reset;
-    push.ids = glm::uvec4(upscaled ? 1u : (warp ? 2u : 0u), gpu::kImgObjectVelocity,
+    push.ids = glm::uvec4(upscaled ? (up_.kind==UpscalerKind::Sgsr2 ? 61u+sgsr_history_index_ : 1u) : (warp ? 2u : 0u), gpu::kImgObjectVelocity,
                           reflect_post_upscale_ ? gpu::kImgReflectHistoryA + reflect_history_index_ : 0u, main_view_.index);
     push.f0 = glm::vec4(up_.jitter_pixels.x / static_cast<float>(extent_.width), up_.jitter_pixels.y / static_cast<float>(extent_.height),
                         1.0f / static_cast<float>(output_extent_.width), 1.0f / static_cast<float>(output_extent_.height));
     push.f1 = glm::vec4(static_cast<float>(extent_.width), static_cast<float>(extent_.height), upscaled && handy_demod_ ? 1.0f : 0.0f, 0.0f);
-    Fullscreen(cmd, up_resolve_, push);
+    Fullscreen(cmd,velocity?up_resolve_:up_resolve_static_,push);
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&post_hdr_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                     {&post_depth_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                     {&post_object_velocity_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+                     {&post_depth_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    if(velocity)UseTargets(cmd,{{&post_object_velocity_,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     if (up_.warp_test) {
         UseTargets(cmd, {{&hdr_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&upscaled_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
         VkImageCopy copy{};
