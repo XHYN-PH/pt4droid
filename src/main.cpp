@@ -1329,15 +1329,21 @@ void ApplyGraphicsSettings(App& app) {
 }
 
 #ifdef __ANDROID__
-void ApplyMobileGameGraphicsChanges(App& app) {
-    if (!pt::android::ConsumeGameGraphicsChanges()) return;
-    const auto path = pt::android::GameGraphicsChangesFile();
-    if (!pt::android::ApplyGameGraphicsOverrides(path, app.settings, app.renderer.Context().ray_query_supported)) {
-        pt::android::GameGraphicsSettingsFailed("Could not read saved graphics settings. Please retry.");
+void ApplyMobileGameGraphicsChanges(App& app, bool prepare_only=false) {
+    if (!prepare_only && !pt::android::ConsumeGameGraphicsChanges()) return;
+    const auto path = prepare_only ? pt::android::GameGraphicsStartupFile() : pt::android::GameGraphicsChangesFile();
+    if (path.empty()) return;
+    // Driver capabilities are unknown before Init. Preserve the requested RT options
+    // until the normal post-init application can validate and persist them.
+    if (!pt::android::ApplyGameGraphicsOverrides(path, app.settings, prepare_only || app.renderer.Context().ray_query_supported)) {
+        if (!prepare_only) pt::android::GameGraphicsSettingsFailed("Could not read saved graphics settings. Please retry.");
         return;
     }
     app.scene.upscale=UpscaleFromApp(app.settings);
     ApplyGraphicsSettings(app);
+    // Allocate the initial targets at the requested quality, but leave the request
+    // intact if initialization fails. Scene capability queries require a ready scene.
+    if (prepare_only) return;
     app.renderer.SetVsync(app.settings.display.vsync);
     if (app.renderer.Context().device) app.textures.SetAnisotropy(app.settings.graphics.anisotropy);
     if (!app.settings_path.empty() && pt::SaveAppSettings(app.settings_path, app.settings)) {
@@ -5419,6 +5425,7 @@ int main(int argc, char** argv) {
 #ifdef __ANDROID__
     // landscape only, and the shaders and fonts out of the APK into the data folder before anything looks for them
     pt::android::InstallLogFilter();
+    pt::android::SetCrashIdentity(PT_BUILD_ID,std::string(pt::update::CurrentVersion()));
     /* one fixed landscape: following the motion sensor between the two landscapes flipped the picture when a dual screen
        handheld (AYN Thor) was held at an angle */
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft");
@@ -5749,7 +5756,7 @@ int main(int argc, char** argv) {
     }
     ApplyGraphicsSettings(app);
 #ifdef __ANDROID__
-    ApplyMobileGameGraphicsChanges(app);
+    ApplyMobileGameGraphicsChanges(app, true);
 #endif
     settings.vsync=app.settings.display.vsync; settings.hdr=app.settings.display.hdr;
     // the ray query extensions and features only when the option is on at start

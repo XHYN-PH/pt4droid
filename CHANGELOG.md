@@ -1,6 +1,17 @@
 # Changelog
 
-Full change history from Test19 through Test22. [Test22](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.22) includes all changes listed below.
+Full change history from Test19 onward.
+
+## 0.2.1-test.23
+
+- Fixed a crash on the first Start after applying graphics settings from the launcher.
+- Preserved requested ray-tracing settings until the selected driver's capabilities are known.
+- Kept pending graphics changes available for retry if graphics initialization or saving fails.
+- Preserved native crash reports across successful restarts and included them in diagnostic exports.
+- Improved Java crash-report fallback when shared storage is unavailable, and included older reports from app storage.
+- Made diagnostic export tolerate logs rotating or being truncated during collection.
+- Included interrupted graphics requests, pending presets and driver startup failures in diagnostic exports.
+- Added app version, build identity and timestamps to crash reports, with installed APK identity in diagnostic exports.
 
 ## 0.2.1-test.22
 

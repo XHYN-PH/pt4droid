@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <jni.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #include <unwind.h>
 
@@ -210,6 +211,7 @@ namespace {
 
 int g_crash_fd = -1;
 struct sigaction g_previous[32];
+char g_crash_identity[192] = "pt4droid unknown\nbuild unknown\n";
 
 void WriteText(const char* text) {
     if (g_crash_fd >= 0) (void)!write(g_crash_fd, text, std::strlen(text));
@@ -230,6 +232,13 @@ _Unwind_Reason_Code CollectFrame(_Unwind_Context* context, void* arg) {
 void OnCrash(int signal, siginfo_t* info, void* context) {
     if (LogEnabled()) {
     char line[512];
+    timespec now{};
+    const bool timed=clock_gettime(CLOCK_REALTIME,&now)==0;
+    WriteText(g_crash_identity);
+    if(timed){
+        std::snprintf(line,sizeof(line),"timestamp_unix_utc %lld.%09ld\n",static_cast<long long>(now.tv_sec),now.tv_nsec);
+        WriteText(line);
+    }
     std::snprintf(line, sizeof(line), "P.T. crashed: signal %d (%s), fault address %p\n", signal, strsignal(signal),
                   info ? info->si_addr : nullptr);
     WriteText(line);
@@ -257,9 +266,18 @@ void OnCrash(int signal, siginfo_t* info, void* context) {
 
 }  // namespace
 
+void SetCrashIdentity(const std::string& build, const std::string& version) {
+    std::snprintf(g_crash_identity,sizeof(g_crash_identity),"pt4droid %.64s\nbuild %.80s\n",version.c_str(),build.c_str());
+}
+
 void InstallCrashLog(const std::filesystem::path& path) {
     if(!LogEnabled() || g_crash_fd>=0)return;
-    g_crash_fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    // A successful retry must not erase the report from the failed launch.
+    // Bound accumulated reports while retaining the previous batch for export.
+    std::error_code ec;
+    const auto size=std::filesystem::file_size(path,ec);
+    if(!ec && size>=128*1024){auto previous=path;previous+=".previous";std::filesystem::rename(path,previous,ec);}
+    g_crash_fd = open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     struct sigaction action{};
     action.sa_sigaction = OnCrash;
     action.sa_flags = SA_SIGINFO | SA_ONSTACK;

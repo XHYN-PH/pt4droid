@@ -21,15 +21,26 @@ public final class AppLog {
         Thread.setDefaultUncaughtExceptionHandler((thread,error)->{
             synchronized(AppLog.class) {
                 if(enabled) {
-                    File dir=new File("/storage/emulated/0/Download/PT-logs-test");
-                    if(!dir.isDirectory() && !dir.mkdirs()) {dir=app.getExternalFilesDir(null);if(dir==null)dir=app.getFilesDir();}
-                    try(PrintWriter out=new PrintWriter(new FileWriter(new File(dir,"pt-java-crash.txt")))) {
-                        out.println("thread "+thread.getName());error.printStackTrace(out);
-                    } catch(IOException ignored) {}
+                    saveCrash(app,thread,error);
                 }
             }
             if(previous!=null)previous.uncaughtException(thread,error);
         });
+    }
+    private static void saveCrash(Context context,Thread thread,Throwable error){
+        File external=context.getExternalFilesDir(null);
+        File shared=new File("/storage/emulated/0/Download/"+(context.getPackageName().endsWith(".test")?"PT-logs-test":"PT-logs"));
+        for(File dir:new File[]{shared,external==null?null:new File(external,"data"),new File(context.getFilesDir(),"data")}){
+            if(dir==null)continue;
+            try{
+                if(!dir.isDirectory()&&!dir.mkdirs())continue;
+                try(PrintWriter out=new PrintWriter(new FileWriter(new File(dir,"pt-java-crash.txt")))){
+                    out.print(CrashMetadata.report(context));
+                    out.println("thread "+thread.getName());error.printStackTrace(out);
+                    if(!out.checkError())return;
+                }
+            }catch(IOException|SecurityException ignored){/* Fall back even when the shared directory exists but is unwritable. */}
+        }
     }
     public static boolean enabled(){return enabled;}
     static synchronized void setEnabled(boolean value) throws IOException {

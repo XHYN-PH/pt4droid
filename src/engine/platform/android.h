@@ -50,6 +50,8 @@ void GraphicsStartupFailed(const std::string& message);
 void PublishGameGraphicsSettings(std::string text);
 bool ConsumeGameGraphicsChanges();
 std::filesystem::path GameGraphicsChangesFile();
+/* Preview pending settings before graphics initialization, without consuming or committing them. */
+std::filesystem::path GameGraphicsStartupFile();
 void InstallLogFilter();
 
 /* The second screen of a dual-screen handheld (AYN Thor and others; android/.../SecondScreen.java): the loop the player is on
@@ -65,6 +67,8 @@ bool HasSecondScreen();
 
 /* Writes the signal, the fault address and a backtrace (library + offset per frame) to `path` when the game crashes. */
 void InstallCrashLog(const std::filesystem::path& path);
+/* Set once at process startup, including when logs are initially disabled. */
+void SetCrashIdentity(const std::string& build, const std::string& version);
 
 /* Copies the shaders and fonts packed in the APK's assets (the list in pt_assets.txt) into DataDir() when this APK's
    list differs from the one copied last time. The engine reads them as ordinary files from there. */

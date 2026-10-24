@@ -70,6 +70,15 @@ bool ConsumeGameGraphicsChanges(){
     return std::filesystem::is_regular_file(applying,ec);
 }
 std::filesystem::path GameGraphicsChangesFile(){return PrivateFile("game_graphics_applying.ini");}
+std::filesystem::path GameGraphicsStartupFile(){
+    std::error_code ec;
+    for(const char* name:{"game_graphics_pending.ini","game_graphics_applying.ini"}){
+        const auto path=PrivateFile(name);
+        if(std::filesystem::is_regular_file(path,ec))return path;
+        ec.clear();
+    }
+    return {};
+}
 void ConsumeLookDelta(float& dx,float& dy){std::lock_guard lock(look_mutex);dx=look_x;dy=look_y;look_x=look_y=0.0f;}
 void ConsumeGyroDelta(float& dx,float& dy){std::lock_guard lock(look_mutex);dx=gyro_x;dy=gyro_y;gyro_x=gyro_y=0.0f;}
 void SetGameplayLookEnabled(bool enabled){Activity("setGameplayLookEnabled","(Z)V",[&](JNIEnv* e,jclass c,jmethodID m){e->CallStaticVoidMethod(c,m,static_cast<jboolean>(enabled));});}

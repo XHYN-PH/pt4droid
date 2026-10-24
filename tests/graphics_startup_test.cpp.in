@@ -1,0 +1,159 @@
+#include "engine/platform/settings.h"
+#include "engine/platform/mobile_graphics.h"
+#include "engine/core/log.h"
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+
+namespace pt {
+bool LogEnabled() { return false; }
+void LogWrite(LogLevel, std::string_view) {}
+struct Context {
+    bool device = false, ray_query_supported = false;
+    std::string ray_query_missing;
+};
+namespace vk { using Context = pt::Context; }
+struct Renderer {
+    pt::Context ctx;
+    pt::Context& Context() { return ctx; }
+    void SetVsync(bool) {}
+};
+struct SceneRenderer {
+    Renderer* renderer_ = nullptr;
+    AppSettings::Graphics graphics;
+    int upscale = 0;
+    bool RayTracingSupported(std::string& reason) const;
+};
+/* RAY_SUPPORT */
+bool last_detected_ray_support = false;
+int DetectGraphicsPreset(const AppSettings&, bool supported) {
+    last_detected_ray_support = supported;
+    return 0;
+}
+namespace android {
+std::string storage;
+const char* SDL_GetAndroidInternalStoragePath() { return storage.c_str(); }
+std::filesystem::path LogDir() { return storage; }
+std::atomic<float> scale{.667f};
+std::atomic<int> profile{-1}, bloom{6};
+std::atomic<bool> graphics_changed{false};
+std::once_flag loaded;
+int notifications = 0, errors = 0;
+void GameGraphicsSettingsFailed(const std::string&) { ++errors; }
+void GameGraphicsPresetSelected(int) { ++notifications; }
+/* ANDROID_OPTIONS */
+}
+}
+struct App {
+    pt::AppSettings settings;
+    pt::Renderer renderer;
+    pt::SceneRenderer scene;
+    std::filesystem::path settings_path;
+    struct Textures { void SetAnisotropy(int) {} } textures;
+};
+int UpscaleFromApp(const pt::AppSettings&) { return 1; }
+void ApplyGraphicsSettings(App& app) { app.scene.graphics = app.settings.graphics; }
+/* APPLY_GRAPHICS */
+
+int main(int argc, char** argv) {
+    assert(argc == 3);
+    using namespace pt::android;
+    storage = argv[1];
+    const std::string mode = argv[2];
+    const auto pending = std::filesystem::path(storage) / "game_graphics_pending.ini";
+    const auto applying = std::filesystem::path(storage) / "game_graphics_applying.ini";
+    const auto request = mode == "recovered" ? applying : pending;
+    const auto live = std::filesystem::path(storage) / "pt.ini";
+    for (int preset = 0; preset <= 3; ++preset) {
+        for (bool ray_supported : {false, true}) {
+            std::filesystem::remove(pending);
+            std::filesystem::remove(applying);
+            App app;
+            app.settings.audio.volume = 1.7f;
+            app.settings.progress.loops_reached = 123;
+            app.settings.graphics.shadow_quality = 2;
+            app.settings.ray_tracing = {};
+            app.settings_path = live;
+            assert(pt::SaveAppSettings(live, app.settings));
+            pt::AppSettings requested = app.settings;
+            requested.graphics.shadow_quality = preset;
+            requested.graphics.motion_blur = preset > 1;
+            requested.display.fps_limit = 60;
+            requested.ray_tracing.shadows = 2;
+            requested.ray_tracing.reflections = true;
+            if (mode == "corrupt") std::filesystem::create_directory(request);
+            else if (mode != "none") assert(pt::SaveAppSettings(request, requested));
+            graphics_changed = mode != "none";
+            notifications = errors = 0;
+
+            ApplyMobileGameGraphicsChanges(app /* PREPARE_ARGUMENT */);
+            assert(app.scene.renderer_ == nullptr && notifications == 0 && errors == 0);
+            std::string reason;
+            assert(!app.scene.RayTracingSupported(reason) && !reason.empty());
+            pt::AppSettings disk;
+            assert(pt::LoadAppSettings(live, disk));
+            assert(disk.graphics.shadow_quality == 2 && disk.ray_tracing.shadows == 0);
+            if (mode != "none" && mode != "corrupt") {
+                assert(std::filesystem::is_regular_file(request));
+                assert(app.scene.graphics.shadow_quality == preset);
+                assert(app.settings.ray_tracing.shadows == 2 && app.settings.ray_tracing.reflections);
+            }
+            if (mode == "init-failure") {
+                App retry;
+                retry.settings_path = live;
+                assert(pt::LoadAppSettings(live, retry.settings));
+                assert(retry.settings.graphics.shadow_quality == 2);
+                ApplyMobileGameGraphicsChanges(retry /* PREPARE_ARGUMENT */);
+                assert(std::filesystem::is_regular_file(request));
+                assert(retry.settings.graphics.shadow_quality == preset && retry.settings.ray_tracing.shadows == 2);
+                app = std::move(retry);
+            }
+
+            // The actual device/scene init happens between preparation and commit.
+            app.renderer.ctx.device = true;
+            app.renderer.ctx.ray_query_supported = ray_supported;
+            app.scene.renderer_ = &app.renderer;
+            if (mode == "newer") {
+                requested.graphics.shadow_quality = 3 - preset;
+                assert(pt::SaveAppSettings(pending, requested));
+            }
+            if (mode == "save-failure") {
+                app.settings_path = std::filesystem::path(storage) / "not-a-file";
+                std::filesystem::create_directory(app.settings_path);
+            }
+            ApplyMobileGameGraphicsChanges(app);
+            if (mode == "none" || mode == "corrupt") {
+                assert(notifications == 0);
+                if (mode == "corrupt") std::filesystem::remove(request);
+                continue;
+            }
+            assert(notifications == 1 && pt::last_detected_ray_support == ray_supported);
+            assert(app.settings.graphics.shadow_quality == requested.graphics.shadow_quality);
+            assert(app.settings.ray_tracing.shadows == (ray_supported ? 2 : 0));
+            assert(app.settings.ray_tracing.reflections == ray_supported);
+            assert(app.settings.audio.volume == 1.7f && app.settings.progress.loops_reached == 123);
+            assert(!std::filesystem::exists(pending));
+            assert(std::filesystem::exists(applying) == (mode == "save-failure"));
+            assert(errors == (mode == "save-failure" ? 1 : 0));
+            if (mode == "save-failure") {
+                // An interrupted/failed commit is recovered on the next process start.
+                app.settings_path = live;
+                graphics_changed = true;
+                ApplyMobileGameGraphicsChanges(app);
+                assert(!std::filesystem::exists(applying));
+            }
+            assert(pt::LoadAppSettings(live, disk));
+            assert(disk.graphics.shadow_quality == requested.graphics.shadow_quality);
+            assert(disk.ray_tracing.shadows == (ray_supported ? 2 : 0));
+            ApplyMobileGameGraphicsChanges(app);
+            assert(notifications == (mode == "save-failure" ? 2 : 1));
+        }
+    }
+    std::printf("Graphics startup %s: all shadow presets, device capabilities, persistence and retry passed\n", mode.c_str());
+}

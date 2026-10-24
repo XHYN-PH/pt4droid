@@ -1374,6 +1374,10 @@ void SceneRenderer::Destroy(GpuMesh& mesh) {
 }
 
 bool SceneRenderer::RayTracingSupported(std::string& reason) const {
+    if (!renderer_) {
+        reason = "graphics not initialized";
+        return false;
+    }
     const vk::Context& ctx = renderer_->Context();
     if (!ctx.ray_query_supported) {
         reason = ctx.ray_query_missing.empty() ? std::string("no Vulkan ray queries") : ctx.ray_query_missing + " missing";
