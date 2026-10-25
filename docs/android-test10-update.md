@@ -11,12 +11,6 @@ This implements refinements 1–6 from the Test 9 performance review. Resolution
 5. **VFX.** First-use texture uploads within preparation share the existing upload batch. Constant expression subgraphs are folded once when an effect loads; random, age, particle, camera, receive and wind inputs remain live. Stall logs now identify the final upload wait and previously unsplit handover/other time. Particle counts, simulation, random values, lighting boxes and transparency sorting remain unchanged.
 6. **Composition/post.** Android uses specialization constants for common composition modes and the existing base-tonemap and LUT passes. The same equations, pass order, intermediate formats and quantization boundaries remain. Other modes retain the general shader; optional pipeline failures use the general pipeline. No resolution reduction, effect removal or approximation is introduced.
 
-## Review and validation
-
-All 23 host regression scripts passed. New checks exercise frame distributions, reclaimed/retained preparation leases, ownership surviving the caller, shadow miss classes, probe bounds and 80,000 bit-exact production VFX expression comparisons. Production particle output matches the Test 7 culling-disabled and Test 8 culling-enabled references in 1,500 cases each, now with constant folding exercised. Existing native upload tests retain byte-identical supported-format uploads, immutable raw/sRGB sharing and pre-stream budget rejection. Production shadow recording covers moving geometry, alpha dependencies, skin, clear/reuse transitions, whole point-light sharing and opt-outs.
-
-The new checks also pass AddressSanitizer and UndefinedBehaviorSanitizer. LeakSanitizer cannot inspect this container's process threads and was disabled for that run; explicit preparation ownership/reclamation checks pass. Changed shaders compile for Vulkan 1.3. Native compilation, packaging, signature, alignment and lint results are recorded in the build validation file after release verification.
-
 ## Device testing
 
 No physical Android GPU was connected. A performance improvement is not claimed from host checks. Compare the same save, camera route, imported driver, graphics settings, render scale, cap and warmup. Include turns, doors, flashlight, mirror, rain and scene transitions, then a longer session.

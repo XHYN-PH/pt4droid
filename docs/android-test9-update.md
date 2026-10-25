@@ -27,7 +27,6 @@ All **22** Android host regression scripts passed. Added or extended checks incl
 - Production FTEX/texture-manager checks reject excess budget before stream reads, retain native BC bytes, share prepared data for either raw/sRGB upload order, preserve flags, reject malformed descriptors and enforce a concurrent byte budget.
 - Production particle output matches the Test 7 culling-disabled reference and Test 8 culling-enabled reference exactly, including payloads and ordering. Existing decoder, upload, controls, settings, frame pacing, logging, menu/return, driver import and optional-target checks passed.
 
-Native ARM64 Release compilation passed with NDK r27d, SDK 35, JDK 17 and CMake 3.28.3. APK packaging, signature and lint results are recorded separately in `android-test9-build-validation.md`.
 
 ## Device evidence and limits
 

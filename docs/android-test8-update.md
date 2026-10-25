@@ -17,9 +17,3 @@ Unsupported BC1, BC2, BC3, BC4, BC5 and BC7 formats can decode into supported RG
 Decoded textures are retained by the existing session texture cache. Expansion is bounded to 128 MiB per texture and 2 GiB per session, with an additional device-budget check and reserve when the driver exposes memory budgets. If conversion cannot fit or a format remains unsupported, the renderer logs the reason and refuses that texture. No mip levels are silently dropped. There is no new persistent disk conversion cache.
 
 Mali/PanVK and other unsupported-BC devices remain **experimental**. The bundled PanVK driver is unchanged and requires Android 15+. A device must still provide the renderer's other Vulkan capabilities. No actual Mali or Xclipse gameplay benchmark was available.
-
-## Updating and verification
-
-Install over test.7 to retain game files, saves, settings and layouts. Package: `com.ptport.app.test`; version code: **50**; ARM64. The existing test signing key is reused. Game files and the private key are not included in the source kit.
-
-The build record and audit accompany the APK. Phone comparisons should use the same save, driver, preset, render scale and FPS cap. Check slow turns, doors, the flashlight, mirror, rain and later scripted scenes, then compare timing logs and longer sessions. Dynamic resolution and the separate tile-memory renderer experiment are not included.

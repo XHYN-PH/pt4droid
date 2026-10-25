@@ -65,11 +65,3 @@ For a new report, enable logs before reproducing the problem. Game reports use `
 The tested driver importer retains progress, cancellation, an absolute 60-second deadline, safe archive extraction, ARM64 validation, canonical paths and reimport repair. Fully close and reopen after selecting a driver. Imported Turnip is for compatible Adreno GPUs; runtime compatibility needs testing on the phone.
 
 Delete saves remains on the launcher and in Android settings, with confirmation while the game is closed. It deletes the two save slots only, retaining game files, settings, layouts, drivers, caches and Extras unlocks.
-
-## Verification and source
-
-Host checks execute production code with Android/SDL/Vulkan boundaries stubbed; they do not run an Android activity or GPU. The suite covers the importer timeout/cancellation and archive/save behavior, physical mouse pass-through and touch behavior, real editor interaction/drawing/persistence, logging gates, Bluetooth permission rejection and shutdown, bloom math, stable swapchain policy, graphics presets and overlays, pending-file recovery, draw-state caching, timing capability/failure paths and refresh requests across API levels.
-
-Build with JDK 17, SDK 35, NDK r27+, CMake 3.28+, Ninja and glslc using `tools/android/build_test_release.sh`. Retain the signing key for compatible updates. Original project and dependency notices remain in the APK.
-
-The source patch applies to upstream `android-v0.2.0`, commit `3708ce817a67a3b0c74d0a79268514309617bdd8`, with `git am pt4droid-0.2.1-test.3-source.patch`.

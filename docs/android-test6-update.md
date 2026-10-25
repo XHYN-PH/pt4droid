@@ -23,11 +23,3 @@ In heavier sections, shadow samples are approximately 2.4–5.2 ms, main G-buffe
 4. **Profile Original separately.** Capture the same warmed-up camera/scene with Balanced and Original after the limiter fix. Original enables heavier effects and shadows; its actual costs should guide the next change. A frame cap, requested screen refresh rate and achieved FPS are separate values.
 
 These items are investigation targets, not FPS promises. test.6 does not reduce preset graphics quality or enable a new GPU pass, dynamic resolution, heat management, or an upscaler automatically.
-
-## Validation boundaries
-
-Fourteen host suites passed. New checks execute the production frame-budget and direct-look functions, the Android camera eligibility condition, and the production post-import menu callbacks. They cover slow frames, no-input frames, reversals, stalls, mixed controls, 30–240 Hz cadences, inversions, pitch limits, pause/cutscene/lock guards, deletion refusal/errors and explicit Start behavior. Existing suites cover imports, session exit/save locking, layouts, driver deadlines, graphics presets, storage, logs and refresh selection.
-
-The native ARM64 build and complete Java/resource compilation succeeded. Gradle networking was unavailable in this environment, so the APK was packaged with Android SDK AAPT2, javac, D8, zipalign and apksigner. Package identity, version code 48, target/minimum API, launcher/application names, both `:game` activities, DEX labels, staged native-library byte equality, all 19 ELF alignments, APK alignment and the matching test.5 signing certificate were verified. Gradle lint could not run here; it remains in the normal build script for environments with working Gradle networking.
-
-A physical phone was not connected. Sustained frame pacing, touch feel, OEM refresh behavior and repeated return/start cycles still need testing on device.

@@ -29,15 +29,3 @@ Import diagnostics: Android/data/com.ptport.app.test/files/data/driver-import.lo
 ## Delete saves
 
 The launcher has Delete saves, with confirmation while the game is closed. It deletes only PT_Save_Data0 and PT_Save_Data1 in the internal/external data directories. Game files, settings, touch layout, drivers, caches and Extras unlocks stay.
-
-## Build and verification
-
-Use JDK 17, SDK 35, NDK r27+, CMake 3.28+, Ninja and glslc. Set ANDROID_NDK_HOME, ANDROID_HOME, JAVA_HOME, PT_KEYSTORE, PT_STORE_PASSWORD, and optionally PT_KEY_ALIAS/PT_KEY_PASSWORD. Run tools/android/build_test_release.sh. Keep the signing key and increment version codes for later updates.
-
-Host checks execute production methods with boundary stubs; they do not run an Android activity or GPU:
-
-- check_update.py: 35 archive/import/save checks, including aliased paths, reimport repair, blocked-provider timeout, cancellation, malformed metadata/ELF, ZIP escape/duplicate paths, compressed limit, unchanged selection and exact save-slot deletion. Provide org.json 20240303 with PT_TEST_JSON_JAR and an ARM64 driver with PT_TEST_DRIVER_SO.
-- check_touch_update.py: 18 checks for swipe movement/lift, hidden joystick, simultaneous walk/look, button priority/remapping/multiple fingers, physical mouse pass-through, Off, cancellation, screen-size sensitivity and editor ownership.
-- check_render_update.py: 2080 bloom variance/energy combinations, 10000 stable SUBOPTIMAL frames, window/resize/rotation/loss changes and performance presets. Requires a host C++ compiler and fetched Vulkan headers. CXX and PT_TEST_CXX_FLAGS can override the compiler.
-
-Full Android native and Java compilation must pass before packaging. APK verification checks signing continuity, package/version, ZIP alignment, ARM64 library alignment and packaged asset contents. Original project and dependency notices are retained.

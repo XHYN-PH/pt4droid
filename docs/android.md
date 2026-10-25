@@ -25,10 +25,8 @@ The script defaults to version `0.2.1-test.24`, version code `67`, package `com.
 
 Output: `android/app/build/outputs/apk/release/app-release.apk`. The script also runs release lint, which stops the build on errors.
 
-## Validation and releases
+## Development
 
-Host regression scripts are in `tools/android/tests`. Some need JDK 17, GLM/Vulkan headers, historical repository tags, and the importer fixtures specified in the [build validation record](android-test12-build-validation.md).
-
-Before publishing, check the APK signature, package/version, staged assets and libraries, and 16 KB alignment. Host checks do not replace testing rendering, startup and sustained performance on Android hardware.
+Host checks are in `tools/android/tests`. They use JDK 17 and the headers and tools prepared for the Android build. Some checks also use historical Git tags or locally supplied game-file fixtures.
 
 The inherited [GitHub Actions workflow](../.github/workflows/android.yml) targets upstream `android-port` and `android-*` release conventions. A push to this fork's `pt4droid` branch does not publish a Test release automatically.
