@@ -89,6 +89,16 @@ uint32_t MaterialKindOf(const FmdlMaterial& material) {
     return gpu::kKindDeferred;
 }
 
+// FMDL render flags 9/10 exclude a mesh from OPAQUE_PASS and MASK_PASS.
+// Keep it in the draw list for shadows, but never shade its proxy geometry as
+// an ordinary surface. Forward glass/emissive and decal passes have separate
+// authored visibility rules and must retain their original classification.
+uint32_t MeshPassKind(RenderPass pass, uint32_t material_kind, uint32_t render_flags) {
+    if (pass == RenderPass::Opaque && material_kind == gpu::kKindDeferred && (render_flags & 0x600u))
+        return gpu::kKindShadowOnly;
+    return material_kind;
+}
+
 // 0xD49750, table 0xCA8970
 bool ModelCache::ViewReflection(const FmdlMaterial& material) {
     if (!reflection_loaded_) {
@@ -487,7 +497,7 @@ const ModelEntry* ModelCache::Load(const std::string& path, const std::string& k
                 sub.material = static_cast<uint32_t>(slot);
             }
             const uint32_t kind = MaterialKindOf(m);
-            sub.kind = static_cast<uint8_t>(kind);
+            sub.kind = static_cast<uint8_t>(MeshPassKind(sub.pass, kind, info.render_flags));
             sub.layer = static_cast<uint8_t>((info.render_flags >> 20) & 0xF);
             // 0xCB3090's shadow caster sets for 0xD996C0: flags & 0x1D0 == 0, or bits 6 and 8 clear with bit 4 or 7 set, whose state
             // table has entries only for depth bias level 0 (flags & 0xF): so bits 6 and 8 and a depth bias above level 0 keep a mesh out.
@@ -528,6 +538,11 @@ const ModelEntry* ModelCache::Load(const std::string& path, const std::string& k
             }
         } else {
             sub.material = 0;
+        }
+        if (path.find("lte0_main0_def") != std::string_view::npos && local < model.materials.size()) {
+            const auto group = sub.group < model.mesh_group_names.size() ? std::string_view(model.mesh_group_names[sub.group]) : std::string_view("unknown");
+            LogInfo("lamp mesh: {} group {} material {} shader {} flags {:#x}, render kind {}, casts shadow {}",
+                i, group, model.materials[local].name, model.materials[local].shader, info.render_flags, sub.kind, sub.shadow);
         }
         // f010_dumps 1490: the forward draws that write depth are culled by the mesh: the constant (emissive) class draws with
         // PA_SU_SC_MODE_CNTL 0x246 (back faces culled, 9ccdf5602522c343 and dd6db0957d78a2aa), while the glass class draws
