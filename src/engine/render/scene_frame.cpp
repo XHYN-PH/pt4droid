@@ -1586,14 +1586,16 @@ std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, cons
     // A 64 MiB template pool also supports PS4's 8K atlas: cache up to four
     // full-quality 2K tiles rather than allocating a second 256 MiB atlas.
     std::array<uint32_t,16> savings{};for(uint32_t i=0;i<16;++i)savings[i]=uint32_t(shadow_static_casters_[i].size());
-    const auto plan=PlanShadowTemplates(shadow_.Extent().width,tile_size,use,savings);
+    const auto plan=PlanShadowTemplates(shadow_.Extent().width,tile_size,use,savings,&shadow_static_owners_);
     const uint32_t pool_size=plan.width;use=plan.use;
     if(!shadow_static_.Valid()) {
         shadow_static_owners_.fill(-1);
         for(auto& cache:shadow_static_cache_)cache.Invalidate();
     }
-    for(uint32_t slot=0;slot<plan.count;++slot) {
-        const auto tile=plan.tiles[slot];
+    for(uint32_t selected=0;selected<plan.count;++selected) {
+        const auto tile=plan.tiles[selected];
+        const auto offset=plan.offsets[tile];
+        const uint32_t slot=uint32_t(offset.y)/tile_size*(pool_size/tile_size)+uint32_t(offset.x)/tile_size;
         if(shadow_static_owners_[slot]!=int(tile)) {
             if(shadow_static_owners_[slot]>=0)shadow_static_cache_[shadow_static_owners_[slot]].Invalidate();
             shadow_static_cache_[tile].Invalidate();shadow_static_owners_[slot]=int(tile);
@@ -2025,6 +2027,7 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             }
             const float radius = l.outer_range * 1.02f + 0.05f;
             glm::mat4 volume = glm::translate(glm::mat4(1.0f), l.position) * glm::scale(glm::mat4(1.0f), glm::vec3(radius));
+            const glm::mat4 radial_volume=volume;
             if (l.has_area) {
                 const glm::mat3 box(l.area_world);
                 const glm::vec3 half(glm::length(box[0]), glm::length(box[1]), glm::length(box[2]));
@@ -2050,7 +2053,18 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
             glm::mat4 scissor_volume=volume;glm::vec3 lo,hi;
             if(l.type==LightType::Spot && l.cone_exponent>0 && l.inv_cone_range>0 && l.dimmer>=0 && l.inner_range>=0 && SpotBounds(l.position,l.direction,l.cos_outer,radius,lo,hi))
                 scissor_volume=glm::translate(glm::mat4(1.0f),(lo+hi)*.5f)*glm::scale(glm::mat4(1.0f),(hi-lo)*.5f);
-            const VkRect2D scissor=LightScissor(frame_->views[view.index].view_projection*scissor_volume,area);
+            const auto& clip=frame_->views[view.index].view_projection;
+            VkRect2D scissor=LightScissor(clip*scissor_volume,area);
+            // The shader requires both the area box and radial/cone coverage.
+            // Their screen-space intersection avoids shading the empty corners
+            // of either bound, including long, narrow lights in the ending.
+            // Projective mirror apertures and unusual attenuation retain the
+            // previous bounds; their clipped volumes are not ordinary boxes.
+            if(l.has_area && l.area_clip_mode==AreaClipMode::Box && l.dimmer>=0 && l.inner_range>=0 &&
+               l.outer_range>0 && std::isfinite(l.outer_range+l.dimmer+l.inner_range)){
+                scissor=IntersectLightScissors(scissor,LightScissor(clip*l.area_world,area));
+                scissor=IntersectLightScissors(scissor,LightScissor(clip*radial_volume,area));
+            }
             if(!scissor.extent.width || !scissor.extent.height)continue;
             vkCmdSetScissor(cmd,0,1,&scissor);
             push.m = volume;

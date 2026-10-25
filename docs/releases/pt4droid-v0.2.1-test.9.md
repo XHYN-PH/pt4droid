@@ -13,24 +13,14 @@ This release implements refinements 1–4 from the Test 8 review and fixes the A
 
 Test 9 retains Test 8's fallback for unsupported BC1, BC2, BC3, BC4, BC5 and BC7 formats. Game FTEX textures, generated BC7 replacements, mip chains and cubemaps can decode into supported RGBA/R/RG formats. sRGB interpretation, alpha and BC5's two normal-map channels are preserved.
 
-**Supported Adreno formats keep their native compressed uploads.** Compatibility decoding and memory-budget queries execute only for unsupported formats. The regression checks confirm zero conversion calls and byte-identical native uploads on the supported-format path.
+**Supported Adreno formats keep their native compressed uploads.** Compatibility decoding and memory-budget queries execute only for unsupported formats.
 
 The existing limits remain 128 MiB per converted texture and 2 GiB per session, with the device-budget check and reserve when available. No mip levels are silently dropped. The bundled drivers and driver-selection defaults are unchanged.
 
 Mali/PanVK and Xclipse compatibility remain **experimental**. Bundled PanVK requires Android 15+ and compatible hardware; the renderer still requires Vulkan 1.3 and its other required features. The upstream Mali Vulkan 1.1 pull request is incomplete and is not part of this release.
 
-## Updating and verification
+## Updating
 
 Install over Test 8 to retain game files, saves, settings and layouts. Package: `com.ptport.app.test`; version code: **51**; ARM64. The existing test signing key is reused. The startup fix does not require clearing app data or reinstalling game files. Game files and the private signing key are not included.
 
 Phone comparisons should use the same save, camera position, driver, preset, render scale and FPS cap after warmup. Check slow turns, doors, the flashlight, mirror, rain and later scripted scenes, then compare timing logs and longer sessions. Physical-phone rendering, sustained FPS and thermals still need testing.
-
-## Verified release APK
-
-- ARM64, Android 10+, package `com.ptport.app.test`, version code **51**.
-- APK size: **90,250,654 bytes**.
-- SHA-256: `6c8da1f12b8456ef673461ae3bb90cc9f032319cd53060c1ce99005310c09dd5`.
-- Uses the Test 8 signing certificate. Install over Test 8 to retain game files, saves, settings and layouts.
-- All **22** host regression scripts, native ARM64 compilation and signed Android release compilation/package passed. Release lint: **0 errors**, **73 existing warnings**.
-- Signature, package/version, ZIP integrity, all **19** staged native libraries and **99** staged assets, and 16 KB ELF/APK alignment passed.
-- See [the implementation and regression details](https://github.com/XHYN-PH/pt4droid/blob/pt4droid/docs/android-test9-update.md) and [verified build record](https://github.com/XHYN-PH/pt4droid/blob/pt4droid/docs/android-test9-build-validation.md) for the build evidence and testing limits. No physical-phone FPS gain is claimed.

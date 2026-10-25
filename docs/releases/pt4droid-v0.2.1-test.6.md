@@ -18,8 +18,4 @@ This update fixes an extra frame-limit wait that could make Balanced and other c
 
 ## Diagnostics and build fixes
 
-- Corrected GPU timing labels: the mirror and G-buffer timings were previously reported as G-buffer and occlusion.
-- Fixed dependency setup on CMake 3.28, which previously requested a policy available only in newer CMake versions.
-- All 14 host regression suites passed, including 13,715 frame/look cases, post-import navigation, touch layouts, saves, drivers, presets, storage, logging and display refresh selection.
-
 Install over a matching test.5 installation to retain your game files, saves, settings and imported drivers. Please compare Balanced and Original in the same scene on your phone. Physical-device FPS gains have not been measured for this build. Mali/PanVK support remains experimental; dynamic resolution is not included.

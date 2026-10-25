@@ -3,6 +3,10 @@
 #include <cmath>
 
 namespace pt {
+inline const char* ThermalStatusName(int status){
+    constexpr const char* names[]={"None","Light","Moderate","Severe","Critical","Emergency","Shutdown"};
+    return status>=0&&status<7?names[status]:"Unknown";
+}
 inline int ThermalFrameLimit(int requested,int status,bool enabled) {
     // Sustained mode is a platform power hint, never a second frame limiter.
     (void)status; (void)enabled;
@@ -11,6 +15,7 @@ inline int ThermalFrameLimit(int requested,int status,bool enabled) {
 struct MobilePerformanceOptions {
     bool frame_pacing=false,sgsr=false,sustained=false,invert_y=false;
     bool post_optimizations=false;
+    bool verbose_logs=false;
     bool lens_flares=true;
     bool adpf=true,parallel_preparation=false,dynamic_resolution=false,temporal_upscaling=false;
     bool mali_optimizations=true,mali_safe_lighting=true;

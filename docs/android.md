@@ -21,7 +21,7 @@ From the repository root:
 bash tools/android/build_test_release.sh
 ```
 
-The script defaults to version `0.2.1-test.23`, version code `66`, package `com.ptport.app.test`, and app label `pt4droid`. Override `PT_VERSION` and `PT_VERSION_CODE` for a future release, increasing the code each time. Reuse the signing key to allow upgrades that retain user data.
+The script defaults to version `0.2.1-test.24`, version code `67`, package `com.ptport.app.test`, and app label `pt4droid`. Override `PT_VERSION` and `PT_VERSION_CODE` for a future release, increasing the code each time. Reuse the signing key to allow upgrades that retain user data.
 
 Output: `android/app/build/outputs/apk/release/app-release.apk`. The script also runs release lint, which stops the build on errors.
 

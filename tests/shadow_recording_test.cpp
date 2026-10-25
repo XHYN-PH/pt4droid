@@ -143,6 +143,18 @@ int main(int argc,char**) {
     templ.data.views[0].eye.x=1;templ.skin_matrices_[0][3].x=3;draw_calls=0;templ.TestShadows(nullptr);assert(draw_calls==33&&templ.stats_.shadow_static_copies==0&&pixels[0]==33);
     templ.skin_matrices_[0][3].x=4;draw_calls=0;templ.TestShadows(nullptr);assert(draw_calls==33&&templ.stats_.shadow_static_updates==1&&pixels[0]==33);
     templ.draws_.erase(templ.draws_.begin());templ.skin_matrices_[0][3].x=5;draw_calls=0;templ.TestShadows(nullptr);assert(draw_calls==32&&pixels[0]==32&&templ.stats_.shadow_static_copies==0);
+    // A clean tile drops out of the dirty-template selection. The other tile
+    // must keep its physical template slot rather than redrawing static casters.
+    SceneRenderer slots;a.view=0;a.casters=1;a.rect.offset={0,0};b=a;b.view=1;b.casters=2;b.rect.offset={1,0};
+    slots.shadow_views_={a,b};slots.data.views[1].eye.x=1;
+    for(int i=0;i<32;++i)slots.draws_.push_back(d);
+    auto left=moving;left.hidden_views=2;left.skin_base=0;
+    auto right=moving;right.hidden_views=1;right.skin_base=1;
+    slots.draws_.push_back(left);slots.draws_.push_back(right);slots.skin_matrices_={glm::mat4(1),glm::mat4(1)};
+    for(int f=0;f<3;++f){slots.skin_matrices_[0][3].x=float(f);slots.skin_matrices_[1][3].x=float(f);slots.TestShadows(nullptr);}
+    slots.skin_matrices_[1][3].x=3;draw_calls=0;slots.TestShadows(nullptr);
+    assert(slots.stats_.shadow_static_updates==0&&slots.stats_.shadow_static_copies==1&&draw_calls==1);
+    assert(pixels[0]==33&&pixels[1]==33);
     // A frozen skeletal pose may be part of the template. It must not be
     // overlaid a second time alongside the genuinely moving skeleton.
     SceneRenderer frozen;a.view=0;a.rect.offset={0,0};frozen.shadow_views_={a};

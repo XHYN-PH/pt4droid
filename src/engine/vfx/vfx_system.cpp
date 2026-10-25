@@ -1213,7 +1213,6 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
         BeginParticleEvaluation(c);
         const glm::vec4 scale = shape.attr[kScale] >= 0 ? Eval(c, shape.attr[kScale]) : glm::vec4(1.0f);
         const glm::vec4 rot = shape.attr[kRotation] >= 0 ? Eval(c, shape.attr[kRotation]) : glm::vec4(0.0f);
-        const glm::vec4 uv = shape.attr[kUv] >= 0 ? Eval(c, shape.attr[kUv]) : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
         glm::vec4 color = shape.attr[kColor] >= 0 ? Eval(c, shape.attr[kColor]) : glm::vec4(1.0f);
         if (mesh) {
             color = WrapUnorm8(color);
@@ -1297,6 +1296,9 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
             items.push_back({depth, UINT32_MAX});
             continue;
         }
+        // Off-screen rain needs its ordering placeholder, but not UV expression
+        // evaluation or animation data. Evaluation is deterministic per particle.
+        const glm::vec4 uv = shape.attr[kUv] >= 0 ? Eval(c, shape.attr[kUv]) : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
         q.uv = glm::vec4(uv.x, uv.y, uv.x + uv.z, uv.y + uv.w);
         q.uv_next = q.uv;
         float blend_weight = 0.0f;
@@ -1460,7 +1462,11 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
         build_order_.resize(items.size());for(size_t i=0;i<items.size();++i)build_order_[i]=i;
         std::sort(build_order_.begin(),build_order_.end(),[&](size_t a,size_t b){return items[a].depth>items[b].depth;});
         for (size_t i : build_order_) if (items[i].quad != UINT32_MAX) out.quads.push_back(build_quads_[items[i].quad]);
-    }else{for (const Item& it : items) if (it.quad != UINT32_MAX) out.quads.push_back(build_quads_[it.quad]);}
+    }else{
+        // Unsorted payloads are already contiguous in emission order; culled
+        // particles have only an Item placeholder and no payload in this array.
+        out.quads.insert(out.quads.end(),build_quads_.begin(),build_quads_.end());
+    }
     draw.count = static_cast<uint32_t>(out.quads.size()) - draw.first;
     out.draws.push_back(draw);
 }

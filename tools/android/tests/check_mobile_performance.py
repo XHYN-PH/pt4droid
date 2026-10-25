@@ -20,7 +20,7 @@ const char* SDL_GetAndroidInternalStoragePath();''',
 struct JNIEnv {};using jclass=void*;using jint=int;''',
         'android/log.h':'''#pragma once''',
         'engine/core/log.h':'''#pragma once
-namespace pt {bool LogEnabled();}''',
+namespace pt {bool LogEnabled();void LogSetVerbose(bool);}''',
     }
     for name,content in stubs.items():
         file=root/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text(content)
@@ -43,7 +43,7 @@ extern "C" int __wrap___android_log_print(int,const char*,const char*,...);
 extern "C" int __wrap___android_log_vprint(int,const char*,const char*,va_list);
 extern "C" int __wrap___android_log_write(int,const char*,const char*);
 bool enabled=false;int log_calls=0;
-namespace pt {bool LogEnabled(){return enabled;}}
+namespace pt {bool LogEnabled(){return enabled;}void LogSetVerbose(bool){}}
 extern "C" int __real___android_log_vprint(int,const char*,const char*,va_list){return ++log_calls;}
 extern "C" int __real___android_log_write(int,const char*,const char*){return ++log_calls;}
 void config(const char* text){std::ofstream(std::filesystem::path(storage)/"mobile_performance.ini")<<text;Java_com_ptport_app_PTActivity_nativeReloadPerformance(nullptr,nullptr);}

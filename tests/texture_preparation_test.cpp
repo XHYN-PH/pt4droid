@@ -134,6 +134,17 @@ int main() {
         assert(manager.prepared_.empty() && manager.worker_prepared_.empty());
         manager.StopDecodeWorkers();
     }
+    {
+        TextureManager manager;
+        std::promise<PreparedTextureResult> failed;
+        failed.set_value({{},TexturePreparationFailure::Read});
+        manager.pending_preparations_["/Assets/missing"]={failed.get_future().share(),[](const std::string&){}};
+        const auto before=archive_reads.load();bool ok=true;
+        assert(manager.LoadFox(qar,"/Assets/missing",&ok)==TextureManager::kWhite&&!ok);
+        assert(archive_reads==before); // Worker failure + absent archive header is final.
+        assert(manager.failed_textures_.at("/Assets/missing")=="missing FTEX header");
+        assert(manager.LoadFox(qar,"/Assets/missing",&ok)==TextureManager::kWhite&&!ok&&archive_reads==before);
+    }
     TextureReadBudget concurrent(96000); std::atomic<uint32_t> successes{0};
     std::vector<std::thread> workers;
     for (int i = 0; i < 8; ++i) workers.emplace_back([&] { for (int n = 0; n < 1000; ++n) if (concurrent.Reserve(1000)) ++successes; });

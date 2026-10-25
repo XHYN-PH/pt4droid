@@ -32,9 +32,15 @@ public:
         };
         return {pick(.50f), pick(.95f), pick(.99f)};
     }
+    void AddLoading(float interval_ms){
+        if(!std::isfinite(interval_ms)||interval_ms<=0)return;
+        ++loading_intervals;loading_worst_ms=std::max(loading_worst_ms,interval_ms);
+    }
     void Clear() { *this = {}; }
     double Mean(size_t part) const { return samples ? parts[part] / samples : 0; }
     uint64_t samples = 0, over_33ms = 0;
+    uint64_t loading_intervals = 0;
+    float loading_worst_ms = 0;
     float worst_ms = 0;
     std::array<double, 8> parts{}; // original five, then finish recording, queue submit, presentation
 private:

@@ -73,6 +73,7 @@ public:
     static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
     VkFormat SceneColorFormat() const { return output_mode_ == RendererOutputMode::Sdr ? kSceneColorFormat : VK_FORMAT_R16G16B16A16_SFLOAT; }
     RendererOutputMode OutputMode() const { return output_mode_; }
+    bool SpatialResolveActive() const { return mobile_sgsr_ && sgsr_pipeline_ && output_mode_==RendererOutputMode::Sdr; }
 
     int photo_filter = 0;
     float exposure = 1.0f;

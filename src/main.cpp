@@ -4048,10 +4048,13 @@ int RunGame(App& app, pt::Vfs& vfs) {
     auto diagnostic_last_present = std::chrono::steady_clock::time_point{};
     bool diagnostic_logging = false;
     int diagnostic_state = -1;
+    int diagnostic_target = -1;
     while (running) {
         std::array<float, 8> diagnostic_parts{};
         app.scene.SetFrameTarget(app.settings.display.fps_limit);
         bool diagnostic_rendered = false;
+        const uint32_t diagnostic_load_count=game.Stages().LoadCount();
+        const bool diagnostic_loading=boot_wait;
         pt::hitch::Enable(pt::LogEnabled());pt::hitch::Frame(frame+1);
         const auto frame_started = std::chrono::steady_clock::now();
 #ifdef __ANDROID__
@@ -5192,7 +5195,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             static bool diagnostics_active = false;
             const bool diagnostics = pt::LogEnabled();
             const int current_state = int(ui_ready && ui.MenuOpen()) | (int(was_focused) << 1);
-            if (diagnostic_state != current_state || diagnostic_logging != diagnostics) {
+            if (diagnostic_state != current_state || diagnostic_logging != diagnostics || diagnostic_target!=app.settings.display.fps_limit) {
                 frame_diagnostics.Clear();
                 status_start = std::chrono::steady_clock::now();
                 status_frames = 0;
@@ -5200,6 +5203,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 diagnostic_last_present = {};
                 diagnostic_state = current_state;
                 diagnostic_logging = diagnostics;
+                diagnostic_target = app.settings.display.fps_limit;
             }
             if (diagnostics != diagnostics_active) {
                 status_start = std::chrono::steady_clock::now();
@@ -5241,11 +5245,14 @@ int RunGame(App& app, pt::Vfs& vfs) {
                     pt::LogInfo("frame pacing: {} samples, interval p50 {:.2f}, p95 {:.2f}, p99 {:.2f}, worst {:.2f} ms, >33ms {}, effective cap {}, foreground {}",
                         frame_diagnostics.samples, percentiles[0], percentiles[1], percentiles[2], frame_diagnostics.worst_ms,
                         frame_diagnostics.over_33ms, effective_cap, was_focused);
+                    pt::LogInfo("loading intervals: {}, worst {:.2f} ms (excluded from gameplay frame pacing)",frame_diagnostics.loading_intervals,frame_diagnostics.loading_worst_ms);
                     pt::LogInfo("frame CPU avg: acquire/fence wait {:.2f}, scene {:.2f}, VFX {:.2f}, recording {:.2f}, submit/present {:.2f} ms",
                         frame_diagnostics.Mean(0), frame_diagnostics.Mean(1), frame_diagnostics.Mean(2), frame_diagnostics.Mean(3), frame_diagnostics.Mean(4));
 #ifdef __ANDROID__
                     pt::LogInfo("mobile pacing: thermal status {}, sustained {}, frame pacing {}", pt::android::ThermalStatus(),
                         pt::android::PerformanceOptions().sustained, app.renderer.Context().AndroidFramePacingActive());
+                    pt::LogInfo("thermal state: {}; pacing requested {}, effective cap {}, display {:.2f} Hz",pt::ThermalStatusName(pt::android::ThermalStatus()),
+                        pt::android::PerformanceOptions().frame_pacing,effective_cap,app.renderer.Context().DisplayRefreshHz());
                     pt::LogInfo("mobile pacing interval: {:.2f} ms",app.renderer.Context().AndroidSwapIntervalMs());
 #endif
                     pt::LogInfo("presentation CPU avg: finish recording {:.2f}, queue submit {:.2f}, present {:.2f} ms; display {:.2f} Hz / {:.3f} ms; path {}",
@@ -5283,6 +5290,13 @@ int RunGame(App& app, pt::Vfs& vfs) {
                         app.renderer.RenderExtent().width,app.renderer.RenderExtent().height,
                         app.renderer.Context().swapchain.extent.width,app.renderer.Context().swapchain.extent.height,
                         pt::android::PerformanceOptions().output_scale*100,pt::android::PerformanceOptions().flare_halo*100);
+                    const auto mobile_options=pt::android::PerformanceOptions();
+                    const auto display_extent=app.renderer.Context().swapchain.extent;
+                    const bool spatial_resolve=app.renderer.SpatialResolveActive();
+                    pt::LogInfo("resolution stages: selected scene {:.0f}%, output multiplier {:.0f}%, actual internal {}x{}, scene output {}x{}, display {}x{}; final spatial resolve {}; scene GPU timings exclude final display composite",
+                        pt::android::RenderScale()*100,mobile_options.output_scale*100,render_extent.width,render_extent.height,
+                        app.renderer.RenderExtent().width,app.renderer.RenderExtent().height,display_extent.width,display_extent.height,
+                        spatial_resolve?"SGSR1":"bilinear");
                     pt::LogInfo("lighting state: lamp flares {}, flare ghosts {}, bloom {}, SGSR2 {}, dynamic resolution {}, EV {:.3f}, exposure {:.6f}, metered luminance {:.5f}",
                         pt::android::PerformanceOptions().lens_flares, app.settings.graphics.lens_ghosts, app.scene.toggles.bloom,
                         live_upscale.active&&live_upscale.kind==pt::UpscalerKind::Sgsr2, pt::android::PerformanceOptions().dynamic_resolution,
@@ -5362,7 +5376,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
         if (diagnostic_rendered && pt::LogEnabled()) {
             const auto now = std::chrono::steady_clock::now();
             if (diagnostic_last_present.time_since_epoch().count()) {
-                frame_diagnostics.Add(std::chrono::duration<float, std::milli>(now - diagnostic_last_present).count(), diagnostic_parts);
+                const float interval=std::chrono::duration<float, std::milli>(now - diagnostic_last_present).count();
+                if(diagnostic_loading || game.Stages().LoadCount()!=diagnostic_load_count)frame_diagnostics.AddLoading(interval);
+                else frame_diagnostics.Add(interval, diagnostic_parts);
             }
             diagnostic_last_present = now;
         } else {
@@ -5426,6 +5442,7 @@ int main(int argc, char** argv) {
     // landscape only, and the shaders and fonts out of the APK into the data folder before anything looks for them
     pt::android::InstallLogFilter();
     pt::android::SetCrashIdentity(PT_BUILD_ID,std::string(pt::update::CurrentVersion()));
+    (void)pt::android::PerformanceOptions();
     /* one fixed landscape: following the motion sensor between the two landscapes flipped the picture when a dual screen
        handheld (AYN Thor) was held at an angle */
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft");

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include "engine/core/log.h"
 namespace pt::android {
 namespace {
 std::mutex options_mutex;
@@ -24,6 +25,7 @@ void Reload() {
         float value=std::strtof(text.c_str(),&end);
         if(end==text.c_str()||end!=text.c_str()+text.size()||!std::isfinite(value))continue;
         if(key=="frame_pacing")next.frame_pacing=value>0;
+        else if(key=="verbose_logs")next.verbose_logs=value>0;
         else if(key=="mali_safe_lighting")next.mali_safe_lighting=value>0;
         else if(key=="mali_optimizations")next.mali_optimizations=value>0;
         else if(key=="sgsr")next.sgsr=value>0;
@@ -46,6 +48,7 @@ void Reload() {
         else if(key=="ao_quality")next.ao_quality=value>0?1:0;
         else if(key=="reflection_quality")next.reflection_quality=value>0?1:0;
     }
+    pt::LogSetVerbose(next.verbose_logs);
     {std::lock_guard lock(options_mutex);options=next;}
 }
 }

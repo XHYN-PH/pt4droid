@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.23">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.24">Download APK</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -29,9 +29,11 @@
 
 Play **P.T. on Android** with customizable touch controls, controller support and graphics settings. Maintained by **XHYN-PH**.
 
-**[Download Test 23](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.23)** · Android 10+ · 64-bit phones · [Full changelog](CHANGELOG.md)
+**[Download Test 24](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.24)** · Android 10+ · 64-bit phones · [Full changelog](CHANGELOG.md)
 
 **Game files are not included.** You need your own P.T. game dump.
+
+**What’s new:** improved shadow-cache reuse, reduced work for lights and rain effects, refined texture loading, and clearer resolution settings. [See all changes](CHANGELOG.md).
 
 ## Screenshots
 
@@ -50,7 +52,7 @@ Play **P.T. on Android** with customizable touch controls, controller support an
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.23-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.23) and install it.
+1. Download **pt4droid-v0.2.1-test.24-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.24) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package.
 3. Wait for the import to finish, then tap **Enter menu**.
 4. Choose your settings and tap **Start**.
@@ -86,11 +88,11 @@ The US game dump, **CUSA01127**, is the reference version. Allow about **1.4 GB*
 All graphics presets support the options in **Settings → Performance & advanced**:
 
 - **SGSR2 temporal upscaling** reconstructs a sharper image from a lower scene resolution. **Dynamic resolution** adjusts the scene scale within your selected range and requires SGSR2.
-- **Scene output resolution** offers 100%, 90% and 80%. Lower values reduce scene and post-processing detail while menus and touch controls stay at display resolution.
+- **Scene output resolution** offers 100%, 90% and 80%. Lower values reduce scene and post-processing detail while menus and touch controls stay at display resolution. This multiplies Scene resolution: 50% scene × 90% output gives about 45% of display resolution.
 - **Lamp halo strength** offers Subtle, Balanced and Original. Turn **Lens flares (lamp glare)** off if you prefer no glare. Room lights and shadows stay active.
 - **Turnip rendering profiles** provide device-dependent alternatives. Restart the game after changing one.
 
-For a Snapdragon 8 Gen 3, start with **Balanced**, a **60 FPS** limit, SGSR2 and **100% output resolution**. Adjust scene resolution first; try 90% output if sustained performance is still low. Choose Original (PS4) for the original graphics preset and adjust individual effects as needed. Frame rate depends on the scene, driver and device temperature.
+For a Snapdragon 8 Gen 3, start with **Balanced**, a **60 FPS** limit, SGSR2 and **100% output resolution**. Adjust scene resolution first; try 90% output if sustained performance is still low. Keep **Android frame pacing** Off initially; compare On at the same 60 FPS limit if motion feels uneven. Choose Original (PS4) for the original graphics preset and adjust individual effects as needed. Frame rate depends on the scene, driver and device temperature.
 
 Controllers, keyboard and mouse are also supported. The ending supports microphone input; the touch **Name** button is also available.
 
@@ -108,7 +110,7 @@ Optional driver ZIPs are for matching devices only. Read their release-page desc
 
 [Report a problem](https://github.com/XHYN-PH/pt4droid/issues) with your phone model, Android version, app version and what happened.
 
-To include logs, turn them on in **Settings → Performance & advanced**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** on that page, then turn logs off afterwards.
+To include logs, turn them on in **Settings → Performance & advanced**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** on that page, then turn logs off afterwards. Normal logs are enough for most reports; use **Verbose logs** only when more detail is requested.
 
 ## Credits
 

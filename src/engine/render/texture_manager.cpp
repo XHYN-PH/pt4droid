@@ -593,6 +593,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
     FtexTexture owned;
     std::shared_ptr<const FtexTexture> prepared;
     bool read = false;
+    bool missing_prepared_header = false;
     const bool scheduled=prepared_.contains(stem)||pending_preparations_.contains(stem)||decoding_.contains(stem);
     if (auto it = prepared_.find(stem); it != prepared_.end()) {
         prepared = it->second;
@@ -608,7 +609,14 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         prepared=std::move(result.texture); pending_preparations_.erase(it); read=prepared!=nullptr;
         if(read){prepared_.emplace(stem,prepared);++read_stats_.prepared;}
         else if(result.failure==TexturePreparationFailure::Budget)++read_stats_.budget_fallback;
-        else ++read_stats_.read_fallback;
+        else {
+            ++read_stats_.read_fallback;
+            // A worker already tried this immutable archive entry. Missing
+            // headers cannot recover through another synchronous read; budget
+            // refusals and existing-but-unreadable streams retain their retry.
+            missing_prepared_header=result.failure==TexturePreparationFailure::Read &&
+                !mods::Active() && !qar.Contains(PathCode64(stem+".ftex"));
+        }
     } else if (auto it = decoding_.find(stem); it != decoding_.end()) {
         if (decode_stream_) decode_stream_->Prioritize(stem);
         const auto result = it->second.get();
@@ -622,7 +630,7 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
             ++read_stats_.ahead;
         }
     }
-    if (!read) {
+    if (!read && !missing_prepared_header) {
         const auto started = std::chrono::steady_clock::now();
         ++read_stats_.direct;
         read_stats_.unprepared+=!scheduled;

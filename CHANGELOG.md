@@ -2,26 +2,37 @@
 
 Full change history from Test19 onward.
 
+## 0.2.1-test.24
+
+- Improved shadow-cache reuse when shadow priorities change.
+- Reduced unnecessary light shading while preserving the same area and range coverage.
+- Reduced off-screen rain preparation and improved particle-data batching.
+- Refined texture preparation during area loading and skipped redundant reads for missing texture headers while preserving material fallbacks.
+- Added an estimated combined scene scale to explain how the two resolution controls work together.
+- Added Normal and Verbose logging for easier troubleshooting.
+- Made performance reports distinguish loading pauses from gameplay and show the final spatial upscaler separately.
+- Added clearer frame-pacing guidance and simplified the README and release notes.
+
 ## 0.2.1-test.23
 
 - Fixed a crash on the first Start after applying graphics settings from the launcher.
-- Preserved requested ray-tracing settings until the selected driver's capabilities are known.
-- Kept pending graphics changes available for retry if graphics initialization or saving fails.
+- Kept requested ray-tracing settings while the selected driver starts.
+- Kept requested graphics changes available for retry if startup or saving fails.
 - Preserved native crash reports across successful restarts and included them in diagnostic exports.
 - Improved Java crash-report fallback when shared storage is unavailable, and included older reports from app storage.
 - Made diagnostic export tolerate logs rotating or being truncated during collection.
 - Included interrupted graphics requests, pending presets and driver startup failures in diagnostic exports.
-- Added app version, build identity and timestamps to crash reports, with installed APK identity in diagnostic exports.
+- Added app version and time information to crash reports to make problems easier to investigate.
 
 ## 0.2.1-test.22
 
 ### Rendering performance
 
-- Reduced SGSR2 memory use and bandwidth by producing one history image and using it directly for the final image reconstruction.
+- Reduced SGSR2 memory use and image-processing work.
 - Improved shadow-cache reuse when draw order changes, while keeping updates for moving objects, animated characters and material changes.
 - Improved static-shadow caching by separating moving objects from reusable scenery.
 - Reused particle refraction snapshots instead of copying the same scene again for compositing.
-- Used a single filtered lookup for cached probe lighting on supported formats, with the existing lookup available on other formats and the Mali safe path.
+- Reduced repeated work when looking up cached room lighting on supported devices.
 - Skipped the unused near-blur downsample in far-only depth of field and reduced sampling where the blur radius is zero.
 - Released unused motion-blur buffers after the effect is disabled, while retaining inputs needed by temporal upscaling.
 - Applied saved graphics settings before allocating rendering resources, avoiding unnecessary initial shadow-atlas allocations.
@@ -34,8 +45,8 @@ Full change history from Test19 onward.
 
 ### Reliability and documentation
 
-- Ensured already-submitted background jobs finish before an allocation failure is returned to their caller.
-- Preserved the existing shadow atlas if a replacement cannot be initialized, and cleaned up the failed replacement.
+- Improved cleanup if background preparation runs out of memory.
+- Kept working shadows available if a shadow-quality change cannot be completed.
 - Renamed the bundled and downloadable driver to **ESMERINGHOY 27.0.0-devel** and simplified its selection description.
 - Updated the README, download links, recommended starting settings and build documentation.
 

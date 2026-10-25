@@ -57,6 +57,11 @@ final class Diagnostics {
             long size=in.length();int count=(int)Math.min(size,maximum);byte[] data=new byte[count];in.seek(size-count);
             int read=0,n;while(read<count&&(n=in.read(data,read,count-read))>0)read+=n;
             entry(zip,name,read==count?data:java.util.Arrays.copyOf(data,read));
+            if(name.startsWith("logs/")){
+                String details="original_bytes="+size+"\ncaptured_bytes="+read+"\nomitted_prefix_bytes="+(size-count)+
+                    "\ntruncated="+(size>read)+"\n";
+                entry(zip,name+".meta.txt",details.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
         }catch(FileNotFoundException ignored){/* A live log may rotate between the check and open. */}
     }
 }

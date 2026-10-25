@@ -15,12 +15,6 @@ The Test 8/9 texture fallback remains included. Supported BC formats keep native
 
 Test 10 does not fix the reported Mali Android 14 startup failure caused by missing Vulkan features.
 
-## Updating and verification
+## Updating
 
 Install over the matching previous test app to retain game files, saves, settings and layouts. Package `com.ptport.app.test`, version code **52**, ARM64, Android 10+. The existing test signing key is reused. Game files are not included.
-
-All **23** host regression scripts, ASan/UBSan checks and native ARM64 compilation passed. Compare phone performance using the same scene, driver, settings and cap after warmup; no measured phone FPS gain is claimed.
-
-## Verified release APK
-
-See the [build validation record](../android-test10-build-validation.md) for APK identity, packaging checks and testing limits, and the [implementation notes](../android-test10-update.md) for technical details.

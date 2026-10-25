@@ -5,6 +5,12 @@
 #include <array>
 #include <cmath>
 namespace pt {
+inline VkRect2D IntersectLightScissors(VkRect2D a,VkRect2D b){
+ const int64_t left=std::max<int64_t>(a.offset.x,b.offset.x),top=std::max<int64_t>(a.offset.y,b.offset.y);
+ const int64_t right=std::min(int64_t(a.offset.x)+a.extent.width,int64_t(b.offset.x)+b.extent.width);
+ const int64_t bottom=std::min(int64_t(a.offset.y)+a.extent.height,int64_t(b.offset.y)+b.extent.height);
+ return {{int32_t(left),int32_t(top)},{uint32_t(std::max<int64_t>(0,right-left)),uint32_t(std::max<int64_t>(0,bottom-top))}};
+}
 inline bool SpotBounds(glm::vec3 position,glm::vec3 axis,float cosine,float radius,glm::vec3& lo,glm::vec3& hi){
  const float norm=glm::length(axis);
  if(!std::isfinite(norm+cosine+radius)||norm<1e-5f||cosine<0||cosine>=1||radius<=0)return false;

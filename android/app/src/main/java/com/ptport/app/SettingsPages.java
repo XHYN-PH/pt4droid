@@ -18,13 +18,14 @@ final class SettingsPages {
     private final Runnable back;
     private final SharedPreferences prefs;
     private LinearLayout column;
+    private Runnable resolutionChanged;
     private final Map<String,Object> values=new LinkedHashMap<>();
     SettingsPages(Activity activity,TouchControls touch,Runnable back){this.activity=activity;this.touch=touch;this.back=back;prefs=activity.getSharedPreferences("touch_layout_v1",0);}
     private void note(String label){TextView t=new TextView(activity);t.setText(label);t.setTextColor(MenuStyle.MUTED);column.addView(t);}
     private void button(String title,Runnable action){Button b=new Button(activity);b.setText(title);MenuStyle.button(b);b.setOnClickListener(v->action.run());column.addView(b);}
     private void choice(String title,String key,String[] labels,int fallback){
         note(title);Spinner s=new Spinner(activity);s.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,labels));s.setSelection(Math.max(0,Math.min(labels.length-1,prefs.getInt(key,fallback))));column.addView(s);
-        values.put(key,s.getSelectedItemPosition());s.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,android.view.View v,int position,long id){values.put(key,position);}});
+        values.put(key,s.getSelectedItemPosition());s.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,android.view.View v,int position,long id){values.put(key,position);if(resolutionChanged!=null)resolutionChanged.run();}});
     }
     private CheckBox check(String title,String key,boolean fallback){CheckBox c=new CheckBox(activity);c.setText(title);c.setTextColor(MenuStyle.TEXT);c.setButtonTintList(MenuStyle.accent());c.setChecked(prefs.getBoolean(key,fallback));values.put(key,c.isChecked());c.setOnCheckedChangeListener((v,on)->values.put(key,on));column.addView(c);return c;}
     private void gain(String title,String key,float fallback,float maximum){
@@ -33,18 +34,20 @@ final class SettingsPages {
         MobileSettings.slider(column,title,Math.round((n-.25f)*100),Math.round((maximum-.25f)*100),p->{float value=.25f+p/100f;values.put(key,value);label.setText(String.format(Locale.ROOT,"%s: %.2f×",title,value));});
     }
     void show(boolean advanced){
-        if(touch!=null)touch.releaseAll();column=MobileSettings.column(activity);
+        if(touch!=null)touch.releaseAll();resolutionChanged=null;column=MobileSettings.column(activity);
         final int originalProfile=prefs.getInt("performance_profile",0);
         final float[] scale={readScale()};
         if(advanced){
             choice("Graphics preset","performance_profile",new String[]{"Custom • keep game settings","Maximum performance","Balanced • up to 60 FPS","Original (PS4)"},0);
             note("Changing preset can change graphics and the FPS limit. Other settings preserve your selected limit.");
             TextView caption=new TextView(activity);caption.setTextColor(MenuStyle.TEXT);column.addView(caption);caption.setText("Render scale: "+Math.round(scale[0]*100)+"%");
-            MobileSettings.slider(column,"Scene resolution",Math.round(scale[0]*100)-25,75,p->{scale[0]=(p+25)/100f;caption.setText("Render scale: "+(p+25)+"%");});
+            MobileSettings.slider(column,"Scene resolution",Math.round(scale[0]*100)-25,75,p->{scale[0]=(p+25)/100f;caption.setText(resolutionCaption(scale[0]));});
             choice("Scene output resolution","output_scale_index",new String[]{"100% • full detail","90% • sharper performance","80% • maximum performance"},0);
-            note("Output resolution reduces scene and post-processing detail while keeping menus and touch controls at display resolution. Independent of Scene resolution and graphics presets.");
+            resolutionChanged=()->caption.setText(resolutionCaption(scale[0]));resolutionChanged.run();
+            note("Output resolution reduces scene and post-processing detail while keeping menus and touch controls at display resolution. Multiplies Scene resolution; for example, 50% scene × 90% output gives about 45% of display resolution.");
             check("Optimized mobile bloom","optimized_bloom",true);
             check("Android frame pacing","frame_pacing",false);
+            note("May smooth frame delivery. Compare On and Off at the same FPS limit; leave it Off if motion feels less responsive.");
             check("Android performance hints","adpf",true);
             check("Lens flares (lamp glare)","lens_flares",true);
             choice("Lamp halo strength","flare_halo_index",new String[]{"Subtle","Balanced","Original"},1);
@@ -76,7 +79,9 @@ final class SettingsPages {
             check("Faster Mali lighting • restart required","mali_optimizations",true);
             check("Mali safe lighting • restart required","mali_safe_lighting",true);
             note("Mali safe lighting uses an explicit filtered probe lookup and guards invalid lighting values. Other GPU families retain their existing path.");
-            MenuStyle.section(column,"Diagnostics");check("Enable logs","logs_enabled",AppLog.enabled());button("Export diagnostics",()->Diagnostics.share(activity));
+            MenuStyle.section(column,"Diagnostics");check("Enable logs","logs_enabled",AppLog.enabled());
+            check("Verbose logs • for troubleshooting","verbose_logs",false);
+            note("Normal logs keep performance summaries, warnings and errors. Enable verbose logs only when more detail is needed.");button("Export diagnostics",()->Diagnostics.share(activity));
         }else{
             choice("Movement control","move_style",new String[]{"Visible joystick","Invisible left-half movement"},0);
             choice("Look control","look_style",new String[]{"Visible joystick","Swipe to look • no button","Hidden joystick"},1);
@@ -101,6 +106,11 @@ final class SettingsPages {
         button("Back to settings",()->{dialog.dismiss();back.run();});
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{apply(advanced,originalProfile,scale[0]);dialog.dismiss();}catch(Exception error){Toast.makeText(activity,"Could not apply settings: "+error.getMessage(),Toast.LENGTH_LONG).show();}}));dialog.show();MenuStyle.styleDialog(dialog);
     }
+    private String resolutionCaption(float scale){
+        int index=(Integer)values.getOrDefault("output_scale_index",0);
+        float output=new float[]{1f,.9f,.8f}[Math.max(0,Math.min(2,index))];
+        return String.format(Locale.ROOT,"Render scale: %.0f%% · Output: %.0f%%\nCombined scene scale: about %.0f%% of display resolution",scale*100,output*100,scale*output*100);
+    }
     private float readScale(){
         if(PTActivity.gameRunning())try{return PTActivity.nativeGetRenderScale();}catch(UnsatisfiedLinkError ignored){}
         try{float f=Float.parseFloat(new String(Files.readAllBytes(new File(activity.getFilesDir(),"render_scale.txt").toPath()),StandardCharsets.UTF_8).trim());if(Float.isFinite(f))return Math.max(.25f,Math.min(1f,f));}catch(Exception ignored){}return .667f;
@@ -109,9 +119,9 @@ final class SettingsPages {
         Map<File,byte[]> files=new LinkedHashMap<>();Map<String,Object> saved=new LinkedHashMap<>(values);
         Map<String,String> performance=new LinkedHashMap<>();File ini=new File(activity.getFilesDir(),"mobile_performance.ini");
         if(ini.exists())for(String line:Files.readAllLines(ini.toPath(),StandardCharsets.UTF_8)){int eq=line.indexOf('=');if(eq>0)performance.put(line.substring(0,eq).trim(),line.substring(eq+1).trim());}
-        String[] keys=advanced?new String[]{"mali_optimizations","mali_safe_lighting","compat_texture_size","frame_pacing","sgsr","sharpness","ao_quality","reflection_quality","sustained","lens_flares","post_optimizations","adpf","parallel_preparation","temporal_upscaling","dynamic_resolution","turnip_profile","dynamic_floor","output_scale","flare_halo"}:new String[]{"invert_y","mouse_sensitivity","controller_sensitivity"};
+        String[] keys=advanced?new String[]{"mali_optimizations","mali_safe_lighting","compat_texture_size","frame_pacing","sgsr","sharpness","ao_quality","reflection_quality","sustained","lens_flares","post_optimizations","adpf","parallel_preparation","temporal_upscaling","dynamic_resolution","turnip_profile","dynamic_floor","output_scale","flare_halo","verbose_logs"}:new String[]{"invert_y","mouse_sensitivity","controller_sensitivity"};
         if(advanced){saved.put("compat_texture_size",new int[]{0,2048,1024,512}[(Integer)saved.remove("compat_texture_index")]);}
-        if(advanced){saved.putIfAbsent("lens_flares",true);saved.putIfAbsent("adpf",true);for(String k:new String[]{"post_optimizations","parallel_preparation","temporal_upscaling","dynamic_resolution"})saved.putIfAbsent(k,false);if(Boolean.TRUE.equals(saved.get("dynamic_resolution"))&&!Boolean.TRUE.equals(saved.get("temporal_upscaling")))throw new IOException("Dynamic resolution requires SGSR2. Enable SGSR2 or turn Dynamic resolution off.");}
+        if(advanced){saved.putIfAbsent("verbose_logs",false);saved.putIfAbsent("lens_flares",true);saved.putIfAbsent("adpf",true);for(String k:new String[]{"post_optimizations","parallel_preparation","temporal_upscaling","dynamic_resolution"})saved.putIfAbsent(k,false);if(Boolean.TRUE.equals(saved.get("dynamic_resolution"))&&!Boolean.TRUE.equals(saved.get("temporal_upscaling")))throw new IOException("Dynamic resolution requires SGSR2. Enable SGSR2 or turn Dynamic resolution off.");}
         if(advanced){saved.putIfAbsent("turnip_profile",0);int index=(Integer)saved.getOrDefault("dynamic_floor_index",0);saved.put("dynamic_floor",new float[]{.5f,.6f,.667f}[Math.max(0,Math.min(2,index))]);}
         if(advanced){int output=(Integer)saved.getOrDefault("output_scale_index",0),halo=(Integer)saved.getOrDefault("flare_halo_index",1);saved.put("output_scale",new float[]{1f,.9f,.8f}[Math.max(0,Math.min(2,output))]);saved.put("flare_halo",new float[]{0f,.2f,1f}[Math.max(0,Math.min(2,halo))]);}
         for(String key:keys){Object value=saved.get(key);performance.put(key,value instanceof Boolean?((Boolean)value?"1":"0"):String.valueOf(value));}

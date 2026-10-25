@@ -15,11 +15,3 @@ This update targets repeated rendering work while retaining your existing graphi
 Install the ARM64 APK over test.6 to keep your game files, saves, settings and touch layouts. The package is still `com.ptport.app.test`, version code 49, with the same signing certificate.
 
 Game files are not included. Mali/PanVK support remains experimental with its existing Android/driver requirements.
-
-## Validation
-
-All 15 host regression suites and native ARM64 compilation passed. New checks compare 12,000 complete particle-light blocks with the independent test.6 implementation, verify zero temporary allocations in that function, exercise 8,000 transformed bounds and 3,000 cache mutations, and execute the production shadow recorder against an instrumented command backend. Existing checks cover imports, saves, settings, controls, layout editing, storage, logging, frame limits and menu exit.
-
-Java/resources/DEX compilation, APK signing, native-library and asset equality, and 16 KB ELF/APK alignment passed. Gradle lint could not run because this environment cannot download the Gradle distribution; this APK was packaged with the Android SDK tools.
-
-A phone was not connected. FPS gains, thermal behavior, real-driver rendering correctness and sustained gameplay must still be checked on device. This test release does not promise a particular FPS increase.

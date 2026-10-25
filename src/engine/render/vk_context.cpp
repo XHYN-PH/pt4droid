@@ -356,6 +356,9 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
         std::ofstream runtime(std::filesystem::path(root)/"driver_runtime.txt");
         runtime<<"device="<<properties.deviceName<<"\ndriver="<<driver_properties.driverName<<"\nrevision="<<driver_properties.driverInfo
             <<"\ndriver_version="<<properties.driverVersion<<"\nrequested_turnip_profile="<<android::PerformanceOptions().turnip_profile<<'\n';
+        // These are loader inputs, not proof that every driver honors them.
+        for(const char* key:{"TU_AUTOTUNE_ALGO","TU_AUTOTUNE_FLAGS"})
+            runtime<<"loader_env_"<<key<<'='<<(std::getenv(key)?std::getenv(key):"(unset)")<<'\n';
     }
 #endif
 

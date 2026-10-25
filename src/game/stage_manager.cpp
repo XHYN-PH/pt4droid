@@ -122,13 +122,11 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
             parsed.preparation=std::make_shared<TexturePreparationStream>(std::make_shared<TextureReadBudget>(96ull*1024*1024),
                 [&vfs](const std::string& path,FtexTexture& ftex,TextureReadBudget* lease){return LoadFtex(vfs.Textures(),path,ftex,lease);});
         }
-        size_t new_models=0;
         for (const auto& file : stage->files) {
             for (const auto& placement : file->static_models) {
                 if (placement.model_file.empty() || known->models.contains(placement.model_file) || parsed.models.contains(placement.model_file)) {
                     continue;
                 }
-                const bool early=new_models++<32;
                 auto model = std::make_shared<FmdlModel>();
                 auto bytes = vfs.ReadFile(placement.model_file);
                 if (!bytes || !LoadFmdl(*bytes, placement.model_file, *model)) {
@@ -142,7 +140,10 @@ StageManager::ParsedStage StageManager::Parse(Vfs& vfs, const std::string& fpk_p
                             const std::string key = use.raw ? stem + "#raw" : stem;
                             if (!known->textures.contains(key) && stems.insert(stem).second) {
                                 texture_paths.push_back(use.path);
-                                if(early&&parsed.preparation)parsed.early_textures.emplace_back(use.path,parsed.preparation->Enqueue(use.path));
+                                // Bound queued first-use preparations by texture count rather than
+                                // model count: a model with many materials must not crowd out
+                                // every later model. Payloads still share the same 96 MiB pool.
+                                if(parsed.preparation&&parsed.early_textures.size()<128)parsed.early_textures.emplace_back(use.path,parsed.preparation->Enqueue(use.path));
                             }
                         }
                     }
