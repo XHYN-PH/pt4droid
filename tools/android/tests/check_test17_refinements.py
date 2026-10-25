@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check clipping/order/retirement and exact particle output against Test 16."""
+"""Check clipping/order/retirement and exact visible particle output against Test 16."""
 from pathlib import Path
 import os
 import subprocess
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory() as directory:
                 str(repo / 'src/engine/vfx/vfx_effect.cpp'), '-o', str(binary)], check=True, timeout=180)
             output = []
             for cull in ['0', '1']:
-                output.append(subprocess.check_output([str(binary)], env={**os.environ, 'PT_VFX_CULL': cull}, text=True, timeout=45).strip())
+                output.append(subprocess.check_output([str(binary)], env={**os.environ, 'PT_VFX_CULL': cull, **({'PT_TEST_VISIBLE_QUADS':'1'} if cull=='1' else {})}, text=True, timeout=45).strip())
             outputs.append(output)
         assert outputs[0] == outputs[1], (source_fixture.name, outputs)
         print(source_fixture.name, 'exact Test 16 payload/order match with culling off/on:', outputs[1])

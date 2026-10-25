@@ -2,6 +2,20 @@
 
 Full change history from Test19 onward.
 
+## 0.2.1-test.26
+
+- Added the PC shadow choices to Game graphics: Off, Low, Medium, Original, Ray-traced Sharp and Ray-traced Soft.
+- Unified ambient occlusion and reflection choices, and made contact shadows and ray quality easier to find. Unsupported options explain what is needed.
+- Remembered detected ray-tracing support for the selected driver; changing the driver, system build or app version checks support again.
+- Kept lamp lighting and its visible model consistent when switching between normal, red and unlit states.
+- Separated Graphics, Performance, Controls and Troubleshooting, with clearer text and readable dropdown menus.
+- Reduced preparation of fully off-screen unlit particles while preserving visible effects and transparency order.
+- Reduced repeated shadow-caster filtering for ordinary and mirror views without reducing shadow resolution.
+- Refined CPU frame-cap timing to compensate small sleep delays and recover cleanly after stalls.
+- Avoided redundant preparation of failed textures while keeping recovery for temporary budget limits and cancelled work.
+- Added a fresh-shadow comparison option and optional light-specific diagnostics for investigating shadow problems.
+- Honored model visibility flags while preserving shadow casting.
+
 ## 0.2.1-test.24
 
 - Improved shadow-cache reuse when shadow priorities change.

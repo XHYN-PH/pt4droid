@@ -31,8 +31,8 @@ final class MobileSettings {
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}public void onProgressChanged(SeekBar b,int p,boolean user){if(user)changed.accept(p);}});
     }
     private TextView text(LinearLayout v,String t){TextView view=new TextView(activity);view.setText(t);view.setTextColor(MenuStyle.MUTED);view.setTextSize(14);view.setPadding(0,MenuStyle.dp(activity,5),0,MenuStyle.dp(activity,8));v.addView(view);return view;}
-    private void button(LinearLayout v,String label,Runnable action){Button b=new Button(activity);b.setText(label);MenuStyle.button(b);b.setOnClickListener(w->action.run());LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,MenuStyle.dp(activity,50));lp.setMargins(0,MenuStyle.dp(activity,8),0,0);v.addView(b,lp);}
-    private Spinner choice(LinearLayout v,String title,String[] values,int selected){text(v,title);Spinner s=new Spinner(activity);s.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,values));s.setSelection(Math.max(0,Math.min(values.length-1,selected)));v.addView(s);return s;}
+    private void button(LinearLayout v,String label,Runnable action){Button b=new Button(activity);b.setText(label);MenuStyle.button(b);b.setOnClickListener(w->action.run());LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,MenuStyle.dp(activity,8),0,0);v.addView(b,lp);}
+    private Spinner choice(LinearLayout v,String title,String[] values,int selected){text(v,title);Spinner s=new Spinner(activity);s.setAdapter(MenuStyle.choices(activity,values,values.length));s.setSelection(Math.max(0,Math.min(values.length-1,selected)));v.addView(s);return s;}
     private CheckBox check(LinearLayout v,String label,String key,boolean fallback){CheckBox b=new CheckBox(activity);b.setText(label);b.setTextColor(MenuStyle.TEXT);b.setButtonTintList(MenuStyle.accent());b.setChecked(prefs.getBoolean(key,fallback));v.addView(b);return b;}
     private float[] gain(LinearLayout v,String label,String key,float fallback,float maximum){
         float value=prefs.getFloat(key,fallback);if(!Float.isFinite(value))value=fallback;
@@ -52,7 +52,8 @@ final class MobileSettings {
         AlertDialog menu=new AlertDialog.Builder(activity).setTitle("Settings").setView(scroll(v)).setNegativeButton("Close",null).create();
         button(v,"Game graphics",()->{menu.dismiss();GameGraphicsSettings.open(activity);});
         button(v,"Controls",()->{menu.dismiss();showPage(false);});
-        button(v,"Performance & advanced",()->{menu.dismiss();showPage(true);});
+        button(v,"Performance",()->{menu.dismiss();showPage(true);});
+        button(v,"Troubleshooting",()->{menu.dismiss();new SettingsPages(activity,touch,this::show).troubleshooting();});
         if(!(activity instanceof PTActivity))button(v,"Graphics driver",()->{menu.dismiss();drivers();});
         if(activity instanceof PTActivity)button(v,"Return to main menu",()->new AlertDialog.Builder(activity).setTitle("Return to main menu?").setMessage("Progress follows the game's normal save points.").setPositiveButton("Return",(d,b)->{menu.dismiss();((PTActivity)activity).returnToMenu();}).setNegativeButton("Stay",null).show());
         menu.show();MenuStyle.styleDialog(menu);
@@ -66,7 +67,7 @@ final class MobileSettings {
         }}
         int selected=0;try{selected=selections.indexOf(new String(Files.readAllBytes(new File(activity.getFilesDir(),"driver.txt").toPath()),StandardCharsets.UTF_8).trim());}catch(Exception ignored){}
         Spinner selection=choice(v,"Vulkan driver",names.toArray(new String[0]),selected);
-        text(v,"ESMERINGHOY rendering profiles are available in Performance & advanced. Restart the game after changing the driver or profile.");
+        text(v,"ESMERINGHOY rendering profiles are available in Performance. Restart the game after changing the driver or profile.");
         text(v,"Automatic uses Mr. Purple Turnip T30 on supported Adreno 6xx/7xx with Android 11+. The bundle supports 4 KiB and 16 KiB pages. Adreno 710/720, Android 10 and other GPUs use System. Adreno 8xx requires an explicit compatible selection. PanVK is experimental for Mali v9–v13 with mali_kbase and Android 15+. Game compatibility and performance are not verified. Older Mali GPUs and other kernel drivers may fail. Fully close and reopen after a driver change.");
         AlertDialog d=new AlertDialog.Builder(activity).setTitle("Vulkan drivers").setView(scroll(v)).setPositiveButton("Select",(a,b)->{try{String driver=selections.get(selection.getSelectedItemPosition());if(driver.equals("panvk")&&android.os.Build.VERSION.SDK_INT<35)throw new IOException("Bundled PanVK requires Android 15 or later. Use System or an Android-compatible imported driver.");write("driver.txt",driver);message("Driver selected. Fully close and reopen the game to load it.");}catch(IOException ex){message(ex.getMessage());}}).setNegativeButton("Close",null).create();
         text(v,"Imported Android/Bionic Vulkan packages can target Mali (PanVK) or supported Xclipse GPUs (RADV). Match the package to your exact GPU and Android version. Linux/glibc and OpenGL drivers do not work here.");

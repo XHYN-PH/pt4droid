@@ -64,6 +64,7 @@ struct Gimmick {
     float anim_rate = 1.0f;
     std::string logic_state = "None";
     bool lights[3] = {false, false, false};
+    bool stage_light_set = false;
     bool stage_light = false;
     bool stage_light_red = false;
     bool freezer_strong = false;

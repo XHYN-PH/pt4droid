@@ -4049,6 +4049,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     bool diagnostic_logging = false;
     int diagnostic_state = -1;
     int diagnostic_target = -1;
+    pt::FrameDeadline frame_deadline;
     while (running) {
         std::array<float, 8> diagnostic_parts{};
         app.scene.SetFrameTarget(app.settings.display.fps_limit);
@@ -5366,12 +5367,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
             app.renderer.Context().SetAndroidFramePacing(cap);
             if(app.renderer.Context().AndroidFramePacingActive())cap=0;
 #endif
-            if (cap > 0) {
-                const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - frame_started).count();
-                const int64_t wait = pt::FrameLimitWaitNs(elapsed, cap);
-                if (wait > 0) SDL_DelayPrecise(static_cast<Uint64>(wait));
-            }
+            const auto to_ns=[](auto time){return std::chrono::duration_cast<std::chrono::nanoseconds>(time.time_since_epoch()).count();};
+            const int64_t wait=frame_deadline.Wait(to_ns(frame_started),to_ns(std::chrono::steady_clock::now()),cap);
+            if(wait>0)SDL_DelayPrecise(static_cast<Uint64>(wait));
         }
         if (diagnostic_rendered && pt::LogEnabled()) {
             const auto now = std::chrono::steady_clock::now();

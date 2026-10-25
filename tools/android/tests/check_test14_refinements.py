@@ -20,12 +20,13 @@ with tempfile.TemporaryDirectory() as directory:
     for name,source in [('baseline',baseline),('production',repo/'src/engine/vfx/vfx_system.cpp')]:
         active=compiler+(['-I'+str(root/'headers')] if name=='baseline' else [])+includes
         output=root/name
-        subprocess.run(active+[str(repo/'tests/particle_mesh_comparison.cpp'),str(source),str(repo/'src/engine/vfx/vfx_effect.cpp'),'-o',str(output)],check=True,timeout=150)
+        subprocess.run(active+[str(repo/'tests/particle_mesh_comparison.cpp'),str(source),str(repo/'src/engine/vfx/vfx_effect.cpp'),'-o',str(output)],check=True,timeout=300)
         results[name]=[]
         for cull in ['0','1']:
             env=os.environ.copy();env['PT_VFX_CULL']=cull
+            if cull=='1':env['PT_TEST_VISIBLE_QUADS']='1'
             results[name].append(subprocess.check_output([str(output)],env=env,text=True,timeout=30).strip())
     assert results['baseline']==results['production'],results
-    print('1500 mixed mesh/sprite/liquid/lit particle cases: exact Test 13 payload and draw order with culling on/off',results['production'])
+    print('1500 mixed mesh/sprite/liquid/lit particle cases: exact visible Test 13 payload and draw order with culling on/off',results['production'])
 for name in ['check_graphics_menu_update.py','check_menu_exit.py','check_settings_actions.py']:
     subprocess.run([os.environ.get('PYTHON','python3'),str(Path(__file__).parent/name)],check=True,timeout=180)

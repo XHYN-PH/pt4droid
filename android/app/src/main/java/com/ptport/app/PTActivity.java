@@ -78,6 +78,9 @@ public class PTActivity extends SDLActivity {
     public static void setFrameTarget(int fps){DisplayRefresh.setTarget(fps);refreshDisplay();}
     public static float getDisplayRefreshRate(){return DisplayRefresh.actualRate();}
     public static void gameGraphicsSettingsFailed(String message){final PTActivity a=current;if(a!=null)a.runOnUiThread(()->android.widget.Toast.makeText(a,message,android.widget.Toast.LENGTH_LONG).show());}
+    public static void rememberGraphicsCapabilities(String snapshot){
+        final PTActivity a=current;if(a!=null)a.runOnUiThread(()->GameGraphicsData.rememberCapabilities(a,snapshot));
+    }
     static boolean gameRunning() {return current!=null;}
     public static int getTouchControlsMode() {return current==null?0:current.getSharedPreferences("touch_layout_v1",0).getInt("overlay_mode",0);}
     public static void setTouchControlsMode(int mode) {final PTActivity a=current;if(a!=null)a.runOnUiThread(()->{a.getSharedPreferences("touch_layout_v1",0).edit().putInt("overlay_mode",mode).apply();if(a.touchControls!=null)a.touchControls.setMode(mode);});}

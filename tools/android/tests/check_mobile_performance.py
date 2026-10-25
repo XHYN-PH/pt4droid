@@ -34,6 +34,7 @@ namespace pt {bool LogEnabled();void LogSetVerbose(bool);}''',
 #include <atomic>
 #include "engine/platform/android.h"
 #include "engine/platform/mobile_driver_policy.h"
+#include "engine/render/shadow_diagnostics.h"
 #include "engine/platform/mobile_frame_pacing.h"
 #include <cstring>
 std::string storage;const char* SDL_GetAndroidInternalStoragePath(){return storage.c_str();}
@@ -70,7 +71,9 @@ int main(int argc,char** argv){
   Java_com_ptport_app_PTActivity_nativeThermalStatus(nullptr,nullptr,status);
   assert(pt::android::EffectiveFrameLimit(requested)==requested);
  }
+ config("diagnostic_fresh_shadows=1\nverbose_logs=1\n");assert(pt::diagnostic_fresh_shadows&&pt::diagnostic_shadow_trace);
  config("sustained=1\nframe_pacing=1\nsgsr=1\ninvert_y=1\nsharpness=90\nmouse_sensitivity=-50\ncontroller_sensitivity=80\nao_quality=1\nreflection_quality=1\n");
+ assert(!pt::diagnostic_fresh_shadows&&!pt::diagnostic_shadow_trace);
  auto o=pt::android::PerformanceOptions();assert(o.frame_pacing&&o.sgsr&&o.sustained&&o.invert_y);
  assert(o.sharpness==2&&o.mouse_sensitivity==.25f&&o.controller_sensitivity==3&&o.ao_quality==1&&o.reflection_quality==1);
  for(int requested:{0,20,30,60,90,120,144})for(int status=-2;status<=9;++status){

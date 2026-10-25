@@ -12,17 +12,26 @@ final class GameGraphicsSettings {
     private final GameGraphicsData data;
     private final LinearLayout column;
     private GameGraphicsSettings(Activity activity,GameGraphicsData data){this.activity=activity;this.data=data;column=MobileSettings.column(activity);}
-    private void note(String value){TextView t=new TextView(activity);t.setText(value);t.setTextColor(MenuStyle.MUTED);t.setTextSize(14);t.setPadding(0,6,0,12);column.addView(t);}
+    private void note(String value){TextView t=new TextView(activity);t.setText(value);t.setTextColor(MenuStyle.TEXT);t.setTextSize(16);t.setPadding(0,6,0,12);column.addView(t);}
     private void toggle(String title,String key,boolean available){CheckBox c=new CheckBox(activity);c.setText(title);c.setTextColor(MenuStyle.TEXT);c.setButtonTintList(MenuStyle.accent());c.setChecked(data.enabled(key));c.setEnabled(available);c.setOnCheckedChangeListener((v,on)->data.put(key,on?1:0));column.addView(c);}
     private void choice(String title,String key,String[] names,int[] numbers,boolean available){
-        note(title);Spinner s=new Spinner(activity);s.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,names));
+        note(title);Spinner s=new Spinner(activity);s.setAdapter(MenuStyle.choices(activity,names,names.length));
         int current=data.integer(key,numbers[0]),selected=0;for(int i=0;i<numbers.length;i++)if(numbers[i]==current)selected=i;
         s.setSelection(selected);s.setEnabled(available);column.addView(s);
         s.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> v){}public void onItemSelected(AdapterView<?> v,View row,int position,long id){data.put(key,numbers[position]);}});
     }
+    private void mappedChoice(String title,String[] names,int selected,int enabledCount,java.util.function.IntConsumer changed){
+        note(title);Spinner spinner=new Spinner(activity);spinner.setAdapter(MenuStyle.choices(activity,names,enabledCount));
+        spinner.setSelection(Math.max(0,Math.min(names.length-1,selected)));column.addView(spinner);
+        final int[] previous={Math.max(0,Math.min(names.length-1,selected))};
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onNothingSelected(AdapterView<?> parent){}
+            public void onItemSelected(AdapterView<?> parent,View row,int position,long id){if(position<enabledCount && position!=previous[0]){previous[0]=position;changed.accept(position);}}
+        });
+    }
     private void amount(String title,String key){float current=data.number(key,0);TextView label=new TextView(activity);label.setTextColor(MenuStyle.TEXT);label.setText(title+": "+Math.round(current*100)+"%");column.addView(label);MobileSettings.slider(column,title,Math.round(current*100),100,value->{data.put(key,value/100f);label.setText(title+": "+value+"%");});}
     private void wordChoice(String title,String key,String[] labels,String[] keys,boolean available){
-        note(title);Spinner spinner=new Spinner(activity);spinner.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,labels));int selected=0;for(int i=0;i<keys.length;i++)if(keys[i].equals(data.values.get(key)))selected=i;spinner.setSelection(selected);spinner.setEnabled(available);column.addView(spinner);
+        note(title);Spinner spinner=new Spinner(activity);spinner.setAdapter(MenuStyle.choices(activity,labels,labels.length));int selected=0;for(int i=0;i<keys.length;i++)if(keys[i].equals(data.values.get(key)))selected=i;spinner.setSelection(selected);spinner.setEnabled(available);column.addView(spinner);
         spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int i,long id){data.values.put(key,keys[i]);}});
     }
     private void showUpscaling(){
@@ -50,23 +59,22 @@ final class GameGraphicsSettings {
         MenuStyle.section(column,"Textures and lighting");
         choice("Texture detail","graphics.texture_detail",new String[]{"Reduced","Original","Fine"},new int[]{0,1,2},true);
         choice("Anisotropic filtering","graphics.anisotropy",new String[]{"Off / trilinear","2×","4×","8×","16×"},new int[]{0,2,4,8,16},true);
-        choice("Shadow resolution","graphics.shadow_quality",new String[]{"Off","512 px","1024 px","Original • 2048 px"},new int[]{0,1,2,3},true);
-        toggle("Ambient occlusion","graphics.ambient_occlusion",true);toggle("Local reflections","graphics.reflections",true);
+        mappedChoice("Shadows",new String[]{"Off","Low • 512 px","Medium • 1024 px","Original • 2048 px","Ray-traced • Sharp","Ray-traced • Soft"},data.shadowMode(),data.rayTracing?6:4,data::shadowMode);
+        mappedChoice("Ambient occlusion",new String[]{"Off","Standard","Ray-traced"},data.lightingMode("ambient_occlusion"),data.rayTracing?3:2,mode->data.lightingMode("ambient_occlusion",mode));
+        mappedChoice("Reflections",new String[]{"Off","Standard","Ray-traced"},data.lightingMode("reflections"),data.rayTracing?3:2,mode->data.lightingMode("reflections",mode));
+        toggle("Traced contact shadows","raytracing.contact_shadows",data.rayTracing);
+        choice("Ray quality","graphics.ray_quality",new String[]{"Balanced","High","Ultra"},new int[]{0,1,2},data.rayTracing);
+        if(data.rayTracing)note("Ray-traced effects may require restarting the game. Ray quality affects soft shadows and traced ambient occlusion.");
+        if(!data.rayTracing)note("Ray-traced options are unavailable: "+data.rayReason+" Your saved choices are kept until you change them.");
         MenuStyle.section(column,"Effects and image");
         toggle("Bloom","graphics.bloom",true);toggle("Depth of field","graphics.depth_of_field",true);toggle("Motion blur","graphics.motion_blur",true);
         toggle("Lens distortion","graphics.lens_distortion",true);toggle("Lens flare ghosts","graphics.lens_ghosts",true);
         amount("Film grain","graphics.film_grain");amount("Clarity","graphics.clarity");
-        if(data.rayTracing){
-        MenuStyle.section(column,"Ray tracing");
-        choice("Traced shadows","raytracing.shadows",new String[]{"Off","Sharp","Soft"},new int[]{0,1,2},data.rayTracing);
-        toggle("Traced ambient occlusion","raytracing.ambient_occlusion",data.rayTracing);toggle("Traced contact shadows","raytracing.contact_shadows",data.rayTracing);toggle("Traced reflections","raytracing.reflections",data.rayTracing);
-        choice("Ray quality","graphics.ray_quality",new String[]{"Balanced","High","Ultra"},new int[]{0,1,2},data.rayTracing);
-        }
         if(!(activity instanceof PTActivity)){
             MenuStyle.section(column,"Upscaling");
             Button fsr=new Button(activity);fsr.setText("FSR settings");MenuStyle.button(fsr);fsr.setOnClickListener(v->openUpscaling(activity));column.addView(fsr);
         }
-        note("Scene resolution and extra performance options are in Performance & advanced.");
+        note("Scene resolution and extra performance options are in Performance.");
         saveDialog("Game graphics");
     }
     private void saveDialog(String title){

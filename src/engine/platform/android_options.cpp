@@ -60,7 +60,12 @@ void SetRenderScale(float value){Load();if(!std::isfinite(value))return;value=st
 bool ConsumeRenderScaleChange(){Load();return scale_changed.exchange(false);}
 int ConsumePerformanceProfile(){Load();const int value=profile.exchange(-1);if(value>=0){std::error_code ec;std::filesystem::remove(PrivateFile("performance_profile_pending.txt"),ec);}return value;}
 int BloomPassLimit(){Load();return bloom.load();}
-void PublishGameGraphicsSettings(std::string text){std::lock_guard lock(graphics_mutex);graphics_snapshot=std::move(text);}
+void PublishGameGraphicsSettings(std::string text){
+    {std::lock_guard lock(graphics_mutex);if(graphics_snapshot==text)return;graphics_snapshot=text;}
+    Activity("rememberGraphicsCapabilities","(Ljava/lang/String;)V",[&](JNIEnv* e,jclass c,jmethodID m){
+        jstring value=e->NewStringUTF(text.c_str());e->CallStaticVoidMethod(c,m,value);e->DeleteLocalRef(value);
+    });
+}
 bool ConsumeGameGraphicsChanges(){
     Load();if(!graphics_changed.exchange(false))return false;
     std::error_code ec;

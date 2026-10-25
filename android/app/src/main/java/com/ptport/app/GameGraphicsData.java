@@ -13,7 +13,7 @@ final class GameGraphicsData {
     final Map<String,String> values=new LinkedHashMap<>();
     boolean rayTracing;
     boolean fsrAvailable;
-    String fsrReason="This Android build does not include the game’s FSR 3 backend. SGSR1 remains available in Performance & advanced.";
+    String fsrReason="This Android build does not include the game’s FSR 3 backend. SGSR1 remains available in Performance.";
     String rayReason="Start the game to check the selected driver's ray-query support.";
     GameGraphicsData(){values.put("upscaling.upscaler","off");values.put("upscaling.quality","quality");put("upscaling.scale",.667f);put("upscaling.sharpness",0f);original();put("graphics.shadow_quality",2);put("graphics.ambient_occlusion",0);put("graphics.motion_blur",0);put("graphics.depth_of_field",0);put("display.vsync",1);put("display.fps_limit",0);put("display.letterbox",0);}
     void original(){
@@ -49,18 +49,45 @@ final class GameGraphicsData {
     }
     static GameGraphicsData load(Context context,String snapshot)throws IOException {
         GameGraphicsData data=new GameGraphicsData();
-        if(snapshot!=null && !snapshot.isEmpty())data.parse(snapshot);
+        File capabilities=new File(context.getFilesDir(),"graphics_capabilities.ini");
+        String driverKey=capabilityKey(context);
+        if(snapshot!=null && !snapshot.isEmpty()){
+            data.parse(snapshot);
+            rememberCapabilities(context,snapshot);
+        }
         else {File external=context.getExternalFilesDir(null);File file=external==null?null:new File(external,"data/pt.ini");if(file==null || !file.isFile())file=new File(context.getFilesDir(),"data/pt.ini");if(file.isFile())data.parse(read(file));}
+        if((snapshot==null || snapshot.isEmpty()) && capabilities.isFile())try{
+            String cache=read(capabilities);if(cache.startsWith(driverKey+"\n"))data.parse(cache.substring(driverKey.length()+1));
+        }catch(IOException ignored){}
         File profile=new File(context.getFilesDir(),"performance_profile_pending.txt");
         if(profile.isFile())try{data.preset(Integer.parseInt(read(profile).trim()));}catch(NumberFormatException ignored){}
         File applying=new File(context.getFilesDir(),"game_graphics_applying.ini");if(applying.isFile())data.parse(read(applying));
         File pending=new File(context.getFilesDir(),"game_graphics_pending.ini");if(pending.isFile())data.parse(read(pending));
         return data;
     }
+    static void rememberCapabilities(Context context,String snapshot){
+        if(snapshot==null || !snapshot.contains("[android_capabilities]"))return;
+        try{
+            GameGraphicsData data=new GameGraphicsData();data.parse(snapshot);
+            String caps=capabilityKey(context)+"\n[android_capabilities]\nray_tracing="+(data.rayTracing?"1":"0")+"\nray_reason="+data.rayReason+"\nfsr_available="+(data.fsrAvailable?"1":"0")+"\nfsr_reason="+data.fsrReason+"\n";
+            File file=new File(context.getFilesDir(),"graphics_capabilities.ini");
+            if(!file.isFile() || !read(file).equals(caps))DriverImportJob.atomicWrite(file,caps.getBytes(StandardCharsets.UTF_8));
+        }catch(IOException ignored){} // An optional capability cache must never interrupt the game.
+    }
+    private static String capabilityKey(Context context)throws IOException{
+        File driver=new File(context.getFilesDir(),"driver.txt");String selected=driver.isFile()?read(driver).trim():"auto";
+        long modified=0,size=0;
+        if(selected.startsWith("imported/")){File library=new File(context.getFilesDir(),"drivers/"+selected.substring(9));modified=library.lastModified();size=library.length();}
+        return BuildConfig.VERSION_CODE+":"+android.os.Build.FINGERPRINT+":"+selected+":"+modified+":"+size;
+    }
     private static String read(File file)throws IOException{return new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8);}
     int integer(String key,int fallback){try{return Integer.parseInt(values.get(key));}catch(Exception ignored){return fallback;}}
     float number(String key,float fallback){try{float v=Float.parseFloat(values.get(key));return Float.isFinite(v)?Math.max(0,Math.min(1,v)):fallback;}catch(Exception ignored){return fallback;}}
     boolean enabled(String key){String value=values.get(key);return "1".equals(value)||"true".equals(value)||"yes".equals(value)||"on".equals(value);}
+    int shadowMode(){int ray=integer("raytracing.shadows",0);return ray>0?Math.min(2,ray)+3:integer("graphics.shadow_quality",0);}
+    void shadowMode(int mode){if(mode>=4){put("raytracing.shadows",mode-3);put("graphics.shadow_quality",3);}else{put("graphics.shadow_quality",mode);put("raytracing.shadows",0);}}
+    int lightingMode(String effect){return enabled("raytracing."+effect)?2:enabled("graphics."+effect)?1:0;}
+    void lightingMode(String effect,int mode){put("raytracing."+effect,mode==2?1:0);put("graphics."+effect,mode>=1?1:0);}
     void put(String key,int value){values.put(key,Integer.toString(value));}
     void put(String key,float value){values.put(key,Float.toString(value));}
     String text(){

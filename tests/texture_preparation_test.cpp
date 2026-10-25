@@ -145,6 +145,21 @@ int main() {
         assert(manager.failed_textures_.at("/Assets/missing")=="missing FTEX header");
         assert(manager.LoadFox(qar,"/Assets/missing",&ok)==TextureManager::kWhite&&!ok&&archive_reads==before);
     }
+    // The streaming preparation path must have the same immutable-missing rule.
+    for(auto failure:{TexturePreparationFailure::Read,TexturePreparationFailure::Budget,TexturePreparationFailure::Cancelled}){
+        TextureManager manager;std::promise<PreparedTextureResult> failed;failed.set_value({{},failure});
+        const std::string path=failure==TexturePreparationFailure::Read?"/Assets/also_missing":stem;
+        manager.decoding_[path]=failed.get_future().share();const auto before=archive_reads.load();bool ok=true;
+        const auto result=manager.LoadFox(qar,path,&ok);
+        if(failure==TexturePreparationFailure::Read){
+            assert(!ok&&result==TextureManager::kWhite&&archive_reads==before);
+            manager.DecodeAhead(qar,{path});assert(manager.decoding_.empty());
+        }else assert(ok&&result!=TextureManager::kWhite&&archive_reads>before); // Budget/cancellation can retry.
+    }
+    {
+        TextureManager manager;manager.failed_textures_[stem+"#raw"]="unsupported format";
+        manager.DecodeAhead(qar,{stem});assert(manager.decoding_.empty()&&!manager.decode_stream_);
+    }
     TextureReadBudget concurrent(96000); std::atomic<uint32_t> successes{0};
     std::vector<std::thread> workers;
     for (int i = 0; i < 8; ++i) workers.emplace_back([&] { for (int n = 0; n < 1000; ++n) if (concurrent.Reserve(1000)) ++successes; });

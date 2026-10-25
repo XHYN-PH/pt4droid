@@ -498,6 +498,7 @@ private:
     bool shadow_static_unavailable_=false;
     std::array<int,16> shadow_static_owners_{};
     std::array<VkOffset2D,16> shadow_static_offsets_{};
+    std::vector<const Draw*> shadow_candidates_;
     std::vector<ShadowCasterState> shadow_draw_states_;
     std::vector<uint8_t> shadow_draw_state_ready_;
     std::vector<uint8_t> shadow_draw_stable_;

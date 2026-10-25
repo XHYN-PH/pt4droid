@@ -18,6 +18,7 @@
 #include "engine/render/light_scissor.h"
 #include "engine/render/mobile_probe_policy.h"
 #include "engine/render/opaque_order.h"
+#include "engine/render/shadow_diagnostics.h"
 
 namespace pt {
 namespace {
@@ -1415,10 +1416,14 @@ void SceneRenderer::PrepareShadowCasters() {
     shadow_shared_.fill(false);
     stats_.shadow_tiles_shared = 0;
     if (rt_active_ || shadow_views_.empty()) return;
-    static const bool cache_enabled = [] {
+    static const bool cache_allowed = [] {
         const char* value = std::getenv("PT_SHADOW_CACHE");
         return !value || std::string_view(value) != "0";
     }();
+    const bool fresh = diagnostic_fresh_shadows.load(std::memory_order_relaxed);
+    const bool cache_enabled = cache_allowed && !fresh;
+    static uint32_t trace_frame = 0;
+    const bool trace = diagnostic_shadow_trace.load(std::memory_order_relaxed) && (++trace_frame % 600 == 1);
     static const bool tight_bounds = [] {
         const char* value = std::getenv("PT_SHADOW_BOUNDS");
         return !value || std::string_view(value) != "0";
@@ -1427,6 +1432,15 @@ void SceneRenderer::PrepareShadowCasters() {
     shadow_draw_states_.resize(draws_.size());
     shadow_draw_state_ready_.assign(draws_.size(), 0);
     shadow_draw_stable_.assign(draws_.size(), 0);
+    shadow_candidates_.clear();
+    static const char* exclude=std::getenv("PT_SHADOW_EXCLUDE");
+    static const bool skin_only=std::getenv("PT_SHADOW_SKIN_ONLY")!=nullptr;
+    static const bool no_skin=std::getenv("PT_SHADOW_NO_SKIN")!=nullptr;
+    for(const Draw& d:draws_){
+        if(!d.sub->shadow || (exclude && d.mesh->name.find(exclude)!=std::string::npos) ||
+           (skin_only && !d.sub->skinned) || (no_skin && d.sub->skinned))continue;
+        shadow_candidates_.push_back(&d);
+    }
     // Pose snapshots are immutable: a moving skeleton invalidates its tile,
     // while an unchanged pose can reuse the exact previous depth.
     for (const ShadowView& sv : shadow_views_) {
@@ -1447,22 +1461,10 @@ void SceneRenderer::PrepareShadowCasters() {
         auto& accepted = shadow_casters_[tile];
         accepted.clear();
         shadow_indices_[tile] = 0;
-        for (const Draw& d : draws_) {
-            if (!d.sub->shadow || (d.hidden_views & sv.casters) != 0) {
-                continue;
-            }
-            if (static const char* exclude = std::getenv("PT_SHADOW_EXCLUDE"); exclude && d.mesh->name.find(exclude) != std::string::npos) {
-                continue;
-            }
-            if (light_sources_[sv.light]->id == kMirrorLightId && MirrorLightSkips(*d.mesh, static_cast<int>(d.sub - d.mesh->submeshes.data()))) {
-                continue;
-            }
-            if (static const bool skin_shadow_only = std::getenv("PT_SHADOW_SKIN_ONLY") != nullptr; skin_shadow_only && !d.sub->skinned) {
-                continue;
-            }
-            if (static const bool no_skin_shadow = std::getenv("PT_SHADOW_NO_SKIN") != nullptr; no_skin_shadow && d.sub->skinned) {
-                continue;
-            }
+        for (const Draw* candidate : shadow_candidates_) {
+            const Draw& d=*candidate;
+            if ((d.hidden_views & sv.casters) != 0) continue;
+            if (light_sources_[sv.light]->id == kMirrorLightId && MirrorLightSkips(*d.mesh, static_cast<int>(d.sub - d.mesh->submeshes.data()))) continue;
             const bool bounded = tight_bounds && d.shadow_bounds.valid;
             const glm::vec3 centre = bounded ? d.shadow_center : d.center;
             const float radius = bounded ? d.shadow_radius : d.radius;
@@ -1504,6 +1506,19 @@ void SceneRenderer::PrepareShadowCasters() {
             }
         }
         if(cache_enabled)state.CanonicalizeCasters();
+        if (trace) {
+            uint32_t lamp_casters = 0;
+            for (const Draw* d : accepted) {
+                if (d->mesh->name.find("lte0_main0_def") == std::string::npos) continue;
+                ++lamp_casters;
+                LogInfo("lamp shadow: light={} tile={} mesh={} sub={} skinned={} skin_count={} position=({:.3f},{:.3f},{:.3f})",
+                    light_sources_[sv.light]->name, tile, d->mesh->name, uint32_t(d->sub-d->mesh->submeshes.data()),
+                    d->sub->skinned, d->skin_count, d->transform[3].x, d->transform[3].y, d->transform[3].z);
+            }
+            LogInfo("shadow diagnostic: light={} id={} tile={} eye=({:.3f},{:.3f},{:.3f}) casters={} lamp={} fresh={} reusable={}",
+                light_sources_[sv.light]->name, light_sources_[sv.light]->id, tile,
+                view.eye.x, view.eye.y, view.eye.z, accepted.size(), lamp_casters, fresh, state.reusable);
+        }
     }
 
     static const bool share = [] { const char* v = std::getenv("PT_SHADOW_SHARE"); return !v || std::string_view(v) != "0"; }();
@@ -1558,7 +1573,7 @@ std::array<bool,16> SceneRenderer::RecordStaticShadows(VkCommandBuffer cmd, cons
     // Keep the extra depth atlas within 64 MiB. A stable projection must be
     // observed twice before paying for its static template; moving lights keep
     // the original path. Empty/static-only tiles use whole-tile reuse instead.
-    if(!enabled || shadow_static_unavailable_)return use;
+    if(!enabled || shadow_static_unavailable_ || diagnostic_fresh_shadows.load(std::memory_order_relaxed))return use;
     bool needed=false;
     const uint32_t tile_size=shadow_.Extent().width/kShadowTiles;
     for(const ShadowView& sv:shadow_views_) {

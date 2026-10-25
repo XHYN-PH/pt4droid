@@ -640,6 +640,27 @@ bool GameObjects::PlayerCommand(const GameCommand& command) {
     return false;
 }
 
+namespace {
+void SyncCeilLamp(Gimmick& g, bool enabled) {
+    g.lights[0] = enabled;
+    g.lights[1] = enabled && g.stage_light && !g.stage_light_red;
+    g.lights[2] = enabled && g.stage_light && g.stage_light_red;
+    const uint64_t unlit = StrCode64("MESH_off") & kStrCode64Mask;
+    const uint64_t lit = StrCode64("MESH_on_ST") & kStrCode64Mask;
+    const uint64_t lit_red = StrCode64("MESH_on_red_ST") & kStrCode64Mask;
+    g.hidden_meshes.erase(unlit);
+    g.hidden_meshes.erase(lit);
+    g.hidden_meshes.erase(lit_red);
+    if (!g.stage_light) {
+        g.hidden_meshes.insert({lit, lit_red});
+    } else if (g.stage_light_red) {
+        g.hidden_meshes.insert({unlit, lit});
+    } else {
+        g.hidden_meshes.insert({unlit, lit_red});
+    }
+}
+}  // namespace
+
 bool GameObjects::GimmickCommand(Gimmick& gimmick, const GameCommand& command) {
     LogInfo("gameobject: {} {}", gimmick.name, command.Describe());
     if (command.id == "SetEnabled") {
@@ -667,25 +688,10 @@ bool GameObjects::GimmickCommand(Gimmick& gimmick, const GameCommand& command) {
     if (command.id == "StageLight") {
         const bool on = command.Bool("switch").value_or(true);
         const bool red = command.Bool("isRed").value_or(false);
+        gimmick.stage_light_set = true;
         gimmick.stage_light = on;
         gimmick.stage_light_red = red;
-        if (gimmick.type == GimmickType::CeilLamp) {
-            gimmick.lights[1] = on && !red;
-            gimmick.lights[2] = on && red;
-            const uint64_t unlit = StrCode64("MESH_off") & kStrCode64Mask;
-            const uint64_t lit = StrCode64("MESH_on_ST") & kStrCode64Mask;
-            const uint64_t lit_red = StrCode64("MESH_on_red_ST") & kStrCode64Mask;
-            gimmick.hidden_meshes.erase(unlit);
-            gimmick.hidden_meshes.erase(lit);
-            gimmick.hidden_meshes.erase(lit_red);
-            if (!on) {
-                gimmick.hidden_meshes.insert({lit, lit_red});
-            } else if (red) {
-                gimmick.hidden_meshes.insert({unlit, lit});
-            } else {
-                gimmick.hidden_meshes.insert({unlit, lit_red});
-            }
-        }
+        if (gimmick.type == GimmickType::CeilLamp) SyncCeilLamp(gimmick, gimmick.enabled);
         return true;
     }
     if (command.id == "CallSound") {
@@ -751,11 +757,10 @@ void GameObjects::SetGimmickEnabled(GimmickType type, bool enabled) {
             g.lights[0] = g.lights[1] = g.lights[2] = false;
         }
     } else if (type == GimmickType::CeilLamp) {
-        if (enabled) {
-            g.lights[0] = g.lights[1] = true;
-        } else {
-            g.lights[0] = g.lights[1] = g.lights[2] = false;
-        }
+        // Before the first StageLight command, the lamp starts white. Re-enabling
+        // must preserve an explicit off/red state instead of activating both effects.
+        if (!g.stage_light_set) g.stage_light = true;
+        SyncCeilLamp(g, enabled);
     }
     g.shown = enabled;
     g.enabled = enabled;

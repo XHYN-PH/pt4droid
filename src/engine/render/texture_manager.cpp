@@ -622,6 +622,11 @@ uint32_t TextureManager::LoadFox(const QarArchive& qar, const std::string& path,
         const auto result = it->second.get();
         prepared = result.texture;
         if (result.failure == TexturePreparationFailure::Budget) ++read_stats_.budget_fallback;
+        else if(!prepared){
+            ++read_stats_.read_fallback;
+            missing_prepared_header=result.failure==TexturePreparationFailure::Read &&
+                !mods::Active() && !qar.Contains(PathCode64(stem+".ftex"));
+        }
         decoding_.erase(it);
         read = prepared != nullptr;
         if (read) {
@@ -696,7 +701,7 @@ void TextureManager::DecodeAhead(const QarArchive& qar, const std::vector<std::s
     if (mods::Active() || paths.empty()) return;
     const bool new_reads = std::any_of(paths.begin(), paths.end(), [&](const std::string& path) {
         const std::string stem = FtexStem(path);
-        return !stem.empty() && !by_name_.contains(stem) && !prepared_.contains(stem) && !decoding_.contains(stem) && !pending_preparations_.contains(stem);
+        return !stem.empty() && !failed_textures_.contains(stem) && !failed_textures_.contains(stem+"#raw") && !by_name_.contains(stem) && !prepared_.contains(stem) && !decoding_.contains(stem) && !pending_preparations_.contains(stem);
     });
     if (!new_reads) return;
     // Uploaded payloads may serve raw/sRGB within a preparation set. A new
@@ -712,7 +717,7 @@ void TextureManager::DecodeAhead(const QarArchive& qar, const std::vector<std::s
     }
     for (const std::string& path : paths) {
         std::string stem = FtexStem(path);
-        if (stem.empty() || by_name_.contains(stem) || prepared_.contains(stem) || decoding_.contains(stem) || pending_preparations_.contains(stem)) continue;
+        if (stem.empty() || failed_textures_.contains(stem) || failed_textures_.contains(stem+"#raw") || by_name_.contains(stem) || prepared_.contains(stem) || decoding_.contains(stem) || pending_preparations_.contains(stem)) continue;
         decoding_.emplace(stem, decode_stream_->Enqueue(stem));
         decode_order_.push_back(std::move(stem));
     }

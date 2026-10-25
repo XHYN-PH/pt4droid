@@ -21,10 +21,10 @@ final class SettingsPages {
     private Runnable resolutionChanged;
     private final Map<String,Object> values=new LinkedHashMap<>();
     SettingsPages(Activity activity,TouchControls touch,Runnable back){this.activity=activity;this.touch=touch;this.back=back;prefs=activity.getSharedPreferences("touch_layout_v1",0);}
-    private void note(String label){TextView t=new TextView(activity);t.setText(label);t.setTextColor(MenuStyle.MUTED);column.addView(t);}
+    private void note(String label){TextView t=new TextView(activity);t.setText(label);t.setTextColor(MenuStyle.TEXT);t.setTextSize(16);t.setPadding(0,8,0,12);column.addView(t);}
     private void button(String title,Runnable action){Button b=new Button(activity);b.setText(title);MenuStyle.button(b);b.setOnClickListener(v->action.run());column.addView(b);}
     private void choice(String title,String key,String[] labels,int fallback){
-        note(title);Spinner s=new Spinner(activity);s.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,labels));s.setSelection(Math.max(0,Math.min(labels.length-1,prefs.getInt(key,fallback))));column.addView(s);
+        note(title);Spinner s=new Spinner(activity);s.setAdapter(MenuStyle.choices(activity,labels,labels.length));s.setSelection(Math.max(0,Math.min(labels.length-1,prefs.getInt(key,fallback))));column.addView(s);
         values.put(key,s.getSelectedItemPosition());s.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,android.view.View v,int position,long id){values.put(key,position);if(resolutionChanged!=null)resolutionChanged.run();}});
     }
     private CheckBox check(String title,String key,boolean fallback){CheckBox c=new CheckBox(activity);c.setText(title);c.setTextColor(MenuStyle.TEXT);c.setButtonTintList(MenuStyle.accent());c.setChecked(prefs.getBoolean(key,fallback));values.put(key,c.isChecked());c.setOnCheckedChangeListener((v,on)->values.put(key,on));column.addView(c);return c;}
@@ -72,16 +72,13 @@ final class SettingsPages {
             int saved=prefs.getInt("compat_texture_size",0);
             // The choice stores an index temporarily; publish the pixel size only when applying.
             String sizeKey="compat_texture_index";
-            note("Compatibility texture size");Spinner sizes=new Spinner(activity);sizes.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,new String[]{"Original detail","2048 px","1024 px","512 px"}));sizes.setSelection(saved==2048?1:saved==1024?2:saved==512?3:0);column.addView(sizes);
+            note("Compatibility texture size");Spinner sizes=new Spinner(activity);sizes.setAdapter(MenuStyle.choices(activity,new String[]{"Original detail","2048 px","1024 px","512 px"},4));sizes.setSelection(saved==2048?1:saved==1024?2:saved==512?3:0);column.addView(sizes);
             values.put(sizeKey,sizes.getSelectedItemPosition());sizes.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,android.view.View v,int i,long id){values.put(sizeKey,i);}});
             note("Only affects formats the driver cannot sample. Changing texture compatibility or Mali lighting requires restarting the game.");
             CheckBox sustained=check("Sustained performance","sustained",false);PowerManager power=(PowerManager)activity.getSystemService(Context.POWER_SERVICE);sustained.setEnabled(power!=null&&power.isSustainedPerformanceModeSupported());if(!sustained.isEnabled())sustained.setChecked(false);
             check("Faster Mali lighting • restart required","mali_optimizations",true);
             check("Mali safe lighting • restart required","mali_safe_lighting",true);
             note("Mali safe lighting uses an explicit filtered probe lookup and guards invalid lighting values. Other GPU families retain their existing path.");
-            MenuStyle.section(column,"Diagnostics");check("Enable logs","logs_enabled",AppLog.enabled());
-            check("Verbose logs • for troubleshooting","verbose_logs",false);
-            note("Normal logs keep performance summaries, warnings and errors. Enable verbose logs only when more detail is needed.");button("Export diagnostics",()->Diagnostics.share(activity));
         }else{
             choice("Movement control","move_style",new String[]{"Visible joystick","Invisible left-half movement"},0);
             choice("Look control","look_style",new String[]{"Visible joystick","Swipe to look • no button","Hidden joystick"},1);
@@ -101,10 +98,32 @@ final class SettingsPages {
             note(haptics.amplitudeControl()?"The game's controller rumble must also be enabled.":"The game's controller rumble must also be enabled. This phone has no amplitude control: strength 0 turns vibration off; nonzero levels use the hardware default.");
             note(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED?"Microphone permission is enabled. The Name touch button is also available for the ending puzzle.":"Microphone permission is off. Use the Name touch button for the ending puzzle, or enable microphone access in Android app settings.");
         }
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(advanced?"Performance & advanced":"Controls").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
+        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(advanced?"Performance":"Controls").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
         if(!advanced)button("Customize touch layout",()->{dialog.dismiss();if(touch!=null)touch.beginEdit();else Toast.makeText(activity,"Start the game to customize the touch layout.",Toast.LENGTH_LONG).show();});
         button("Back to settings",()->{dialog.dismiss();back.run();});
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{apply(advanced,originalProfile,scale[0]);dialog.dismiss();}catch(Exception error){Toast.makeText(activity,"Could not apply settings: "+error.getMessage(),Toast.LENGTH_LONG).show();}}));dialog.show();MenuStyle.styleDialog(dialog);
+    }
+    void troubleshooting(){
+        if(touch!=null)touch.releaseAll();column=MobileSettings.column(activity);
+        check("Enable logs","logs_enabled",AppLog.enabled());check("Verbose shadow and loading details","verbose_logs",false);
+        check("Force fresh shadow maps","diagnostic_fresh_shadows",false);
+        note("Fresh shadows keep shadows visible but bypass saved shadow maps. Use this only to compare a shadow problem; it may reduce FPS. Verbose details are recorded at bounded intervals.");
+        button("Export diagnostics",()->Diagnostics.share(activity));
+        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Troubleshooting").setView(MobileSettings.scroll(column)).setPositiveButton("Apply",null).setNegativeButton("Close",null).create();
+        button("Back to settings",()->{dialog.dismiss();back.run();});
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                saveTroubleshooting();dialog.dismiss();
+            }catch(Exception error){Toast.makeText(activity,"Could not save troubleshooting settings: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+        }));dialog.show();MenuStyle.styleDialog(dialog);
+    }
+    private void saveTroubleshooting()throws IOException{
+        File file=new File(activity.getFilesDir(),"mobile_performance.ini");Map<String,String> options=new LinkedHashMap<>();
+        if(file.isFile())for(String line:Files.readAllLines(file.toPath(),StandardCharsets.UTF_8)){int at=line.indexOf('=');if(at>0)options.put(line.substring(0,at).trim(),line.substring(at+1).trim());}
+        for(String key:new String[]{"verbose_logs","diagnostic_fresh_shadows"})options.put(key,Boolean.TRUE.equals(values.get(key))?"1":"0");
+        StringBuilder text=new StringBuilder();for(Map.Entry<String,String> entry:options.entrySet())text.append(entry.getKey()).append('=').append(entry.getValue()).append('\n');
+        Map<File,byte[]> files=new LinkedHashMap<>();files.put(file,SettingsFiles.text(text.toString()));SettingsFiles.commit(files,prefs,values);
+        AppLog.setEnabled(Boolean.TRUE.equals(values.get("logs_enabled")));if(PTActivity.gameRunning())PTActivity.reloadPerformance();
     }
     private String resolutionCaption(float scale){
         int index=(Integer)values.getOrDefault("output_scale_index",0);
@@ -119,18 +138,18 @@ final class SettingsPages {
         Map<File,byte[]> files=new LinkedHashMap<>();Map<String,Object> saved=new LinkedHashMap<>(values);
         Map<String,String> performance=new LinkedHashMap<>();File ini=new File(activity.getFilesDir(),"mobile_performance.ini");
         if(ini.exists())for(String line:Files.readAllLines(ini.toPath(),StandardCharsets.UTF_8)){int eq=line.indexOf('=');if(eq>0)performance.put(line.substring(0,eq).trim(),line.substring(eq+1).trim());}
-        String[] keys=advanced?new String[]{"mali_optimizations","mali_safe_lighting","compat_texture_size","frame_pacing","sgsr","sharpness","ao_quality","reflection_quality","sustained","lens_flares","post_optimizations","adpf","parallel_preparation","temporal_upscaling","dynamic_resolution","turnip_profile","dynamic_floor","output_scale","flare_halo","verbose_logs"}:new String[]{"invert_y","mouse_sensitivity","controller_sensitivity"};
+        String[] keys=advanced?new String[]{"mali_optimizations","mali_safe_lighting","compat_texture_size","frame_pacing","sgsr","sharpness","ao_quality","reflection_quality","sustained","lens_flares","post_optimizations","adpf","parallel_preparation","temporal_upscaling","dynamic_resolution","turnip_profile","dynamic_floor","output_scale","flare_halo"}:new String[]{"invert_y","mouse_sensitivity","controller_sensitivity"};
         if(advanced){saved.put("compat_texture_size",new int[]{0,2048,1024,512}[(Integer)saved.remove("compat_texture_index")]);}
-        if(advanced){saved.putIfAbsent("verbose_logs",false);saved.putIfAbsent("lens_flares",true);saved.putIfAbsent("adpf",true);for(String k:new String[]{"post_optimizations","parallel_preparation","temporal_upscaling","dynamic_resolution"})saved.putIfAbsent(k,false);if(Boolean.TRUE.equals(saved.get("dynamic_resolution"))&&!Boolean.TRUE.equals(saved.get("temporal_upscaling")))throw new IOException("Dynamic resolution requires SGSR2. Enable SGSR2 or turn Dynamic resolution off.");}
+        if(advanced){saved.putIfAbsent("lens_flares",true);saved.putIfAbsent("adpf",true);for(String k:new String[]{"post_optimizations","parallel_preparation","temporal_upscaling","dynamic_resolution"})saved.putIfAbsent(k,false);if(Boolean.TRUE.equals(saved.get("dynamic_resolution"))&&!Boolean.TRUE.equals(saved.get("temporal_upscaling")))throw new IOException("Dynamic resolution requires SGSR2. Enable SGSR2 or turn Dynamic resolution off.");}
         if(advanced){saved.putIfAbsent("turnip_profile",0);int index=(Integer)saved.getOrDefault("dynamic_floor_index",0);saved.put("dynamic_floor",new float[]{.5f,.6f,.667f}[Math.max(0,Math.min(2,index))]);}
         if(advanced){int output=(Integer)saved.getOrDefault("output_scale_index",0),halo=(Integer)saved.getOrDefault("flare_halo_index",1);saved.put("output_scale",new float[]{1f,.9f,.8f}[Math.max(0,Math.min(2,output))]);saved.put("flare_halo",new float[]{0f,.2f,1f}[Math.max(0,Math.min(2,halo))]);}
-        for(String key:keys){Object value=saved.get(key);performance.put(key,value instanceof Boolean?((Boolean)value?"1":"0"):String.valueOf(value));}
+        for(String key:keys){Object value=saved.get(key);if(value==null)continue;performance.put(key,value instanceof Boolean?((Boolean)value?"1":"0"):String.valueOf(value));}
         StringBuilder text=new StringBuilder();for(Map.Entry<String,String> e:performance.entrySet())text.append(e.getKey()).append('=').append(e.getValue()).append('\n');files.put(ini,SettingsFiles.text(text.toString()));
         int selected=advanced?(Integer)saved.get("performance_profile"):originalProfile;boolean changed=advanced&&selected!=originalProfile;
         if(advanced){if(changed&&selected==1)scale=Math.min(scale,.5f);files.put(new File(activity.getFilesDir(),"render_scale.txt"),SettingsFiles.text(Float.toString(scale)));files.put(new File(activity.getFilesDir(),"performance_profile.txt"),SettingsFiles.text(Integer.toString(selected)));files.put(new File(activity.getFilesDir(),"bloom_pass_limit.txt"),SettingsFiles.text((Boolean)saved.get("optimized_bloom")?"6":"0"));
             if(changed){if(selected>0){files.put(new File(activity.getFilesDir(),"game_graphics_pending.ini"),null);files.put(new File(activity.getFilesDir(),"game_graphics_applying.ini"),null);}files.put(new File(activity.getFilesDir(),"performance_profile_pending.txt"),SettingsFiles.text(Integer.toString(selected)));}}
         SettingsFiles.commit(files,prefs,saved);
-        if(advanced)AppLog.setEnabled((Boolean)saved.get("logs_enabled"));
+        if(saved.containsKey("logs_enabled"))AppLog.setEnabled((Boolean)saved.get("logs_enabled"));
         if(touch!=null){touch.reloadPreferences();if(!advanced)touch.setMode((Integer)saved.get("overlay_mode"));}
         if(PTActivity.gameRunning()){if(advanced){PTActivity.nativeSetRenderScale(scale);if(changed)PTActivity.nativeSetPerformanceProfile(selected);PTActivity.nativeSetBloomPassLimit((Boolean)saved.get("optimized_bloom")?6:0);}PTActivity.reloadPerformance();}
         DisplayRefresh.apply(activity,null);PTActivity.refreshDisplay();

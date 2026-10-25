@@ -85,7 +85,9 @@ The US game dump, **CUSA01127**, is the reference version. Allow about **1.4 GB*
 
 ### Performance and visuals
 
-All graphics presets support the options in **Settings → Performance & advanced**:
+**Settings → Game graphics** includes Off, Low, Medium, Original and Ray-traced Sharp/Soft shadows, plus Off/Standard/Ray-traced ambient occlusion and reflections. Contact shadows and ray quality are on the same page. Ray-traced choices need driver support; unavailable choices explain why. Support is remembered after the game starts and checked again when the app, system or driver changes.
+
+All graphics presets support the options in **Settings → Performance**:
 
 - **SGSR2 temporal upscaling** reconstructs a sharper image from a lower scene resolution. **Dynamic resolution** adjusts the scene scale within your selected range and requires SGSR2.
 - **Scene output resolution** offers 100%, 90% and 80%. Lower values reduce scene and post-processing detail while menus and touch controls stay at display resolution. This multiplies Scene resolution: 50% scene × 90% output gives about 45% of display resolution.
@@ -110,7 +112,9 @@ Optional driver ZIPs are for matching devices only. Read their release-page desc
 
 [Report a problem](https://github.com/XHYN-PH/pt4droid/issues) with your phone model, Android version, app version and what happened.
 
-To include logs, turn them on in **Settings → Performance & advanced**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** on that page, then turn logs off afterwards. Normal logs are enough for most reports; use **Verbose logs** only when more detail is requested.
+To include logs, turn them on in **Settings → Troubleshooting**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** on that page, then turn logs off afterwards. Normal logs are enough for most reports; use **Verbose shadow and loading details** only when more detail is requested.
+
+The **Force fresh shadow maps** option in Troubleshooting is for comparing shadow problems. It keeps shadows visible and may reduce FPS; leave it Off during normal play.
 
 ## Credits
 

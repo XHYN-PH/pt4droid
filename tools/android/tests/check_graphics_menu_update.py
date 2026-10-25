@@ -5,6 +5,7 @@ import os, subprocess, shutil, tempfile
 repo=Path(__file__).resolve().parents[3]
 java=Path(os.environ.get('JAVA_HOME',str(repo.parent/'toolchain/host/usr/lib/jvm/java-17-openjdk-amd64')))
 stubs={
+'com/ptport/app/BuildConfig.java':'''package com.ptport.app;final class BuildConfig{static int VERSION_CODE=69;}''',
 'android/content/SharedPreferences.java':'''package android.content;import java.util.*;public class SharedPreferences{
  public Map<String,Object> data=new HashMap<>();public boolean failCommit;
  public Map<String,?> getAll(){return new HashMap<>(data);}
@@ -21,7 +22,7 @@ stubs={
 'android/content/Context.java':'''package android.content;import java.io.File;public class Context{public File internal,external;public SharedPreferences prefs=new SharedPreferences();public Context(File i,File e){internal=i;external=e;}public File getFilesDir(){return internal;}public File getExternalFilesDir(String ignored){return external;}public SharedPreferences getSharedPreferences(String k,int mode){return prefs;}}''',
 'android/app/Activity.java':'''package android.app;import android.content.Context;import android.view.*;import java.io.File;public class Activity extends Context{public Window window=new Window();public WindowManager manager=new WindowManager();public Activity(File i,File e){super(i,e);}public Window getWindow(){return window;}public WindowManager getWindowManager(){return manager;}}''',
 'android/os/SystemClock.java':'''package android.os;public class SystemClock { public static long now=5000;public static long uptimeMillis(){return now;} }''',
-'android/os/Build.java':'''package android.os;public class Build{public static class VERSION{public static int SDK_INT=35;}}''',
+'android/os/Build.java':'''package android.os;public class Build{public static String FINGERPRINT="test-device";public static class VERSION{public static int SDK_INT=35;}}''',
 'android/view/Display.java':'''package android.view;public class Display{public Mode current;public Mode[] modes;public Mode getMode(){return current;}public Mode[] getSupportedModes(){return modes;}public float visibleRate;public float getRefreshRate(){return visibleRate>0?visibleRate:current.rate;}public static class Mode{public int id,w,h;public float rate;public Mode(int i,int w,int h,float r){id=i;this.w=w;this.h=h;rate=r;}public int getModeId(){return id;}public int getPhysicalWidth(){return w;}public int getPhysicalHeight(){return h;}public float getRefreshRate(){return rate;}}}''',
 'android/view/Window.java':'''package android.view;public class Window{public int updates;public WindowManager.LayoutParams attributes=new WindowManager.LayoutParams();public WindowManager.LayoutParams getAttributes(){return attributes;}public void setAttributes(WindowManager.LayoutParams a){updates++;attributes=a;}}''',
 'android/view/WindowManager.java':'''package android.view;public class WindowManager{public Display display=new Display();public Display getDefaultDisplay(){return display;}public static class LayoutParams{public int preferredDisplayModeId;public float preferredRefreshRate;}}''',
@@ -46,6 +47,11 @@ public class GraphicsMenuTest {
   data.preset(3);ok(data.enabled("graphics.motion_blur") && data.integer("graphics.shadow_quality",0)==3 && data.number("graphics.film_grain",0)==1,"Original restored in model");
   Files.writeString(inside.resolve("game_graphics_applying.ini"),"[graphics]\nshadow_quality = 0\n");ok(GameGraphicsData.load(a,"").integer("graphics.shadow_quality",-1)==0,"interrupted pending settings visible before next start");
   data.parse("[graphics]\nfilm_grain = nan\n");ok(data.number("graphics.film_grain",.5f)==.5f,"corrupt float cannot enter slider");
+  for(int mode=0;mode<6;mode++){data.shadowMode(mode);ok(data.shadowMode()==mode,"all PC shadow modes round-trip");ok(data.integer("graphics.shadow_quality",-1)==(mode<4?mode:3),"PC shadow fallback matches");}
+  for(String effect:new String[]{"ambient_occlusion","reflections"})for(int mode=0;mode<3;mode++){data.lightingMode(effect,mode);ok(data.lightingMode(effect)==mode,"all lighting modes round-trip");ok(data.enabled("graphics."+effect)==(mode>0),"ray lighting preserves standard fallback");}
+  GameGraphicsData.load(a,"[android_capabilities]\nray_tracing=1\n");ok(GameGraphicsData.load(a,"").rayTracing,"launcher retains observed support");
+  Files.writeString(inside.resolve("driver.txt"),"system");ok(!GameGraphicsData.load(a,"").rayTracing,"driver change invalidates capabilities");
+  Files.delete(inside.resolve("driver.txt"));BuildConfig.VERSION_CODE++;ok(!GameGraphicsData.load(a,"").rayTracing,"APK update invalidates capabilities");BuildConfig.VERSION_CODE--;
   Display d=a.manager.display;Display.Mode low=new Display.Mode(1,1080,2400,60),high=new Display.Mode(2,1080,2400,120),other=new Display.Mode(3,2160,3840,144);d.current=low;d.modes=new Display.Mode[]{low,high,other};
   ok(DisplayRefresh.choose(d.modes,low,0)==high,"automatic picks highest at same resolution");ok(DisplayRefresh.choose(d.modes,low,60)==low,"explicit 60 mode");ok(DisplayRefresh.choose(d.modes,low,999)==high,"unsupported request picks nearest available mode");ok(DisplayRefresh.choose(new Display.Mode[]{},low,120)==low,"missing mode inventory retains valid current mode");
   ok(DisplayRefresh.rates(a).size()==2 && DisplayRefresh.maximum(a)==120,"UI only exposes same-resolution supported rates");

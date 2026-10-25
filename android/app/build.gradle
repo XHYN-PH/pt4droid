@@ -9,6 +9,7 @@ dependencies {
 // (tools/android/build_native.sh) into app/libs/arm64-v8a, and the shaders and fonts into app/assets; Gradle only packages.
 android {
     namespace = "com.ptport.app"
+    buildFeatures { buildConfig = true }
     compileSdkVersion 35
     buildToolsVersion "35.0.0"
     defaultConfig {

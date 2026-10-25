@@ -32,6 +32,20 @@ final class MenuStyle {
         GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,active?new int[]{Color.rgb(115,26,28),Color.rgb(60,21,23),Color.rgb(19,15,18)}:new int[]{Color.rgb(22,23,26),Color.rgb(15,16,19)});
         d.setCornerRadius(dp(c,10));d.setStroke(dp(c,1),active?RED:Color.rgb(52,51,53));if(disabled)d.setAlpha(100);return d;
     }
+    static android.widget.ArrayAdapter<String> choices(Context context,String[] labels,int enabledCount){
+        return new android.widget.ArrayAdapter<String>(context,android.R.layout.simple_spinner_item,labels){
+            @Override public boolean areAllItemsEnabled(){return enabledCount>=labels.length;}
+            @Override public boolean isEnabled(int position){return position<enabledCount;}
+            private View row(int position,View recycled,ViewGroup parent){
+                TextView t=recycled instanceof TextView?(TextView)recycled:new TextView(context);
+                t.setText(labels[position]);t.setTextSize(17);t.setTextColor(isEnabled(position)?TEXT:MUTED);
+                t.setBackgroundColor(BACKGROUND);t.setMinHeight(dp(context,48));t.setGravity(Gravity.CENTER_VERTICAL);
+                t.setPadding(dp(context,12),dp(context,10),dp(context,12),dp(context,10));t.setEnabled(isEnabled(position));return t;
+            }
+            @Override public View getView(int position,View recycled,ViewGroup parent){return row(position,recycled,parent);}
+            @Override public View getDropDownView(int position,View recycled,ViewGroup parent){return row(position,recycled,parent);}
+        };
+    }
     static ColorStateList accent(){return ColorStateList.valueOf(RED);}
     static void section(android.widget.LinearLayout parent,String label){
         TextView t=new TextView(parent.getContext());t.setText(label.toUpperCase(java.util.Locale.ROOT));t.setTextColor(MUTED);t.setTextSize(12);t.setLetterSpacing(.15f);

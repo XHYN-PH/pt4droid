@@ -1290,13 +1290,13 @@ void System::BuildShape(const Instance& inst, const glm::mat4& world, const Shap
         }
         const float depth = glm::dot(world_pos - view.position, view.forward);
         static const bool cull_quads = [] { const char* v = std::getenv("PT_VFX_CULL"); return !v || std::string_view(v) != "0"; }();
-        if (!mesh && cull_quads && rain && draw.layer == Layer::World && !QuadVisible(view.view_projection, q.corner)) {
+        if (!mesh && cull_quads && (rain || m.kind==MaterialKind::Unlit || m.kind==MaterialKind::DynamicLuminance) && draw.layer == Layer::World && !QuadVisible(view.view_projection, q.corner)) {
             // Keep a compact sort entry: omitting it changes std::sort's equal-depth
             // ordering. No quad payload, UV animation or lighting work is needed.
             items.push_back({depth, UINT32_MAX});
             continue;
         }
-        // Off-screen rain needs its ordering placeholder, but not UV expression
+        // Off-screen unlit quads need their ordering placeholder, but not UV expression
         // evaluation or animation data. Evaluation is deterministic per particle.
         const glm::vec4 uv = shape.attr[kUv] >= 0 ? Eval(c, shape.attr[kUv]) : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
         q.uv = glm::vec4(uv.x, uv.y, uv.x + uv.z, uv.y + uv.w);

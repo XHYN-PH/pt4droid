@@ -14,6 +14,7 @@
 #include "engine/render/shadow_cache.h"
 #include "engine/render/shadow_template_pool.h"
 #include "engine/render/render_sync.h"
+#include "engine/render/shadow_diagnostics.h"
 
 namespace pt {
 namespace gpu { constexpr uint32_t kInvalid=UINT32_MAX,kMatAlphaTest=1; }
@@ -51,6 +52,7 @@ struct SceneRenderer {
     struct Stats {std::array<uint32_t,4> shadow_misses{};uint32_t shadow_tiles_reused=0,shadow_tiles_rendered=0,shadow_tiles_shared=0,shadow_cache_redraws=0,shadow_draws=0,shadow_static_updates=0,shadow_static_copies=0,shadow_static_saved_draws=0;} stats_;
     struct Textures {uint32_t flags=0;uint32_t MaterialFlags(uint32_t)const{return flags;} uint64_t alpha=0;std::array<uint64_t,3> ShadowAlphaState(uint32_t)const{return {flags,0,alpha};}} texture; Textures* textures_=&texture;
     struct Light {uint64_t id=0;std::string name;} light; std::vector<const Light*> light_sources_{&light};
+    std::vector<const Draw*> shadow_candidates_;
     struct MeshState {void Reset(){}} mesh_draw_state_;
     bool rt_active_=false,rt_reflections_=false,rt_ao_active_=false,rt_contact_active_=false;
     RenderTarget shadow_; VkPipeline shadow_pipeline_=VK_NULL_HANDLE;
@@ -87,6 +89,14 @@ int main(int argc,char**) {
     draw_calls=0;r.TestShadows(nullptr);
     if(disabled){assert(draw_calls==3&&r.stats_.shadow_tiles_reused==0);puts("Shadow recording fallback passed");return 0;}
     assert(draw_calls==0&&r.stats_.shadow_tiles_reused==3&&r.stats_.shadow_tiles_rendered==0);
+    // Fresh-map diagnostics redraw current geometry without changing depth results.
+    const auto expected_pixels=pixels;
+    diagnostic_fresh_shadows=true;draw_calls=0;r.TestShadows(nullptr);
+    assert(draw_calls==3&&r.stats_.shadow_tiles_reused==0&&pixels==expected_pixels);
+    draw_calls=0;r.TestShadows(nullptr);assert(draw_calls==3&&pixels==expected_pixels);
+    diagnostic_fresh_shadows=false;r.TestShadows(nullptr);draw_calls=0;r.TestShadows(nullptr);
+    assert(draw_calls==0&&r.stats_.shadow_tiles_reused==3);
+    full_clears=1;partial_clears=0;
     // Change one projection: clear and render only its tile, keeping both other
     // tiles untouched. Point-light halves are separate rectangles as well.
     r.data.views[1].eye.w=1;r.TestShadows(nullptr);
