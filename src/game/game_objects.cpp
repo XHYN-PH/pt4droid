@@ -642,7 +642,6 @@ bool GameObjects::PlayerCommand(const GameCommand& command) {
 
 namespace {
 void SyncCeilLamp(Gimmick& g, bool enabled) {
-    g.lights[0] = enabled;
     g.lights[1] = enabled && g.stage_light && !g.stage_light_red;
     g.lights[2] = enabled && g.stage_light && g.stage_light_red;
     const uint64_t unlit = StrCode64("MESH_off") & kStrCode64Mask;
@@ -760,6 +759,7 @@ void GameObjects::SetGimmickEnabled(GimmickType type, bool enabled) {
         // Before the first StageLight command, the lamp starts white. Re-enabling
         // must preserve an explicit off/red state instead of activating both effects.
         if (!g.stage_light_set) g.stage_light = true;
+        g.lights[0] = enabled;
         SyncCeilLamp(g, enabled);
     }
     g.shown = enabled;

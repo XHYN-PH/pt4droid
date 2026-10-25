@@ -44,6 +44,10 @@ int main(){GameObjects o;auto&g=o.gimmicks_[size_t(GimmickType::CeilLamp)];
    o.SetGimmickEnabled(GimmickType::CeilLamp,false);assert(!g.lights[0]&&!g.lights[1]&&!g.lights[2]);
   }
  }
+ // StageLight selects white/red effects; it must not restart the independently expired glass effect.
+ o.SetGimmickEnabled(GimmickType::CeilLamp,true);g.lights[0]=false;
+ Cmd white;white.args={{"switch",true},{"isRed",false}};o.Stage(g,white);assert(!g.lights[0]&&g.lights[1]&&!g.lights[2]);
+ o.SetGimmickEnabled(GimmickType::CeilLamp,false);
  // Stage commands while disabled select the model without activating hidden light effects.
  Cmd command;command.args={{"switch",true},{"isRed",true}};o.Stage(g,command);assert(!g.lights[1]&&!g.lights[2]);
  o.SetGimmickEnabled(GimmickType::CeilLamp,true);assert(!g.lights[1]&&g.lights[2]);

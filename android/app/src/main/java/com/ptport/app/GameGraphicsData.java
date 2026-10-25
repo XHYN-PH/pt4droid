@@ -50,14 +50,14 @@ final class GameGraphicsData {
     static GameGraphicsData load(Context context,String snapshot)throws IOException {
         GameGraphicsData data=new GameGraphicsData();
         File capabilities=new File(context.getFilesDir(),"graphics_capabilities.ini");
-        String driverKey=capabilityKey(context);
+        String driverKey=null;try{driverKey=capabilityKey(context);}catch(IOException ignored){}
         if(snapshot!=null && !snapshot.isEmpty()){
             data.parse(snapshot);
             rememberCapabilities(context,snapshot);
         }
         else {File external=context.getExternalFilesDir(null);File file=external==null?null:new File(external,"data/pt.ini");if(file==null || !file.isFile())file=new File(context.getFilesDir(),"data/pt.ini");if(file.isFile())data.parse(read(file));}
         if((snapshot==null || snapshot.isEmpty()) && capabilities.isFile())try{
-            String cache=read(capabilities);if(cache.startsWith(driverKey+"\n"))data.parse(cache.substring(driverKey.length()+1));
+            String cache=read(capabilities);if(driverKey!=null && cache.startsWith(driverKey+"\n"))data.parse(cache.substring(driverKey.length()+1));
         }catch(IOException ignored){}
         File profile=new File(context.getFilesDir(),"performance_profile_pending.txt");
         if(profile.isFile())try{data.preset(Integer.parseInt(read(profile).trim()));}catch(NumberFormatException ignored){}

@@ -52,6 +52,12 @@ public class GraphicsMenuTest {
   GameGraphicsData.load(a,"[android_capabilities]\nray_tracing=1\n");ok(GameGraphicsData.load(a,"").rayTracing,"launcher retains observed support");
   Files.writeString(inside.resolve("driver.txt"),"system");ok(!GameGraphicsData.load(a,"").rayTracing,"driver change invalidates capabilities");
   Files.delete(inside.resolve("driver.txt"));BuildConfig.VERSION_CODE++;ok(!GameGraphicsData.load(a,"").rayTracing,"APK update invalidates capabilities");BuildConfig.VERSION_CODE--;
+  Path driverPath=inside.resolve("driver.txt");Files.writeString(driverPath,"system");
+  Files.setPosixFilePermissions(driverPath,java.util.Collections.emptySet());
+  try{
+   ok(!GameGraphicsData.load(a,"").rayTracing,"unreadable optional capability identity cannot block settings or reuse another driver's support");
+   ok(GameGraphicsData.load(a,"[android_capabilities]\nray_tracing=1\n").rayTracing,"live support remains usable when the optional cache cannot read driver identity");
+  }finally{Files.setPosixFilePermissions(driverPath,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));Files.delete(driverPath);}
   Display d=a.manager.display;Display.Mode low=new Display.Mode(1,1080,2400,60),high=new Display.Mode(2,1080,2400,120),other=new Display.Mode(3,2160,3840,144);d.current=low;d.modes=new Display.Mode[]{low,high,other};
   ok(DisplayRefresh.choose(d.modes,low,0)==high,"automatic picks highest at same resolution");ok(DisplayRefresh.choose(d.modes,low,60)==low,"explicit 60 mode");ok(DisplayRefresh.choose(d.modes,low,999)==high,"unsupported request picks nearest available mode");ok(DisplayRefresh.choose(new Display.Mode[]{},low,120)==low,"missing mode inventory retains valid current mode");
   ok(DisplayRefresh.rates(a).size()==2 && DisplayRefresh.maximum(a)==120,"UI only exposes same-resolution supported rates");
