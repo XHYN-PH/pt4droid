@@ -2,6 +2,14 @@
 
 Full change history from Test19 onward.
 
+## Community handoff — 2026-11-19
+
+- Ended active development by XHYN-PH and opened the project for community continuation.
+- Published the previously private Test25/Test26 source and the Test26 APK.
+- Released the original Android signing kit, complete local source history, historical artifacts and development notes.
+- Added continuation and build instructions, including the unresolved lamp-shadow investigation.
+- Kept the existing project and third-party licenses and credits.
+
 ## 0.2.1-test.26
 
 - Added the PC shadow choices to Game graphics: Off, Low, Medium, Original, Ray-traced Sharp and Ray-traced Soft.

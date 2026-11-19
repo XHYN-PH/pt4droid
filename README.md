@@ -10,11 +10,11 @@
 
 <p align="center">
   <strong>P.T. for Android</strong><br>
-  Maintained by <a href="https://github.com/XHYN-PH">XHYN-PH</a>
+  Android port by <a href="https://github.com/XHYN-PH">XHYN-PH</a> · Community handoff
 </p>
 
 <p align="center">
-  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.24">Download APK</a>
+  <a href="https://github.com/XHYN-PH/pt4droid/releases/tag/community-handoff-2026-11-19">Download APK</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -27,13 +27,17 @@
 
 ---
 
-Play **P.T. on Android** with customizable touch controls, controller support and graphics settings. Maintained by **XHYN-PH**.
+Play **P.T. on Android** with customizable touch controls, controller support and graphics settings. Android port by **XHYN-PH**.
 
-**[Download Test 24](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.24)** · Android 10+ · 64-bit phones · [Full changelog](CHANGELOG.md)
+**[Download Test26](https://github.com/XHYN-PH/pt4droid/releases/tag/community-handoff-2026-11-19)** · Android 10+ · 64-bit phones · [Full changelog](CHANGELOG.md)
+
+> **Community handoff — November 19, 2026:** XHYN-PH has ended active development. Anyone is welcome to fork and continue the project under its existing licenses. The latest source, Test26 APK, signing kit, historical artifacts and development notes are available in the [handoff release](https://github.com/XHYN-PH/pt4droid/releases/tag/community-handoff-2026-11-19). Start with the [community handoff guide](docs/community-handoff.md).
+>
+> **The Android signing key is now public.** A matching signature no longer identifies a trusted maintainer. Install updates only from a continuation project you trust.
 
 **Game files are not included.** You need your own P.T. game dump.
 
-**What’s new:** improved shadow-cache reuse, reduced work for lights and rain effects, refined texture loading, and clearer resolution settings. [See all changes](CHANGELOG.md).
+**What’s new:** PC-style shadow choices, clearer menus, refined frame pacing, reduced particle and shadow preparation, texture-loading improvements, and lamp-state fixes. [See all changes](CHANGELOG.md).
 
 ## Screenshots
 
@@ -52,7 +56,7 @@ Play **P.T. on Android** with customizable touch controls, controller support an
 
 ## Getting started
 
-1. Download **pt4droid-v0.2.1-test.24-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/pt4droid-v0.2.1-test.24) and install it.
+1. Download **pt4droid-v0.2.1-test.26-arm64.apk** from the [release page](https://github.com/XHYN-PH/pt4droid/releases/tag/community-handoff-2026-11-19) and install it.
 2. Open the app, tap **Choose your P.T. .pkg**, and select your game package.
 3. Wait for the import to finish, then tap **Enter menu**.
 4. Choose your settings and tap **Start**.
@@ -110,6 +114,8 @@ Optional driver ZIPs are for matching devices only. Read their release-page desc
 
 ## Need help?
 
+Active development and support by XHYN-PH have ended. Community forks are welcome; this repository remains available as the handoff reference.
+
 [Report a problem](https://github.com/XHYN-PH/pt4droid/issues) with your phone model, Android version, app version and what happened.
 
 To include logs, turn them on in **Settings → Troubleshooting**, tap **Apply**, and reproduce the problem. Use **Export diagnostics** on that page, then turn logs off afterwards. Normal logs are enough for most reports; use **Verbose shadow and loading details** only when more detail is requested.
@@ -118,7 +124,7 @@ The **Force fresh shadow maps** option in Troubleshooting is for comparing shado
 
 ## Credits
 
-- **[XHYN-PH](https://github.com/XHYN-PH)** — pt4droid maintainer.
+- **[XHYN-PH](https://github.com/XHYN-PH)** — pt4droid Android port and community handoff.
 - **[LoreanXavier](https://github.com/LoreanXavier/pt-pc)** — original PC port. [Support the original project](https://patreon.com/loreanxavier).
 - **[StoneColdOS](https://github.com/StoneColdOS/pt-pc)** — original Android port.
 
